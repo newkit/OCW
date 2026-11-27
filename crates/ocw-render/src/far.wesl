@@ -12,11 +12,16 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    mesh_view_bindings::view,
 };
 
 struct FarLook {
-    // x: crown contrast, y: stand contrast, z: stone contrast, w: unused.
+    // x: crown contrast, y: stand contrast, z: stone contrast, w: the
+    // backlit canopy's strength.
     params: vec4<f32>,
+    // xyz: the direction to the sun (the key light); w: the share of the
+    // backlit canopy on open ground.
+    sun: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -65,6 +70,16 @@ fn fragment(
         + detail(wp.xz + vec2<f32>(5.0, -230.0), 70.0, footprint) * 0.5;
     let rock = 1.0 + alpine * (1.0 - trees) * far.params.z * (stones - 0.5) * 2.0;
     c = c * canopy * rock;
+    // Looking into a low sun a forest shows the shaded sides of its crowns
+    // (`far_terrain::backlit_canopy`, v6.72).
+    let low = 1.0 - smoothstep(0.14, 0.42, far.sun.y);
+    let v = wp.xz - view.world_position.xz;
+    let s = far.sun.xz;
+    if low > 0.0 && dot(v, v) > 1e-6 && dot(s, s) > 1e-8 {
+        let towards = max(dot(normalize(v), normalize(s)), 0.0);
+        let cover = trees + (1.0 - trees) * far.sun.w;
+        c = c * (1.0 - cover * far.params.w * towards * towards * low);
+    }
     pbr_input.material.base_color = vec4<f32>(c, pbr_input.material.base_color.a);
 
     var out: FragmentOutput;

@@ -351,10 +351,10 @@ pub struct TerrainLook {
     /// The season (spec §14 Phase 9, S8; [`crate::season::terrain_uniform`]):
     /// altitude ramps of the snow, the grass and the degree days, and the
     /// crop calendars.
-    pub season: [Vec4; 9],
+    pub season: [Vec4; 10],
     /// The seasonal ground colours (linear;
     /// [`crate::season::palette_uniform`]).
-    pub season_colours: [Vec4; 10],
+    pub season_colours: [Vec4; 12],
 }
 
 impl Default for TerrainLook {
@@ -369,7 +369,7 @@ impl Default for TerrainLook {
             ortho: ortho.0,
             ortho_blend: ortho.1,
             weather: Vec4::ZERO,
-            season: [Vec4::ZERO; 9],
+            season: [Vec4::ZERO; 10],
             season_colours: crate::season::palette_uniform(),
         }
     }

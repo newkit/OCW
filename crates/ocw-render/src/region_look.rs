@@ -92,13 +92,28 @@ pub fn desaturate(c: [f32; 3], k: f32) -> [f32; 3] {
     c.map(|v| v + (l - v) * k.clamp(0.0, 1.0))
 }
 
+/// Where the grass is russet (`russet`, 0 … 1: [`crate::season::russet_amount`]
+/// of a class whose grass turns alpine) the satellite colour weighs this
+/// much less again: the composites' dormant high pastures are a bright
+/// beige (haze and the light on dry grass from above), which pulled the
+/// russet back to tan (spec 4.6.3, v6.72).
+pub const RUSSET_SATELLITE_LESS: f32 = 0.8;
+
 /// [`far_colour`] where the ground is `alpine` (0 … 1): the satellite
-/// colour greyer and weaker above the tree line.
-pub fn far_colour_alpine(class_rgb: [f32; 3], satellite: Option<[u8; 3]>, alpine: f32) -> [f32; 3] {
+/// colour greyer and weaker above the tree line, weaker still over russet
+/// grass (`russet`, [`RUSSET_SATELLITE_LESS`]).
+pub fn far_colour_alpine(
+    class_rgb: [f32; 3],
+    satellite: Option<[u8; 3]>,
+    alpine: f32,
+    russet: f32,
+) -> [f32; 3] {
     match satellite {
         Some(s) => {
             let sat = desaturate(s.map(|v| f32::from(v) / 255.0), ALPINE_DESATURATE * alpine);
-            let w = SATELLITE_WEIGHT * (1.0 - ALPINE_SATELLITE_LESS * alpine);
+            let w = SATELLITE_WEIGHT
+                * (1.0 - ALPINE_SATELLITE_LESS * alpine)
+                * (1.0 - RUSSET_SATELLITE_LESS * russet.clamp(0.0, 1.0));
             std::array::from_fn(|k| class_rgb[k] + (sat[k] - class_rgb[k]) * w)
         }
         None => class_rgb,
@@ -340,6 +355,28 @@ mod tests {
     use super::*;
     use crate::ground::{FOREST_FLOOR, MEADOW, SNOW, default_mix};
     use ocw_world::look::{PaletteEntry, SeasonInfo, SeasonalTints};
+
+    /// Regression (spec 4.6.3, v6.72): the satellite's beige of the dormant
+    /// high pastures pulled the russet grass back to tan from afar.
+    #[test]
+    fn the_satellite_does_not_pull_russet_grass_back_to_beige() {
+        let russet = crate::season::RUSSET_SRGB[0];
+        let beige = [200, 184, 150];
+        let l = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        let with = far_colour_alpine(russet, Some(beige), 1.0, 1.0);
+        let without = far_colour_alpine(russet, Some(beige), 1.0, 0.0);
+        // Still red over green and not much lighter …
+        assert!(with[0] / with[1] > 1.4, "{with:?}");
+        assert!(l(with) < l(russet) * 1.25 && l(with) < 0.3, "{with:?}");
+        assert!(!is_sand(with), "{with:?}");
+        // … where the alpine rule alone left it lighter and paler.
+        assert!(l(without) > l(with) && without[0] / without[1] < with[0] / with[1]);
+        // Green ground and other places keep the satellite's weight.
+        assert_eq!(
+            far_colour_alpine(russet, Some(beige), 0.0, 0.0),
+            far_colour(russet, Some(beige))
+        );
+    }
 
     fn palette(entries: &[(PaletteKey, [u8; 3])]) -> Palette {
         Palette {

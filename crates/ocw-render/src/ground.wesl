@@ -42,10 +42,12 @@ struct TerrainLook {
     // The season (spec §14 Phase 9, S8; `season::terrain_uniform`):
     // 0 snow ramp a, b, grass green-up ramp a, b; 1 grass dormancy a, b,
     // dryness a, b; 2 GDD a + b·alt, CDD a + b·alt; 3 on, maize share,
-    // frost lo, hi; 4-8 the cereal and maize calendars (lo, hi pairs).
-    season: array<vec4<f32>, 9>,
-    // The seasonal colours (linear, `season::ground_palette`).
-    season_colours: array<vec4<f32>, 10>,
+    // frost lo, hi; 4-8 the cereal and maize calendars (lo, hi pairs);
+    // 9 the high pastures' brown ramp a, b, the region's tree line (m).
+    season: array<vec4<f32>, 10>,
+    // The seasonal colours (linear, `season::palette_uniform`): the ground
+    // palette, then the two russet tones of dormant alpine grass.
+    season_colours: array<vec4<f32>, 12>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -156,6 +158,39 @@ fn season_grass(base: vec3<f32>, h: f32) -> vec3<f32> {
     let dry = alt_ramp(s[1].z, s[1].w, h);
     let c = retint(base, season_colour(0u), (1.0 - green) * 0.8, 0.65);
     return retint(c, season_colour(1u), dry * 0.85, 0.52);
+}
+
+// `season::russet_share`: how alpine the grass is around the tree line.
+fn russet_share(h: f32) -> f32 {
+    let tl = look.season[9].z;
+    if tl <= 0.0 {
+        return 0.0;
+    }
+    return smoothstep(tl - 300.0, tl + 50.0, h);
+}
+
+// `season::alpine_grass` (with `brown_grass`): dormant and dry grass above
+// the tree line turns russet, between a rust and a darker brown by noise.
+// Applied after the regional tint, so the measured palette's tan does not
+// turn it back to ochre.
+fn alpine_grass(c: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    let share = russet_share(p.y);
+    if share <= 0.0 {
+        return c;
+    }
+    let s = look.season;
+    let green = alt_ramp(s[0].z, s[0].w, p.y) * (1.0 - alt_ramp(s[1].x, s[1].y, p.y));
+    let dry = alt_ramp(s[1].z, s[1].w, p.y);
+    let high_brown = alt_ramp(s[9].x, s[9].y, p.y);
+    let brown = clamp(max(max(1.0 - green, dry), high_brown), 0.0, 1.0);
+    let t = brown * share * 0.9;
+    if t <= 0.0 {
+        return c;
+    }
+    let v = clamp(vnoise(p.xz / 23.0 + vec2<f32>(3.1, 7.7)) * 0.65
+        + vnoise(p.xz / 4.7 + vec2<f32>(1.3, 2.9)) * 0.35, 0.0, 1.0);
+    let want = mix(season_colour(10u), season_colour(11u), v);
+    return retint(c, want, t, 0.1);
 }
 
 // `season::crop_path`: the stages of a crop calendar in order.
@@ -334,7 +369,11 @@ fn fragment(
                     a = season_crop(a, wp, crop_a);
                 }
             }
-            albedo = albedo + wi * a * look.material_tint[i].rgb;
+            a = a * look.material_tint[i].rgb;
+            if i == 0u && look.season[3].x > 0.5 {
+                a = alpine_grass(a, wp);
+            }
+            albedo = albedo + wi * a;
             rough = rough + wi * s.albedo.a;
             n = n + wi * s.n;
         }
@@ -373,7 +412,7 @@ fn fragment(
                 let cells = look.mode.y;
                 let suv = (ouv * cells + 0.5) / (cells + 1.0);
                 let sw = textureSampleLevel(splat_a, splat_sampler, suv, 0.0);
-                photo = mix(photo, season_grass(photo, in.world_position.y), clamp(sw.x, 0.0, 1.0));
+                photo = mix(photo, alpine_grass(season_grass(photo, in.world_position.y), in.world_position.xyz), clamp(sw.x, 0.0, 1.0));
                 photo = mix(photo, season_crop(photo, in.world_position.xyz, crop_a), clamp(sw.y, 0.0, 1.0));
             }
             let lw = vec3<f32>(0.2126, 0.7152, 0.0722);

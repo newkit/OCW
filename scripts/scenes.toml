@@ -5868,3 +5868,74 @@ world = "blackforest-north"
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-10-14 12:30", "0.5=weather fair clouds=0.2", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 18000 -76400 180 260 -3"]
 shot = 9
+
+# --- Russet alpine grass, weaker evening haze over land (spec 4.6.3, v6.72) ---
+# Before / after the darker russet of dormant and dry grass above the tree
+# line and the land haze towards a low sun; with the noon, morning, mist,
+# simple-sky (the WebGL 2 path) and Medium checks beside them. Render with
+# OCW_PROFILE=release OCW_FPS=0; the same view before and after.
+
+[[scene]]
+name = "unicorn-hornisgrinde-sunset"
+description = "The unicorn over the Hornisgrinde at sunset, looking west into the low sun over the foothills to the Rhine plain: the far forests' colour under the evening haze (no HUD)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:30", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 18000 -76400 220 255 -4"]
+shot = 9
+
+[[scene]]
+name = "lh-hornisgrinde-sunset-simple"
+description = "wg-hornisgrinde-far with the simple sky (the WebGL 2 browser's sky path): the land haze towards the low sun without the atmosphere (no HUD)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:15", "0.5=weather fair clouds=0.35", "0.5=quality high", "0.5=sky.mode simple", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 18000 -76400 180 260 -3"]
+shot = 9
+
+[[scene]]
+name = "lh-hornisgrinde-sunset-medium"
+description = "wg-hornisgrinde-far on the Medium preset (limited view: the far hills fade into the sky; no HUD)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:15", "0.5=weather fair clouds=0.35", "0.5=quality medium", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 18000 -76400 180 260 -3"]
+shot = 9
+
+[[scene]]
+name = "lh-hornisgrinde-morning"
+description = "From the Hornisgrinde eastwards into the morning sun over the northern Black Forest, October (no HUD)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 08:45", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 18000 -76400 180 110 -3"]
+shot = 9
+
+[[scene]]
+name = "lh-envalira-pass-july"
+description = "The Port d'Envalira from above in July: the alpine turf green where the climate says so (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "9500,-210", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-10 15:30", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 8700 -760 170 115 -16"]
+shot = 9
+
+[[scene]]
+name = "lh-teide-high-august"
+description = "Las Cañadas and the Teide's high zone from above in a dry August: dry grass and broom between pumice and lava (no HUD)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-08-12 11:00", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -7600 5600 160 330 -12"]
+shot = 9
+
+[[scene]]
+name = "lh-malbun-alps"
+description = "Above Malbun (Liechtenstein, 1,600 m) in October: the alpine pastures and slopes around the valley head (no HUD)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "0"]
+riders = "active = \"Kai Derailleur\"\n[[rider]]\nname = \"Kai Derailleur\"\nweight_kg = 71.0\nheight_cm = 179.0\nbike = \"gravel\"\nframe_color = \"#6D4C41\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#ECEFF1\"\nkit = \"sash\"\n"
+at = ["0.5=time pause", "0.5=time 2026-10-12 14:30", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 13.85", "3=god.flight hover", "4=god on", "5=god.pose here here 160 150 -8"]
+shot = 11
+
+[[scene]]
+name = "lh-feldberg-october"
+description = "Over the Feldberg pass (Black Forest, 1,230 m) towards the bare summit (1,493 m) in late October (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "5600,6540", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-28 14:00", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose here here 150 290 -10"]
+shot = 9

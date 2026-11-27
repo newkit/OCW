@@ -39,16 +39,101 @@ use crate::package::{
 pub type FarMaterial = ExtendedMaterial<StandardMaterial, FarExtension>;
 
 /// `far.wesl`'s parameters: x crown contrast, y stand contrast, z stone
-/// contrast.
+/// contrast, w the backlit canopy's strength ([`FAR_BACKLIGHT`]); `sun`:
+/// xyz the direction to the sun (or the moon, the key light), w the share
+/// of it open ground takes ([`FAR_BACKLIGHT_OPEN`]).
 #[derive(Clone, Copy, Debug, ShaderType, Reflect, PartialEq)]
 pub struct FarLook {
     pub params: Vec4,
+    pub sun: Vec4,
 }
 
 impl Default for FarLook {
     fn default() -> Self {
         Self {
-            params: Vec4::new(0.35, 0.2, 0.3, 0.0),
+            params: Vec4::new(0.35, 0.2, 0.3, FAR_BACKLIGHT),
+            sun: Vec4::new(0.0, 1.0, 0.0, FAR_BACKLIGHT_OPEN),
+        }
+    }
+}
+
+/// How much of a far forest's lit colour is lost looking into a low sun
+/// (spec 4.6.3, v6.72): from the sun's side a forest shows the shaded
+/// sides of its crowns and the shadows between them – it reads dark, as
+/// layers of hills do in the evening – but the far terrain's 100 m grid
+/// was lit like a smooth surface, and its sunlit autumn canopy glowed like
+/// sand looking into the setting sun (the Hornisgrinde at 18:15).
+pub const FAR_BACKLIGHT: f32 = 0.6;
+/// The share of [`FAR_BACKLIGHT`] on open ground (meadows, fields,
+/// vineyards: shorter plants, their shaded sides too).
+pub const FAR_BACKLIGHT_OPEN: f32 = 0.0;
+
+/// The backlit canopy's strength and open-ground share now (`far.backlight`,
+/// comparisons).
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct FarBacklight {
+    pub strength: f32,
+    pub open: f32,
+}
+
+impl Default for FarBacklight {
+    fn default() -> Self {
+        Self {
+            strength: FAR_BACKLIGHT,
+            open: FAR_BACKLIGHT_OPEN,
+        }
+    }
+}
+
+/// The factor on a far forest's colour (`far.wesl`'s `backlit`, 0 … 1):
+/// `trees` its cover (0 … 1), `view` the direction from the eye to it,
+/// `sun` the direction to the sun, `strength` [`FAR_BACKLIGHT`]. Full
+/// where the sun is low (below 8°, none from 25°) and straight ahead in
+/// the view, falling off as the square of the cosine of the angle between
+/// them on the ground (none at 90° and behind the eye).
+pub fn backlit_canopy(trees: f32, view: Vec3, sun: Vec3, strength: f32) -> f32 {
+    let low = 1.0 - smoothstep(0.14, 0.42, sun.y);
+    let (v, s) = (Vec2::new(view.x, view.z), Vec2::new(sun.x, sun.z));
+    if v.length_squared() < 1e-8 || s.length_squared() < 1e-8 {
+        return 1.0;
+    }
+    let towards = v.normalize().dot(s.normalize()).max(0.0);
+    1.0 - trees.clamp(0.0, 1.0) * strength * towards * towards * low
+}
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Hands the key light's direction to the far material (`FarLook::sun`).
+fn sync_far_light(
+    view: Option<Res<crate::RideView>>,
+    backlight: Option<Res<FarBacklight>>,
+    mut mats: ResMut<Assets<FarMaterial>>,
+) {
+    let b = backlight.as_deref().copied().unwrap_or_default();
+    let Some(sky) = view.as_deref().and_then(|v| v.sky.as_ref()) else {
+        return;
+    };
+    let s = &sky.sky;
+    let d = if s.sun.elevation_deg > -4.0 || s.moon.elevation_deg <= 0.0 {
+        crate::sky::sun_direction(s.sun.azimuth_deg, s.sun.elevation_deg)
+    } else {
+        crate::sky::sun_direction(s.moon.azimuth_deg, s.moon.elevation_deg)
+    };
+    let want = d.extend(b.open);
+    let stale: Vec<_> = mats
+        .iter()
+        .filter(|(_, m)| {
+            (m.extension.look.sun - want).length() > 1e-3 || m.extension.look.params.w != b.strength
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for id in stale {
+        if let Some(mut m) = mats.get_mut(id) {
+            m.extension.look.sun = want;
+            m.extension.look.params.w = b.strength;
         }
     }
 }
@@ -67,12 +152,23 @@ impl MaterialExtension for FarExtension {
     }
 }
 
-/// The far material (double-sided: the skirts).
+/// The far terrain's specular reflectance (spec 4.6.3, v6.72): none. With
+/// the PBR default (0.5, a smooth dielectric) the Fresnel term mirrored a
+/// low sun in every far slope seen at a grazing angle – looking into the
+/// evening sun the far hills glowed gold-white whatever their colour (the
+/// Hornisgrinde at 18:15; a forest, a meadow and a field at the 100 m
+/// grid's scale are rough, their crowns and blades shade each other).
+/// Bevy's Fresnel goes to the f90 of the reflectance, 0 here.
+pub const FAR_REFLECTANCE: f32 = 0.0;
+
+/// The far material (double-sided: the skirts). No specular reflection
+/// ([`FAR_REFLECTANCE`]).
 pub fn far_material() -> FarMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE, // vertex colours
             perceptual_roughness: 1.0,
+            reflectance: FAR_REFLECTANCE,
             cull_mode: None,
             double_sided: true,
             ..default()
@@ -86,7 +182,10 @@ pub struct FarMaterialPlugin;
 impl Plugin for FarMaterialPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "far.wesl");
-        app.add_plugins(MaterialPlugin::<FarMaterial>::default());
+        app.add_plugins(MaterialPlugin::<FarMaterial>::default())
+            .init_resource::<FarBacklight>()
+            .add_systems(Update, sync_far_light);
+        register_backlight_command(app);
     }
 }
 
@@ -215,6 +314,7 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
             let tones = day.map(|d| crate::season::CanopyTones::new(conifers, alt, d));
             let mut trees = 0.0f32;
             let alpine = crate::ground::alpine_share(alt, tree_line);
+            let russet = day.map_or(0.0, |d| crate::season::russet_amount(d, alt, tree_line));
             let stone = crate::region_look::alpine_stone(flat);
             let colour = match landuse {
                 Some((lu, cells)) => {
@@ -240,7 +340,7 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                             });
                             let mut col = flat(class);
                             if let Some(d) = day {
-                                col = crate::season::ground_colour(class, col, alt, d);
+                                col = crate::season::ground_colour(class, col, alt, d, tree_line);
                             }
                             if crate::ground::turns_alpine(class) && alpine > 0.0 {
                                 let k = alpine * crate::ground::ALPINE_STONE;
@@ -261,10 +361,15 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                             {
                                 let (u, v) =
                                     ((x / size).clamp(0.0, 1.0), (z / size).clamp(0.0, 1.0));
+                                let russet = match day {
+                                    Some(_) if crate::ground::turns_alpine(class) => russet,
+                                    _ => 0.0,
+                                };
                                 col = crate::region_look::far_colour_alpine(
                                     col,
                                     Some(sat.at(u, v)),
                                     alpine,
+                                    russet,
                                 );
                             }
                             for (acc, c) in sum.iter_mut().zip(col) {
@@ -658,6 +763,28 @@ pub fn register_commands(app: &mut App) {
     ));
 }
 
+/// `far.backlight [K] [OPEN]` (registered with the far material).
+fn register_backlight_command(app: &mut App) {
+    use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        clap::Command::new("far.backlight")
+            .about("Far forests looking into a low sun: how much of their lit colour they lose (0 – 1, default 0.6; 0 the look before v6.72) and the share of it on open ground; without arguments: what runs")
+            .arg(clap::Arg::new("k").value_parser(clap::value_parser!(f32)))
+            .arg(clap::Arg::new("open").value_parser(clap::value_parser!(f32))),
+        |world, m| {
+            let mut b = world.get_resource_or_insert_with(FarBacklight::default);
+            if let Some(k) = m.get_one::<f32>("k") {
+                b.strength = k.clamp(0.0, 1.0);
+            }
+            if let Some(o) = m.get_one::<f32>("open") {
+                b.open = o.clamp(0.0, 1.0);
+            }
+            Ok(format!("far backlight {:.2}, open ground {:.2}", b.strength, b.open))
+        },
+    ));
+}
+
 /// Far tiles are hidden beyond this share of a limited far plane (the far
 /// plane is 1.5 × the view distance: 2 × it, where its fog leaves e^-6).
 pub const CULL_SHARE: f32 = 4.0 / 3.0;
@@ -978,6 +1105,39 @@ mod tests {
     /// conifers and with the satellite's colour laid over, it is dark and
     /// green-brown, and the far material knows its trees (the crowns'
     /// texture).
+    #[test]
+    /// Regression (spec 4.6.3, v6.72, the Hornisgrinde at 18:15 looking
+    /// west): the far forests' sunlit canopy glowed like sand looking into
+    /// the low sun. Their colour now loses most of its light there and only
+    /// there: the noon view, the view away from the sun or across it and
+    /// open ground keep theirs.
+    fn far_forests_look_dark_looking_into_a_low_sun() {
+        let sun = |el: f32| {
+            let e = el.to_radians();
+            Vec3::new(-e.cos(), e.sin(), 0.0) // in the west
+        };
+        let west = Vec3::new(-1.0, -0.05, 0.0);
+        let k = |trees, view, el| backlit_canopy(trees, view, sun(el), FAR_BACKLIGHT);
+        // Into the setting sun: a forest keeps at most 45 % of its colour.
+        for el in [0.5, 3.0, 6.0] {
+            assert!(k(1.0, west, el) <= 0.45, "{el}: {}", k(1.0, west, el));
+        }
+        // 30 degrees off the sun still darker; across the sun and away: as it was.
+        let off = Vec3::new(-0.866, -0.05, 0.5);
+        assert!(k(1.0, off, 3.0) < 0.7);
+        assert_eq!(k(1.0, Vec3::new(0.0, -0.05, 1.0), 3.0), 1.0);
+        assert_eq!(k(1.0, Vec3::new(1.0, -0.05, 0.0), 3.0), 1.0);
+        // Noon (sun 30 degrees and higher) and open ground: unchanged.
+        assert_eq!(k(1.0, west, 30.0), 1.0);
+        assert_eq!(k(0.0, west, 3.0), 1.0);
+        // Half cover: half the loss.
+        assert!((k(0.5, west, 3.0) - (1.0 + k(1.0, west, 3.0)) / 2.0).abs() < 1e-5);
+        // The material carries the strength, and mirrors no low sun in its
+        // slopes (the gold-white glint at a grazing angle).
+        assert_eq!(FarLook::default().params.w, FAR_BACKLIGHT);
+        assert_eq!(far_material().base.reflectance, 0.0);
+    }
+
     #[test]
     fn far_forests_are_dark_like_the_satellite_sees_them() {
         use ocw_world::look::{Season, SeasonInfo, SeasonalTints, encode_tint};

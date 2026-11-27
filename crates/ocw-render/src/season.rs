@@ -134,6 +134,14 @@ impl SeasonCache {
     }
 }
 
+/// The tree line of the region the rider is in (m; the sky's place).
+pub fn tree_line_at(view: &RideView) -> f64 {
+    view.sky.as_ref().map_or(1950.0, |s| {
+        let (lat, lon) = s.sky.place;
+        ocw_world::flora::FloraRegion::at(lat, lon).tree_line_m()
+    })
+}
+
 /// The local rider's altitude (m; 500 without a position).
 pub fn rider_alt(view: &RideView) -> f64 {
     view.position.map_or(500.0, |p| p.2)
@@ -246,6 +254,73 @@ fn crop_path(
     mix3(c, stubble, cut)
 }
 
+// --- Dormant and dry alpine grass (spec 4.6.3, v6.72) ------------------------
+
+/// The dormant and dry grass of the high pastures (sRGB): a rust brown and
+/// a darker brown. Mat-grass, fescue and sedge turf above the tree line
+/// turns russet in autumn, in winters without snow and in dry summers –
+/// darker and redder than the straw of a lowland meadow (the measured
+/// palette's tan-ochre is the imagery's haze and light on it).
+pub const RUSSET_SRGB: [[f32; 3]; 2] = [[0.36, 0.20, 0.12], [0.28, 0.18, 0.12]];
+
+/// [`RUSSET_SRGB`] in linear light.
+pub fn russet_palette() -> [[f32; 3]; 2] {
+    RUSSET_SRGB.map(|c| lin3(c[0], c[1], c[2]))
+}
+
+/// How far dormant / dry alpine grass turns russet (0 … 1).
+pub const RUSSET_WEIGHT: f32 = 0.9;
+/// How much of the layer's brightness russet grass keeps (little: its own
+/// darker brightness wins; the meadows' [`KEEP_BRIGHTNESS`] is 0.65).
+pub const RUSSET_KEEP: f32 = 0.1;
+/// Where the grass turns russet, around the region's tree line (m): from
+/// this far below it …
+pub const RUSSET_BELOW_M: f64 = 300.0;
+/// … to this far above it (all of it).
+pub const RUSSET_ABOVE_M: f64 = 50.0;
+
+/// How alpine the grass is at `alt_m` for the russet (0 … 1): from
+/// [`RUSSET_BELOW_M`] under the tree line `tree_line_m` to
+/// [`RUSSET_ABOVE_M`] above it. The terrain shader's `russet_share`
+/// mirrors it.
+pub fn russet_share(alt_m: f64, tree_line_m: f64) -> f32 {
+    let (a, b) = (tree_line_m - RUSSET_BELOW_M, tree_line_m + RUSSET_ABOVE_M);
+    let t = ((alt_m - a) / (b - a)).clamp(0.0, 1.0) as f32;
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// How brown the grass is (0 green … 1): dormant, dried by summer heat or,
+/// on high pastures, by the first frosts or a dry summer.
+pub fn brown_grass(green: f32, dry: f32, high_brown: f32) -> f32 {
+    (1.0 - green).max(dry).max(high_brown).clamp(0.0, 1.0)
+}
+
+/// The russet of dormant / dry alpine grass over a grass colour `c`
+/// (linear): `share` the alpine share ([`russet_share`]), `brown`
+/// ([`brown_grass`]), `var` (0 … 1) between the rust and the darker brown
+/// (the shader's noise; 0.5 for the colour maps' mean). The terrain
+/// shader's `alpine_grass` mirrors it.
+pub fn alpine_grass(c: [f32; 3], brown: f32, share: f32, var: f32) -> [f32; 3] {
+    let t = brown * share * RUSSET_WEIGHT;
+    if t <= 0.0 {
+        return c;
+    }
+    let r = russet_palette();
+    retint(c, mix3(r[0], r[1], var), t, RUSSET_KEEP)
+}
+
+/// How russet the grass of a place is (0 … 1, [`alpine_grass`]'s `t`
+/// without the weight): for the satellite colour, which must not pull it
+/// back to beige ([`crate::region_look::far_colour_alpine`]).
+pub fn russet_amount(day: &SeasonDay, alt_m: f64, tree_line_m: f64) -> f32 {
+    let share = russet_share(alt_m, tree_line_m);
+    if share <= 0.0 {
+        return 0.0;
+    }
+    let g = day.grass(alt_m);
+    brown_grass(g.green, g.dry, g.high_brown) * share
+}
+
 /// How strongly the crop colour replaces a farmland layer.
 pub const CROP_WEIGHT: f32 = 0.85;
 /// How much of the layer's brightness a field keeps (less than the
@@ -269,13 +344,22 @@ pub fn crop_colour(base: [f32; 3], gdd: f32, cdd: f32, maize: f32) -> [f32; 3] {
 /// The colour of a land class in the colour map / far terrain (sRGB) with
 /// the season at `alt_m`: its meadow share as the grass, its farmland
 /// share as the fields (cereal and maize mixed).
-pub fn ground_colour(class: LandClass, srgb: [f32; 3], alt_m: f64, season: &SeasonDay) -> [f32; 3] {
+/// Above the region's tree line `tree_line_m` dormant and dry grass is
+/// russet ([`alpine_grass`]).
+pub fn ground_colour(
+    class: LandClass,
+    srgb: [f32; 3],
+    alt_m: f64,
+    season: &SeasonDay,
+    tree_line_m: f64,
+) -> [f32; 3] {
     ground_colour_with(
         class,
         srgb,
         alt_m,
         season,
         season.climate.maize_share as f32,
+        tree_line_m,
     )
 }
 
@@ -301,6 +385,7 @@ pub fn ground_colour_with(
     alt_m: f64,
     season: &SeasonDay,
     maize: f32,
+    tree_line_m: f64,
 ) -> [f32; 3] {
     let w = crate::ground::class_weights(class);
     let (wm, wf) = (w[crate::ground::MEADOW], w[crate::ground::FARMLAND]);
@@ -311,7 +396,13 @@ pub fn ground_colour_with(
     let base = [base.red, base.green, base.blue];
     let s = season.state(alt_m);
     let g = ocw_sky::season::grass(&season.climate, &s);
-    let mut c = mix3(base, grass_colour(base, g.green, g.dry), wm);
+    let grass = alpine_grass(
+        grass_colour(base, g.green, g.dry),
+        brown_grass(g.green, g.dry, g.high_brown),
+        russet_share(alt_m, tree_line_m),
+        0.5,
+    );
+    let mut c = mix3(base, grass, wm);
     c = mix3(c, crop_colour(c, s.gdd, s.cdd, maize), wf);
     let out = Color::linear_rgb(c[0], c[1], c[2]).to_srgba();
     [out.red, out.green, out.blue]
@@ -499,9 +590,11 @@ pub fn measured(
 /// - 3: x on (1) / off (0), y maize share, z / w the frost (CDD)
 /// - 4 – 6: the cereal calendar (sprout, ripen, harvest, plough, sow; lo, hi)
 /// - 6.zw – 8: the maize calendar
-pub fn terrain_uniform(r: Option<&SeasonRamps>, maize: f32) -> [Vec4; 9] {
+/// - 9: x, y the high pastures' brown ramp; z the region's tree line (m)
+///   for the russet alpine grass ([`russet_share`]), w unused
+pub fn terrain_uniform(r: Option<&SeasonRamps>, maize: f32, tree_line_m: f64) -> [Vec4; 10] {
     let Some(r) = r else {
-        return [Vec4::ZERO; 9];
+        return [Vec4::ZERO; 10];
     };
     let c = &CEREAL;
     let m = &MAIZE;
@@ -516,6 +609,7 @@ pub fn terrain_uniform(r: Option<&SeasonRamps>, maize: f32) -> [Vec4; 9] {
         p(c.sow, m.sprout),
         p(m.ripen, m.harvest),
         p(m.plough, m.sow),
+        Vec4::new(r.high_brown.a, r.high_brown.b, tree_line_m as f32, 0.0),
     ]
 }
 
@@ -525,9 +619,15 @@ pub fn surface_uniform(r: Option<&SeasonRamps>) -> Vec4 {
     r.map_or(Vec4::ZERO, |r| Vec4::new(r.snow.a, r.snow.b, 1.0, 0.0))
 }
 
-/// The seasonal colours of the terrain uniform (`season_colours`).
-pub fn palette_uniform() -> [Vec4; 10] {
-    ground_palette().map(|c| Vec4::new(c[0], c[1], c[2], 1.0))
+/// The seasonal colours of the terrain uniform (`season_colours`): the
+/// [`ground_palette`], then the two russet tones of [`russet_palette`].
+pub fn palette_uniform() -> [Vec4; 12] {
+    let g = ground_palette();
+    let r = russet_palette();
+    std::array::from_fn(|i| {
+        let c = if i < 10 { g[i] } else { r[i - 10] };
+        Vec4::new(c[0], c[1], c[2], 1.0)
+    })
 }
 
 pub struct SeasonPlugin;
@@ -559,14 +659,15 @@ fn sync_season(
         cache.observed = observed;
         cache.ramps = None;
     }
-    let (ramps, maize) = match view.as_deref() {
+    let (ramps, maize, tree_line) = match view.as_deref() {
         Some(v) => (
             cache.ramps(v),
             cache.day(v).map_or(0.0, |d| d.climate.maize_share as f32),
+            tree_line_at(v),
         ),
-        None => (None, 0.0),
+        None => (None, 0.0, 0.0),
     };
-    let t = terrain_uniform(ramps.as_ref(), maize);
+    let t = terrain_uniform(ramps.as_ref(), maize, tree_line);
     let s = surface_uniform(ramps.as_ref());
     if let Some(mut assets) = terrain {
         let stale: Vec<_> = assets
@@ -688,6 +789,88 @@ mod tests {
         SeasonModel::for_place(47.14, 9.52)
     }
 
+    /// The hue of an sRGB colour (°).
+    fn hue(c: [f32; 3]) -> f32 {
+        let max = c[0].max(c[1]).max(c[2]);
+        let d = max - c[0].min(c[1]).min(c[2]);
+        if d < 1e-6 {
+            return 0.0;
+        }
+        if max == c[0] {
+            60.0 * ((c[1] - c[2]) / d).rem_euclid(6.0)
+        } else if max == c[1] {
+            60.0 * ((c[2] - c[0]) / d + 2.0)
+        } else {
+            60.0 * ((c[0] - c[1]) / d + 4.0)
+        }
+    }
+
+    /// Regression (spec 4.6.3, v6.72, the Port d'Envalira in October):
+    /// dormant grass above the tree line read tan-ochre – the lowland
+    /// meadow's straw under the measured palette's brightness. Now it is a
+    /// darker russet in every world, green where the climate says so.
+    #[test]
+    fn dormant_alpine_grass_is_russet_and_darker() {
+        // The measured meadow colours above the tree line (Andorra's
+        // palette, a light tan the imagery shows) and a green turf.
+        let bases = [[0.62, 0.55, 0.38], [0.28, 0.30, 0.17], [0.40, 0.52, 0.25]];
+        // (place, tree line, altitude, a brown day of the year)
+        let cases = [
+            ((42.54, 1.60), 2350.0, 2420.0, 281.0), // Envalira, 8 October
+            ((42.54, 1.60), 2350.0, 2420.0, 340.0), // December, no snow drawn
+            ((47.14, 9.52), 1950.0, 2000.0, 290.0), // Liechtenstein's Alps
+            ((47.87, 8.00), 1430.0, 1480.0, 300.0), // the Feldberg
+            ((28.27, -16.64), 2250.0, 2300.0, 225.0), // Las Cañadas, August
+        ];
+        for ((lat, lon), tree_line, alt, doy) in cases {
+            let day = SeasonModel::for_place(lat, lon).day(doy);
+            assert!(
+                russet_amount(&day, alt, tree_line) > 0.6,
+                "{lat} {lon} day {doy}: {:?}",
+                day.grass(alt)
+            );
+            for base in bases {
+                let now = ground_colour(LandClass::Meadow, base, alt, &day, tree_line);
+                // Without the russet: the colour before (no tree line near).
+                let before = ground_colour(LandClass::Meadow, base, alt, &day, 1e6);
+                let h = hue(now);
+                assert!(
+                    (8.0..=35.0).contains(&h),
+                    "{lat} {lon} day {doy} {base:?}: hue {h} of {now:?}"
+                );
+                // Darker than the old straw, and clearly so over the tan.
+                let (l_now, l_before) = (lum(lin_of(now)), lum(lin_of(before)));
+                assert!(
+                    l_now < l_before * if base[0] > 0.5 { 0.6 } else { 1.1 },
+                    "{lat} {lon} day {doy} {base:?}: {now:?} vs {before:?}"
+                );
+                // Not straw or sand: redder than it.
+                assert!(now[0] / now[1] > 1.3, "{now:?}");
+            }
+        }
+        // In the valley nothing changes; up there it is green in summer.
+        let envalira = SeasonModel::for_place(42.54, 1.60);
+        let oct = envalira.day(281.0);
+        for base in bases {
+            assert_eq!(
+                ground_colour(LandClass::Meadow, base, 1100.0, &oct, 2350.0),
+                ground_colour(LandClass::Meadow, base, 1100.0, &oct, 1e6)
+            );
+        }
+        let july = envalira.day(195.0);
+        assert!(russet_amount(&july, 2420.0, 2350.0) < 0.15);
+        let green = ground_colour(LandClass::Meadow, [0.40, 0.52, 0.25], 2420.0, &july, 2350.0);
+        assert!(green[1] > green[0], "July turf green: {green:?}");
+        // Some variation: the rust and the darker brown differ.
+        let r = russet_palette();
+        assert!(lum(r[0]) > lum(r[1]) * 1.1 && hue(RUSSET_SRGB[0]) < hue(RUSSET_SRGB[1]));
+    }
+
+    fn lin_of(srgb: [f32; 3]) -> [f32; 3] {
+        let c = Color::srgb(srgb[0], srgb[1], srgb[2]).to_linear();
+        [c.red, c.green, c.blue]
+    }
+
     #[test]
     fn retint_keeps_most_of_the_brightness() {
         let base = [0.10, 0.25, 0.06];
@@ -705,7 +888,15 @@ mod tests {
     fn meadows_and_fields_through_the_year() {
         let m = vaduz();
         let base = lin3(0.40, 0.58, 0.27);
-        let at = |d: f64| ground_colour(LandClass::Meadow, [0.40, 0.58, 0.27], 455.0, &m.day(d));
+        let at = |d: f64| {
+            ground_colour(
+                LandClass::Meadow,
+                [0.40, 0.58, 0.27],
+                455.0,
+                &m.day(d),
+                1950.0,
+            )
+        };
         // Summer: the meadow as it is; winter: straw (redder, less green).
         let summer = at(182.0);
         assert!((summer[1] - 0.58).abs() < 0.01, "{summer:?}");
@@ -739,7 +930,7 @@ mod tests {
         assert!(maize[1] > maize[0], "{maize:?}");
         // Forests and rock do not change their ground colour.
         assert_eq!(
-            ground_colour(LandClass::Rock, [0.5; 3], 455.0, &m.day(15.0)),
+            ground_colour(LandClass::Rock, [0.5; 3], 455.0, &m.day(15.0), 1950.0),
             [0.5; 3]
         );
     }
@@ -808,12 +999,15 @@ mod tests {
 
     #[test]
     fn uniforms() {
-        assert_eq!(terrain_uniform(None, 0.4), [Vec4::ZERO; 9]);
+        assert_eq!(terrain_uniform(None, 0.4, 1950.0), [Vec4::ZERO; 10]);
         assert_eq!(surface_uniform(None), Vec4::ZERO);
         let m = vaduz();
         let r = m.day(15.0).ramps(455.0, None);
-        let t = terrain_uniform(Some(&r), 0.4);
+        let t = terrain_uniform(Some(&r), 0.4, 1950.0);
         assert_eq!(t[3].x, 1.0);
+        // The tree line for the russet alpine grass, the high pastures'
+        // dryness (none in the Alps).
+        assert_eq!(t[9], Vec4::new(r.high_brown.a, r.high_brown.b, 1950.0, 0.0));
         assert_eq!(t[3].y, 0.4);
         // The snow ramp: none in Vaduz, white in Malbun in January.
         let snow = |alt: f32| (t[0].x + t[0].y * alt).clamp(0.0, 1.0);

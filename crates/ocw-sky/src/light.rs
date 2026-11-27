@@ -198,6 +198,94 @@ pub fn fog_light_colour(
     Some(out)
 }
 
+// --- The haze over the land at a low sun (spec 9, 4.6.3; v6.72) ---------------
+
+/// How far the fog over the land departs from the sky's horizon colour at
+/// a sun elevation (°): none at night and in the deep twilight (below
+/// −4°), all of [`LAND_HAZE`] from −1° to 8° (sunrise, sunset, the golden
+/// hour), easing off to none at 20° (the day keeps its look).
+pub fn land_haze_weight(el_deg: f64) -> f32 {
+    (smoothstep(-4.0, -1.0, el_deg) * (1.0 - smoothstep(8.0, 20.0, el_deg))) as f32
+}
+
+/// How the land's fog differs from the sky's horizon colour at a low sun
+/// (spec 4.6.3, v6.72): the horizon colour (the plain sky's colour, sRGB)
+/// is the air seen against the bright sky at the horizon; between the eye
+/// and the land the same air is lit from the side and seen against the
+/// dark, shaded slopes, so it is much darker and keeps the sky's blue
+/// rather than the sun's gold. Before, the warm horizon colour of a low
+/// sun was mixed over the far hills, which glowed like sand looking into
+/// the sun (the Hornisgrinde at 18:15 in October). `share`: how far the
+/// colour moves to the land's (0 … 1), `dark`: its brightness against the
+/// horizon colour's (linear luminance), `tint`: the shift of its hue
+/// towards blue (linear factors on the horizon colour).
+pub struct LandHaze {
+    pub share: f32,
+    pub dark: f32,
+    pub tint: [f32; 3],
+}
+
+/// The land haze of [`land_fog_srgb`].
+pub const LAND_HAZE: LandHaze = LandHaze {
+    share: 0.85,
+    dark: 0.45,
+    tint: [0.80, 0.92, 1.15],
+};
+
+/// How far the renderer's atmosphere integrates its haze over the land
+/// (its aerial perspective, m) by day: Bevy's default.
+pub const AERIAL_M: f32 = 32_000.0;
+/// … and at a low sun with all of the land haze (m): the haze of the
+/// farther air is the sky's at the horizon, lit by the low sun straight
+/// ahead; over the land it is taken only this far, so the far hills keep
+/// their colour, darker with the distance (spec 4.6.3, v6.72).
+pub const LAND_AERIAL_M: f32 = 12_000.0;
+
+/// The atmosphere's aerial-perspective distance (m) at a sun elevation,
+/// `k` (0 … 1) of the land haze ([`land_fog_srgb`]'s `k`).
+pub fn land_aerial_m(el_deg: f64, k: f32) -> f32 {
+    let t = land_haze_weight(el_deg) * k.clamp(0.0, 1.0);
+    AERIAL_M + (LAND_AERIAL_M - AERIAL_M) * t
+}
+
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(l: f32) -> f32 {
+    if l <= 0.003_130_8 {
+        12.92 * l
+    } else {
+        1.055 * l.max(0.0).powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn lum32(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// The fog colour over the land (sRGB, may exceed 1 like the atmosphere's
+/// fog) for the sky's horizon colour `fog` at a sun elevation `el_deg`,
+/// `k` (0 … 1) of the way ([`land_haze_weight`] times what the renderer
+/// allows: a clear, unlimited view – a limited view and the weather's fog
+/// keep the sky's colour, so the land still fades into them).
+pub fn land_fog_srgb(fog: [f32; 3], el_deg: f64, k: f32) -> [f32; 3] {
+    let t = land_haze_weight(el_deg) * k.clamp(0.0, 1.0) * LAND_HAZE.share;
+    if t <= 0.0 {
+        return fog;
+    }
+    let lin = fog.map(srgb_to_linear);
+    let l = lum32(lin);
+    let shifted: [f32; 3] = std::array::from_fn(|i| lin[i] * LAND_HAZE.tint[i]);
+    let k = l * LAND_HAZE.dark / lum32(shifted).max(1e-6);
+    let want = shifted.map(|c| c * k);
+    std::array::from_fn(|i| linear_to_srgb(lin[i] + (want[i] - lin[i]) * t))
+}
+
 fn keyed(keys: &[(f64, [f64; 3])], x: f64) -> [f64; 3] {
     if x <= keys[0].0 {
         return keys[0].1;
