@@ -281,6 +281,7 @@ test-unit: ## Run all unit and integration tests (cargo test --workspace; and th
 	$(CARGO) test --workspace
 	$(CARGO) test -p ocw-web --features webxr --lib webxr
 	scripts/test-world-patches.sh
+	scripts/test-fly-start.sh
 
 fmt: ## Format all code
 	$(CARGO) fmt --all

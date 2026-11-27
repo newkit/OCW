@@ -148,8 +148,37 @@ impl GameServer {
     /// request is checked first, [`GameServer::traffic_request`]).
     pub fn apply_road_traffic(&mut self, rules: RoadRules) {
         self.traffic.session = rules;
-        self.config.road_traffic = rules.level;
-        self.config.driver_manners = rules.manners;
+    }
+
+    /// The server's configured road traffic (`ocw-server --traffic`,
+    /// `--driver-manners`; off on the public server).
+    pub fn default_road_traffic(&self) -> RoadRules {
+        RoadRules {
+            level: self.config.road_traffic,
+            manners: self.config.driver_manners,
+        }
+    }
+
+    /// The last human rider has left (spec 14 Phase 18, Q2): the session's
+    /// road traffic goes back to the server's configured defaults, so the
+    /// next visitor does not find the host's busy roads of before. Bots and
+    /// the Echo rider do not count; an organiser's event keeps its own rule.
+    pub(crate) fn reset_traffic_without_humans(&mut self) {
+        let humans = self
+            .riders
+            .keys()
+            .filter(|c| !self.bot_conns.contains(c))
+            .count();
+        let defaults = self.default_road_traffic();
+        if humans > 0 || self.traffic.session == defaults {
+            return;
+        }
+        tracing::info!(
+            was = %self.traffic.session.summary(),
+            traffic = %defaults.summary(),
+            "no rider left: road traffic back to the server's defaults"
+        );
+        self.traffic.session = defaults;
     }
 }
 
@@ -295,6 +324,73 @@ mod tests {
             RoadRules {
                 level: RoadTraffic::Busy,
                 manners: DriverManners::SomeRealism
+            }
+        );
+    }
+
+    fn leave(s: &mut GameServer, c: ConnectionId) {
+        s.disconnect(c);
+    }
+
+    fn bot_hello(name: &str) -> Vec<u8> {
+        encode(&client_message(v1::client_message::Msg::Hello(v1::Hello {
+            protocol_version: ocw_protocol::PROTOCOL_VERSION,
+            display_name: name.into(),
+            profile: Some(ocw_core::RiderProfile::default().into()),
+            bot: Some(true),
+            ..Default::default()
+        })))
+    }
+
+    /// The host's road traffic does not outlive the people (Q2): when the
+    /// last human leaves, the next visitor finds the server's defaults;
+    /// while another human stays, it stays (and they become the host).
+    #[test]
+    fn the_hosts_traffic_ends_when_the_last_human_leaves() {
+        let mut s = server(ClockAccess::Host);
+        let (host, _) = join(&mut s, "Ada Rider");
+        // A client bot rides along; it does not keep the session.
+        let bot = s.connect();
+        s.handle(bot, &bot_hello("Bot Cyclo"));
+        assert!(ask(&mut s, host, RoadTraffic::Busy).0);
+        leave(&mut s, host);
+        assert_eq!(s.road_traffic(), s.default_road_traffic());
+        let (next, w) = join(&mut s, "Bea Climber");
+        let t = ocw_protocol::traffic::traffic_info(w.traffic.as_ref().unwrap());
+        assert_eq!(t.rules.level, RoadTraffic::Off, "the next visitor: off");
+        // The bot connected longest is the host now (the existing rule);
+        // it leaves too, and the human is the host.
+        assert_eq!(
+            s.host(),
+            s.riders.get(&bot).copied(),
+            "the longest connected"
+        );
+        leave(&mut s, bot);
+        assert_eq!(s.host(), s.riders.get(&next).copied());
+        // Two humans: the one who stays keeps it and becomes the host.
+        let (guest, _) = join(&mut s, "Cleo Sprinter");
+        assert!(ask(&mut s, next, RoadTraffic::Busy).0);
+        leave(&mut s, next);
+        assert_eq!(s.road_traffic().level, RoadTraffic::Busy, "a human stays");
+        assert_eq!(s.host(), s.riders.get(&guest).copied());
+        assert!(ask(&mut s, guest, RoadTraffic::Light).0, "the new host");
+        // A server started with traffic goes back to its own setting.
+        let mut s = GameServer::new(
+            route(),
+            ServerConfig {
+                road_traffic: RoadTraffic::Normal,
+                driver_manners: DriverManners::Polite,
+                ..Default::default()
+            },
+        );
+        let (c, _) = join(&mut s, "Dora Descender");
+        assert!(ask(&mut s, c, RoadTraffic::Lunatic).0);
+        leave(&mut s, c);
+        assert_eq!(
+            s.road_traffic(),
+            RoadRules {
+                level: RoadTraffic::Normal,
+                manners: DriverManners::Polite
             }
         );
     }

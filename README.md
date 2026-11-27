@@ -1899,7 +1899,7 @@ minute (after 100 minutes of riding about every 5 minutes – adsb.lol allows
 500 requests a day per address), and the app draws them with the same models
 and sounds, extrapolated between fetches; only their kind and position are
 used, never a callsign or registration. "Aircraft data: adsb.lol (ODbL)"
-stands in the lower left corner while they are drawn. When the feed does not
+stands in the lower left corner, above the elevation profile, while they are drawn. When the feed does not
 answer – or in the browser on its own (adsb.lol cannot be fetched from a web
 page) – the simulated sky is drawn and Settings says why. `OCW_ADSB_LOL_KEY`
 gives the server an adsb.lol key, `OCW_LIVE_AIR_OFFLINE=1` turns fetching
@@ -4194,6 +4194,8 @@ fly deploy --config deploy/fly/ocw-server/fly.toml \
 `--remote-only` builds the image on Fly's builder, never on your machine. Until a world is uploaded the machine waits (`fly logs` says so) and starts the server once the package is there.
 
 **Secrets:** none to set. The voice server's API keys are new at every start and stay in the process environment (spec 7.1.1). The TLS identity is made on the volume. Sign-in, once used, takes `--auth-issuer` in `OCW_SERVER_ARGS` (`fly.toml`'s `[env]`). Any secret of its own goes in with `fly secrets set`, never into `fly.toml`.
+
+**The adsb.lol key for live aircraft** (optional, spec 18J): set it as a Fly secret, staged so the machine is not restarted at once – `fly secrets set --stage OCW_ADSB_LOL_KEY=…` (the key from adsb.lol), then it applies with the next `fly deploy` (or `fly secrets deploy`). `start.sh` passes exactly `OCW_ADSB_LOL_KEY` and `OCW_LIVE_AIR_OFFLINE` (when set) from the machine's environment to `ocw-server` – by the environment, never on a command line – and drops everything else; the log only says that the key is passed, never its value. `OCW_LIVE_AIR_OFFLINE=1` (a secret or `[env]`) turns the fetching off.
 
 **Updating the worlds.** Copy the package with its manifest and route files from marge's live worlds, upload them and compare SHA-256 on both sides:
 
