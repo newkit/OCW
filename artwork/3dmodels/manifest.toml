@@ -1267,6 +1267,126 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "vehicles/airliner-twinjet.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::AirlinerTwinjet.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/balloon-hot-air.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::BalloonHotAir.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/bus-city.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::BusCity.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/car-hatchback.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::CarHatchback.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/car-saloon.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::CarSaloon.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/car-suv.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::CarSuv.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/glider-sailplane.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::GliderSailplane.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/helicopter-light.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::HelicopterLight.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/lorry-articulated-box.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::LorryArticulated.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/lorry-rigid-box.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::LorryRigid.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/motorbike-touring.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::MotorbikeTouring.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/plane-high-wing.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::PlaneHighWing.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/tractor-farm.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::TractorFarm.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/ufo-saucer.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::UfoSaucer.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/van-panel.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::VanPanel.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "wear/beard-chin-strap.glb"
 kind = "wearable"
 anchor = "head"

@@ -253,6 +253,10 @@ pub fn models() -> Vec<(Entry, Model)> {
         );
         out.push((e, m));
     }
+    // The traffic (spec 14 Phase 18, 18E T6).
+    for v in crate::vehicles::Vehicle::ALL {
+        out.push((v.entry(), v.model()));
+    }
     out
 }
 
@@ -330,11 +334,12 @@ pub fn write_manifest(old: &str, prefixes: &[&str], new: &[Entry]) -> Result<Str
 }
 
 /// The folders this crate's exporter owns in the manifest.
-pub const OWN_PREFIXES: [&str; 6] = [
+pub const OWN_PREFIXES: [&str; 7] = [
     "bikes/",
     "creatures/",
     "parts/computer/",
     "riders/",
+    "vehicles/",
     "wear/",
     "workshop/",
 ];
@@ -349,7 +354,8 @@ mod tests {
         let b = files();
         // Bikes, the riders, the rider's part files (4N N8), helmets.
         // … the unicorn, the workshop pieces and the VR bike computer.
-        let more = 1 + crate::workshop::Piece::ALL.len() + 1;
+        // … and the traffic.
+        let more = 1 + crate::workshop::Piece::ALL.len() + 1 + crate::vehicles::Vehicle::ALL.len();
         assert_eq!(
             a.len(),
             6 + 2 + crate::rider_split::part_files().len() + 4 + more

@@ -4,7 +4,8 @@
 //! wear at [`crate::riders::LOD_DISTANCE_M`] (40 m), the unicorn at 40 m
 //! like the riders (it was 80 m, Phase 13C), props (lamps, posts,
 //! bollards, gates, …) at [`PROP_LOD_M`] (60 m), plants in the middle of
-//! [`crate::vegetation::NEAR_FADE_M`] (270 m); workshop pieces and bike
+//! [`crate::vegetation::NEAR_FADE_M`] (270 m), the traffic's vehicles at
+//! 80 m ([`VEHICLE`]); workshop pieces and bike
 //! parts never (only seen up close, or drawn with their bike).
 //!
 //! Each switch cross-fades over `at_m ∓ fade_m` (Bevy's dithered
@@ -41,6 +42,12 @@ pub const PROP: LodSwitch = LodSwitch {
     at_m: PROP_LOD_M,
     fade_m: 6.0,
 };
+/// Vehicles of the traffic (spec 14 Phase 18, T6 / T7): cars, lorries,
+/// buses at 80 m (a tenth either side); aircraft are mostly far beyond it.
+pub const VEHICLE: LodSwitch = LodSwitch {
+    at_m: 80.0,
+    fade_m: 8.0,
+};
 /// Plants: the near models give way to the far ones over
 /// `vegetation::NEAR_FADE_M` (230 – 310 m).
 pub const PLANT: LodSwitch = LodSwitch {
@@ -50,7 +57,7 @@ pub const PLANT: LodSwitch = LodSwitch {
 
 /// The switch of every kind (`None`: never, the near model at any
 /// distance).
-pub const TABLE: [(Kind, Option<LodSwitch>); 8] = [
+pub const TABLE: [(Kind, Option<LodSwitch>); 9] = [
     (Kind::Bike, Some(RIDER)),
     (Kind::Rider, Some(RIDER)),
     (Kind::Wearable, Some(RIDER)),
@@ -59,6 +66,7 @@ pub const TABLE: [(Kind, Option<LodSwitch>); 8] = [
     (Kind::Plant, Some(PLANT)),
     (Kind::Creature, Some(CREATURE)),
     (Kind::Workshop, None),
+    (Kind::Vehicle, Some(VEHICLE)),
 ];
 
 /// The switch of `kind` ([`TABLE`]).
@@ -121,6 +129,7 @@ mod tests {
             (Kind::Plant, Some(270.0)),
             (Kind::Creature, Some(40.0)),
             (Kind::Workshop, None),
+            (Kind::Vehicle, Some(80.0)),
         ];
         for (k, d) in want {
             assert_eq!(distance_m(k), d, "{k:?}");

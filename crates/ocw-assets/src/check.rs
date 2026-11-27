@@ -298,7 +298,301 @@ pub fn collision_shape(name: &str) -> Option<&'static str> {
 
 /// Kinds whose origin is on the ground (15B).
 fn stands_on_ground(k: Kind) -> bool {
-    matches!(k, Kind::Bike | Kind::Prop | Kind::Plant | Kind::Creature)
+    matches!(
+        k,
+        Kind::Bike | Kind::Prop | Kind::Plant | Kind::Creature | Kind::Vehicle
+    )
+}
+
+/// Keys a vehicle file never carries, in its `extras.ocw` or a node's
+/// `extras` (18B: the traffic's behaviour is `ocw-sim::traffic`'s, a file
+/// is only its look): the physics keys and the driving numbers.
+pub const VEHICLE_PHYSICS_KEYS: [&str; 10] = [
+    "speed",
+    "speed_kmh",
+    "max_speed",
+    "power",
+    "power_kw",
+    "torque",
+    "acceleration",
+    "braking",
+    "grip",
+    "inertia",
+];
+
+/// How far a wheel's mesh centre may lie from its node's origin (m): the
+/// game spins it about that point.
+pub const WHEEL_PIVOT_TOLERANCE_M: f32 = 0.01;
+
+/// The vehicle rules (spec 18B *Models*, 18E T6): the class in
+/// `extras.ocw.class`, its budgets, its nodes (wheels, lamps, rotors, the
+/// rider, the collision box), the lamps drawn in lamp slots, the wheels
+/// spinning about their own origin and standing on the ground, the front
+/// at −Z (app frame; +Z in the file) with the origin under the wheelbase's
+/// centre, the navigation lights on their sides (red left, green right),
+/// the paint slot the game varies.
+fn check_vehicle(out: &mut Out, m: &Model, lod1: Option<usize>) {
+    use kinds::VehicleClass;
+    let class = m
+        .ocw()
+        .and_then(|o| o.get("class"))
+        .and_then(serde_json::Value::as_str);
+    let Some(class) = class.and_then(VehicleClass::parse) else {
+        out.error(
+            "vehicle.class",
+            Target::File,
+            format!(
+                "extras.ocw.class is {} – one of {}",
+                class.map_or("missing".into(), |c| format!("`{c}`")),
+                VehicleClass::ALL
+                    .iter()
+                    .map(|c| c.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+        return;
+    };
+    let (near, far) = class.budget();
+    let far_tris = lod1.map_or(0, |l| m.triangles_below(Some(l)));
+    let own = m.triangles() - far_tris;
+    if own == 0 || own > near {
+        out.error(
+            "budget.triangles",
+            Target::File,
+            format!("{own} triangles (a {}: 1…{near})", class.name()),
+        );
+    }
+    if lod1.is_some() && (far_tris == 0 || far_tris > far) {
+        out.error(
+            "lod.budget",
+            Target::Node("lod1".into()),
+            format!(
+                "lod1 has {far_tris} triangles (a {}: 1…{far})",
+                class.name()
+            ),
+        );
+    }
+    for n in class.required_nodes() {
+        if m.node(n).is_none() {
+            out.error(
+                "node.missing",
+                Target::Node(n.into()),
+                format!("missing node `{n}` (a {})", class.name()),
+            );
+        }
+    }
+    if class == VehicleClass::Ufo {
+        let rim = m
+            .nodes
+            .iter()
+            .filter(|n| n.name.starts_with("light_rim_"))
+            .count();
+        if rim < kinds::UFO_RIM_LIGHTS {
+            out.error(
+                "node.missing",
+                Target::Node("light_rim_0".into()),
+                format!(
+                    "{rim} rim lights `light_rim_<n>` (a ufo: at least {})",
+                    kinds::UFO_RIM_LIGHTS
+                ),
+            );
+        }
+    }
+    // The paint slot the game varies (and the glass of every class with a
+    // cabin).
+    let paint = class.paint_slot();
+    if m.material(paint).is_none_or(|i| !material_used(m, i)) {
+        out.error(
+            "vehicle.paint-slot",
+            Target::Material(paint.into()),
+            format!(
+                "no mesh in the paint slot `{paint}` (the colour the game varies per {})",
+                class.name()
+            ),
+        );
+    }
+    // Lamps are their own nodes, drawn only in lamp slots.
+    let own_slots = |i: usize| -> Vec<&str> {
+        m.nodes[i]
+            .primitives
+            .iter()
+            .map(|p| m.materials.get(p.material).map_or("", |x| x.name.as_str()))
+            .collect()
+    };
+    for (i, n) in m.nodes.iter().enumerate() {
+        let name = n.name.as_str();
+        if name.starts_with("light_") {
+            let s = own_slots(i);
+            if s.is_empty() {
+                out.error(
+                    "vehicle.light-mesh",
+                    Target::Node(name.into()),
+                    format!("lamp `{name}` has no lens: the game lights its mesh"),
+                );
+            } else if let Some(bad) = s.iter().find(|s| !slots::LIGHTS.contains(s)) {
+                out.error(
+                    "vehicle.light-slot",
+                    Target::Node(name.into()),
+                    format!(
+                        "lamp `{name}` is drawn in `{bad}`: lamps use {}",
+                        slots::LIGHTS.join(", ")
+                    ),
+                );
+            }
+        }
+        let moving = name.starts_with("wheel_")
+            || name.starts_with("rotor_")
+            || name == "prop"
+            || name.starts_with("door_");
+        if moving && n.primitives.is_empty() {
+            out.error(
+                "vehicle.part-mesh",
+                Target::Node(name.into()),
+                format!("`{name}` has no mesh: the game moves it"),
+            );
+        }
+        if let Some(o) = n.extras.as_object() {
+            let inner = o.get("ocw").and_then(|v| v.as_object());
+            for k in o.keys().chain(inner.into_iter().flat_map(|x| x.keys())) {
+                if PHYSICS_KEYS.contains(&k.as_str()) || VEHICLE_PHYSICS_KEYS.contains(&k.as_str())
+                {
+                    out.error(
+                        "extras.physics",
+                        Target::Node(name.into()),
+                        format!("node extras `{k}` – a vehicle file is only its look (18B)"),
+                    );
+                }
+            }
+        }
+    }
+    if let Some(o) = m.ocw() {
+        for k in o.keys() {
+            if VEHICLE_PHYSICS_KEYS.contains(&k.as_str()) {
+                out.error(
+                    "extras.physics",
+                    Target::File,
+                    format!(
+                        "extras.ocw.{k} – the traffic's driving is ocw-sim's, a vehicle file is only its look (18B)"
+                    ),
+                );
+            }
+        }
+    }
+    // Wheels: spin about their own origin, stand on the ground.
+    let mut front: Vec<f32> = Vec::new();
+    let mut rear: Vec<f32> = Vec::new();
+    for (i, n) in m.nodes.iter().enumerate() {
+        if !n.name.starts_with("wheel_") || n.primitives.is_empty() {
+            continue;
+        }
+        let Some((lo, hi)) = m.bounds_where(|k| k == i) else {
+            continue;
+        };
+        let centre = (lo + hi) / 2.0;
+        let origin = Vec3::from(m.world(i).translation);
+        // The axle runs along X: the centre in Y and Z is the pivot.
+        let off = (centre - origin) * Vec3::new(0.0, 1.0, 1.0);
+        if off.length() > WHEEL_PIVOT_TOLERANCE_M {
+            out.error(
+                "vehicle.wheel-pivot",
+                Target::Node(n.name.clone()),
+                format!(
+                    "wheel `{}`'s mesh is centred {:.3} m from its origin: the game spins it about the origin",
+                    n.name,
+                    off.length()
+                ),
+            );
+        }
+        if class.on_road() && lo.y.abs() > GROUND_TOLERANCE_M {
+            out.error(
+                "vehicle.wheel-ground",
+                Target::Node(n.name.clone()),
+                format!(
+                    "wheel `{}` reaches down to {:.2} m: a road vehicle's wheels stand on the ground",
+                    n.name, lo.y
+                ),
+            );
+        }
+        match n.name.as_str() {
+            "wheel_fl" | "wheel_fr" | "wheel_front" => front.push(origin.z),
+            "wheel_rl" | "wheel_rr" | "wheel_rear" => rear.push(origin.z),
+            _ => {}
+        }
+    }
+    if !front.is_empty() && !rear.is_empty() {
+        let f = front.iter().sum::<f32>() / front.len() as f32;
+        let r = rear.iter().sum::<f32>() / rear.len() as f32;
+        if f >= r {
+            out.error(
+                "vehicle.front",
+                Target::File,
+                "the front wheels are behind the rear ones: the front is +Z in the file (−Z in the app)",
+            );
+        } else if ((f + r) / 2.0).abs() > GROUND_TOLERANCE_M {
+            out.error(
+                "vehicle.origin",
+                Target::File,
+                format!(
+                    "the wheelbase's centre is {:.2} m from the origin along the length: the origin is under its centre (18B)",
+                    (f + r) / 2.0
+                ),
+            );
+        }
+    }
+    // Lamps on their sides: head lamps ahead of the brake lamps, left
+    // ones on the left (−X), the navigation lights red left, green right.
+    let at = |name: &str| m.position(name);
+    if let (Some(h), Some(b)) = (
+        at("light_head_l").or(at("light_head")),
+        at("light_brake_l").or(at("light_brake")),
+    ) && h.z >= b.z
+    {
+        out.error(
+            "vehicle.lights",
+            Target::Node("light_head_l".into()),
+            "the head lamps are behind the brake lamps",
+        );
+    }
+    for (name, left) in [
+        ("light_head_l", true),
+        ("light_head_r", false),
+        ("light_brake_l", true),
+        ("light_brake_r", false),
+        ("light_indicator_fl", true),
+        ("light_indicator_fr", false),
+        ("light_indicator_rl", true),
+        ("light_indicator_rr", false),
+        ("light_nav_l", true),
+        ("light_nav_r", false),
+    ] {
+        if let Some(p) = at(name)
+            && (p.x < 0.0) != left
+        {
+            out.error(
+                "vehicle.lights",
+                Target::Node(name.into()),
+                format!(
+                    "`{name}` is on the {} side (left is −X, the front −Z)",
+                    if left { "right" } else { "left" }
+                ),
+            );
+        }
+    }
+    for (name, slot) in [
+        ("light_nav_l", "light_nav_red"),
+        ("light_nav_r", "light_nav_green"),
+    ] {
+        if let Some(i) = m.node(name)
+            && !own_slots(i).contains(&slot)
+        {
+            out.error(
+                "vehicle.lights",
+                Target::Node(name.into()),
+                format!("`{name}` is drawn in `{slot}` (red left, green right)"),
+            );
+        }
+    }
 }
 
 /// How far a grounded model may reach below or float above its origin
@@ -582,7 +876,9 @@ pub fn check_model(e: &Entry, m: &Model, bytes: usize) -> Vec<Finding> {
             "a creature should have its far model in `lod1` (15B)",
         );
     }
-    if let (Some(l), Some(far)) = (lod1, far) {
+    if let (Some(l), Some(far)) = (lod1, far)
+        && kind != Kind::Vehicle
+    {
         let n = m.triangles_below(Some(l));
         if n == 0 || n > far {
             out.error(
@@ -631,6 +927,7 @@ pub fn check_model(e: &Entry, m: &Model, bytes: usize) -> Vec<Finding> {
                 );
             }
         }
+        Kind::Vehicle => check_vehicle(&mut out, m, lod1),
         _ => {
             let own = tris - lod1.map_or(0, |l| m.triangles_below(Some(l)));
             if own == 0 || own > near {
