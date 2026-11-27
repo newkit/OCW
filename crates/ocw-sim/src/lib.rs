@@ -24,6 +24,7 @@ pub mod prediction;
 pub mod ride;
 pub mod road_feel;
 pub mod session;
+pub mod traffic;
 pub mod trainer;
 pub mod weather;
 pub mod workout;
