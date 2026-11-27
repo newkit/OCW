@@ -11,7 +11,7 @@ use super::rules::{self, Access, ClassRules, Control, EdgeRule, EdgeRules, Vehic
 use super::*;
 
 /// A graph of straight edges (x, z) with classes.
-fn graph(vertices: &[[f64; 2]], edges: &[(u32, u32, RoadClass)]) -> RoadGraph {
+pub(super) fn graph(vertices: &[[f64; 2]], edges: &[(u32, u32, RoadClass)]) -> RoadGraph {
     RoadGraph {
         vertices: vertices.to_vec(),
         edges: edges
@@ -116,7 +116,7 @@ impl EdgeRules for TestRules {
     }
 }
 
-fn cfg(seed: u64, step_ms: u32, level: TrafficLevel) -> TrafficConfig {
+pub(super) fn cfg(seed: u64, step_ms: u32, level: TrafficLevel) -> TrafficConfig {
     TrafficConfig {
         seed,
         step_ms,

@@ -5,8 +5,18 @@
 //!     [--riders N] [--around DIR] \
 //!     [--package FILE.ocwpkg] [--at X,Z] [--radius 1500] [--hour 17.5] \
 //!     [--level busy] [--minutes 10] [--max 500] [--seed 1] \
-//!     [--svg OUT.svg] [--ring OUT.svg] [--class-rules]
+//!     [--svg OUT.svg] [--ring OUT.svg] [--class-rules] \
+//!     [--inspect] [--vertices V,V] [--view X,Z,R] [--title TEXT]
 //! ```
+//!
+//! It prints why vehicles stand ([`TrafficSim::waits`]: a full exit, a
+//! vehicle in the junction, give way, a light, a queue), the heads of the
+//! queues and any closed cycle (a gridlock), the standing share per 10
+//! simulated minutes and the throughput (vehicle-km/h, vehicles leaving
+//! the bubble per hour). `--inspect` adds the arms of the junctions where
+//! queues start (and of `--vertices`); `--view` draws `--svg` as a
+//! close-up of R metres around (X, Z) with those vertices marked
+//! (spec 18H: the two-junction queue on the Liechtenstein main road).
 //!
 //! With `--package` the package's own rules drive the traffic (its
 //! `TRFC`: one-ways, limits, access, lanes, signals and signs; spec 18E
@@ -45,6 +55,11 @@ struct Args {
     svg: Option<String>,
     ring: Option<String>,
     class_rules: bool,
+    inspect: bool,
+    vertices: Vec<u32>,
+    view: Option<[f64; 3]>,
+    title: Option<String>,
+    fixture: Option<String>,
     riders: usize,
     around: Option<String>,
 }
@@ -62,6 +77,11 @@ fn args() -> Args {
         svg: None,
         ring: None,
         class_rules: false,
+        inspect: false,
+        vertices: Vec::new(),
+        view: None,
+        title: None,
+        fixture: None,
         riders: 0,
         around: None,
     };
@@ -85,6 +105,21 @@ fn args() -> Args {
             "--ring" => a.ring = Some(val),
             "--class-rules" => {
                 a.class_rules = true;
+                i += 1;
+                continue;
+            }
+            "--view" => {
+                let p: Vec<f64> = val.split(',').filter_map(|x| x.parse().ok()).collect();
+                a.view = (p.len() == 3).then(|| [p[0], p[1], p[2]]);
+            }
+            "--title" => a.title = Some(val),
+            "--fixture" => a.fixture = Some(val),
+            "--vertices" => {
+                a.inspect = true;
+                a.vertices = val.split(',').filter_map(|x| x.parse().ok()).collect();
+            }
+            "--inspect" => {
+                a.inspect = true;
                 i += 1;
                 continue;
             }
@@ -220,6 +255,11 @@ fn main() {
         );
         Box::new(r)
     };
+    if let (Some(out), Some(view)) = (&a.fixture, a.view) {
+        write_fixture(out, &net, view);
+        println!("wrote {out}");
+        return;
+    }
     let mut sim = TrafficSim::new(&net, rules, cfg);
     let center = a.at.unwrap_or_else(|| {
         if a.package.is_some() {
@@ -240,6 +280,11 @@ fn main() {
     let mut tracks: Vec<([f64; 2], f64)> = Vec::new();
     let mut near_counts = 0u64;
     let (mut standing, mut sampled) = (0u64, 0u64);
+    // Per 10 simulated minutes: (standing, sampled) vehicle-seconds; the
+    // vehicle-metres driven and the vehicles that left (throughput).
+    let mut windows: Vec<(u64, u64)> = Vec::new();
+    let mut metres = 0.0f64;
+    let mut despawned0 = 0u64;
     let warm = 3000;
     // Riders on the edges nearest the centre, each riding its edge to the
     // end and starting again (T4).
@@ -295,11 +340,21 @@ fn main() {
                 .iter()
                 .filter(|e| matches!(e, TrafficEvent::Change(_)))
                 .count() as u64;
+            if t == warm {
+                despawned0 = sim.stats().despawned;
+            }
             if t.is_multiple_of(50) {
+                let w = ((t - warm) / (50 * 600)) as usize;
+                if windows.len() <= w {
+                    windows.push((0, 0));
+                }
                 for (_, v) in sim.speeds() {
                     sampled += 1;
+                    windows[w].1 += 1;
+                    metres += v;
                     if v < 0.3 {
                         standing += 1;
+                        windows[w].0 += 1;
                     }
                 }
                 for v in sim.views(&net) {
@@ -347,6 +402,21 @@ fn main() {
         100.0 * standing as f64 / sampled.max(1) as f64,
         sim.speeds().iter().filter(|(_, v)| *v < 0.3).count()
     );
+    let hours = a.minutes / 60.0;
+    println!(
+        "standing per 10 min: {}",
+        windows
+            .iter()
+            .map(|(s, n)| format!("{:.1} %", 100.0 * *s as f64 / (*n).max(1) as f64))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!(
+        "throughput: {:.0} vehicle-km/h driven, {:.0} vehicles/h left the bubble, mean speed {:.1} m/s",
+        metres / 1000.0 / hours,
+        (sim.stats().despawned - despawned0) as f64 / hours,
+        metres / sampled.max(1) as f64
+    );
     // Where vehicles stand at the end: the five vertices with the most,
     // and the control each arm has there.
     let diag = ocw_sim::traffic::WorldRules::new(&net);
@@ -383,13 +453,184 @@ fn main() {
             arms.join(", ")
         );
     }
+    // Why they stand: over all, and at the top vertices with each arm's
+    // geometry (where it goes, how long, its heading) and the turns of
+    // the vehicles waiting there.
+    let waits = sim.waits(&net);
+    let mut why: std::collections::BTreeMap<String, usize> = Default::default();
+    for w in &waits {
+        *why.entry(format!("{:?}", w.why)).or_default() += 1;
+    }
+    println!(
+        "why they stand: {}",
+        why.iter()
+            .map(|(k, n)| format!("{k} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    // Follow each standing vehicle to the head of its queue: the heads
+    // (where, why, how many behind) and closed cycles (a gridlock).
+    let by_id: std::collections::BTreeMap<u32, &ocw_sim::traffic::WaitView> =
+        waits.iter().map(|w| (w.id, w)).collect();
+    let mut heads: std::collections::BTreeMap<(u32, String), usize> = Default::default();
+    let mut in_cycle = 0usize;
+    let mut cycles: std::collections::BTreeSet<Vec<u32>> = Default::default();
+    for w in &waits {
+        let mut cur = *w;
+        let mut path: Vec<u32> = Vec::new();
+        let mut cycle = false;
+        // The vehicle it waits for at the junction, else the one ahead.
+        while let Some(n) = cur.blocker.or(cur.behind).and_then(|b| by_id.get(&b)) {
+            if let Some(at) = path.iter().position(|&x| x == cur.id) {
+                let mut c = path[at..].to_vec();
+                let m = c.iter().enumerate().min_by_key(|x| x.1).map_or(0, |x| x.0);
+                c.rotate_left(m);
+                cycles.insert(c);
+                cycle = true;
+                break;
+            }
+            path.push(cur.id);
+            cur = **n;
+        }
+        if cycle {
+            in_cycle += 1;
+            continue;
+        }
+        let k = format!(
+            "{:?} ({:?}) {}->{}",
+            cur.why,
+            cur.ctrl,
+            cur.on.0,
+            cur.next.map_or("end".to_string(), |n| n.0.to_string())
+        );
+        *heads.entry((cur.vertex.0, k)).or_default() += 1;
+    }
+    let mut hv: Vec<_> = heads.into_iter().collect();
+    hv.sort_by_key(|h| std::cmp::Reverse(h.1));
+    println!(
+        "queue heads (vehicles in the queue, the head's vertex and reason); {in_cycle} in closed cycles:"
+    );
+    for ((vx, k), n) in hv.iter().take(8) {
+        println!("  {n} behind a head at vertex {vx}: {k}");
+    }
+    for c in cycles.iter().take(4) {
+        let desc: Vec<String> = c
+            .iter()
+            .map(|id| {
+                let w = by_id[id];
+                format!(
+                    "{id} at vertex {} {:?}/{:?} {}->{}",
+                    w.vertex.0,
+                    w.why,
+                    w.ctrl,
+                    w.on.0,
+                    w.next.map_or("end".to_string(), |n| n.0.to_string())
+                )
+            })
+            .collect();
+        println!("  cycle: {}", desc.join(" | "));
+    }
+    if a.inspect {
+        let mut look: Vec<u32> = hv.iter().take(4).map(|h| h.0.0).collect();
+        look.extend(a.vertices.iter().copied());
+        look.dedup();
+        for vx in look {
+            let v = VertexId(vx);
+            println!("  vertex {vx}:");
+            for &e in net.edges_at(v) {
+                let out_fwd = net.edge(e).from == v;
+                let other = net.end_vertex(e, out_fwd);
+                let h = net.leaving_direction(e, out_fwd, 20.0);
+                println!(
+                    "    arm edge {e} {:?} {:.0} m to vertex {} ({} arms), heading {:.0} deg, oneway {:?}, aadt {:.0}",
+                    net.edge(e).class,
+                    net.geometry(e).length(),
+                    other.0,
+                    net.edges_at(other).len(),
+                    h[0].atan2(-h[1]).to_degrees(),
+                    sim.rule(e).oneway,
+                    sim.rule(e).aadt
+                );
+            }
+            let mut turns: std::collections::BTreeMap<String, usize> = Default::default();
+            for w in waits.iter().filter(|w| w.vertex == v && w.dist < 150.0) {
+                let k = format!(
+                    "{}->{} {:?}",
+                    w.on.0,
+                    w.next.map_or("end".to_string(), |n| n.0.to_string()),
+                    w.why
+                );
+                *turns.entry(k).or_default() += 1;
+            }
+            for (k, n) in turns {
+                println!("    {n} waiting {k}");
+            }
+        }
+    }
     if a.riders > 0 {
         println!("riders: {}; overtakes: {passes}", a.riders);
     }
     if let Some(out) = &a.svg {
-        write_map(out, &net, &sim, bubble, &tracks);
+        let title = a.title.clone().unwrap_or_else(|| {
+            "Traffic core T3: vehicle tracks every 5 s, red = standing, green = 20 m/s; dashed = the rider's bubble".to_string()
+        });
+        let view = a.view.map(|v| (v, a.vertices.clone()));
+        write_map(out, &net, &sim, bubble, &tracks, view, &title);
         println!("wrote {out}");
     }
+}
+
+/// Writes the motor roads with a vertex within `view` (x, z, radius) as a
+/// text fixture for the tests (`v X Z`, then `e FROM TO CLASS ONEWAY WIDTH
+/// X,Z X,Z …` with the vertices renumbered; spec 18H).
+fn write_fixture(out: &str, net: &RoadNetwork, view: [f64; 3]) {
+    let g = net.graph();
+    let inside = |v: VertexId| {
+        let p = g.vertices[v.0 as usize];
+        let (dx, dz) = (p[0] - view[0], p[1] - view[1]);
+        dx * dx + dz * dz <= view[2] * view[2]
+    };
+    let motor = |e: &Edge| !matches!(e.class, RoadClass::Cycleway | RoadClass::Path);
+    let edges: Vec<&Edge> = g
+        .edges
+        .iter()
+        .filter(|e| motor(e) && (inside(e.from) || inside(e.to)))
+        .collect();
+    let mut ids: std::collections::BTreeMap<u32, usize> = Default::default();
+    for e in &edges {
+        for v in [e.from.0, e.to.0] {
+            let n = ids.len();
+            ids.entry(v).or_insert(n);
+        }
+    }
+    let mut verts = vec![[0.0; 2]; ids.len()];
+    for (&v, &k) in &ids {
+        verts[k] = g.vertices[v as usize];
+    }
+    let mut s = format!(
+        "# Road graph around ({:.0}, {:.0}), {:.0} m: motor roads of the Liechtenstein package (spec 18H).\n# Derived from OpenStreetMap data, (c) OpenStreetMap contributors, ODbL 1.0.\n",
+        view[0], view[1], view[2]
+    );
+    for p in &verts {
+        s += &format!("v {:.2} {:.2}\n", p[0] - view[0], p[1] - view[1]);
+    }
+    for e in edges {
+        let pts: Vec<String> = e
+            .points
+            .iter()
+            .map(|p| format!("{:.2},{:.2}", p[0] - view[0], p[1] - view[1]))
+            .collect();
+        s += &format!(
+            "e {} {} {:?} {:?} {:.1} {}\n",
+            ids[&e.from.0],
+            ids[&e.to.0],
+            e.class,
+            e.oneway,
+            e.width_m,
+            pts.join(" ")
+        );
+    }
+    std::fs::write(out, s).expect("write fixture");
 }
 
 fn write_map(
@@ -398,9 +639,17 @@ fn write_map(
     sim: &TrafficSim,
     b: Bubble,
     tracks: &[([f64; 2], f64)],
+    view: Option<([f64; 3], Vec<u32>)>,
+    title: &str,
 ) {
-    let r = b.radius + 200.0;
-    let (x0, z0) = (b.center[0] - r, b.center[1] - r);
+    // The whole bubble, or a close-up (`--view X,Z,R`) with the vertices
+    // of `--vertices` labelled.
+    let (c, r) = match &view {
+        Some((v, _)) => ([v[0], v[1]], v[2]),
+        None => (b.center, b.radius + 200.0),
+    };
+    let (x0, z0) = (c[0] - r, c[1] - r);
+    let near = |p: [f64; 2]| (p[0] - c[0]).abs() < r && (p[1] - c[1]).abs() < r;
     let size = 2.0 * r;
     let px = 1600.0;
     let k = px / size;
@@ -408,10 +657,7 @@ fn write_map(
         "<svg xmlns='http://www.w3.org/2000/svg' width='{px}' height='{px}' viewBox='0 0 {px} {px}'>\n<rect width='100%' height='100%' fill='#f4f2ec'/>\n"
     );
     for (i, e) in net.graph().edges.iter().enumerate() {
-        let bb = e
-            .points
-            .iter()
-            .any(|p| (p[0] - b.center[0]).abs() < r && (p[1] - b.center[1]).abs() < r);
+        let bb = e.points.iter().any(|p| near(*p));
         if !bb {
             continue;
         }
@@ -431,7 +677,7 @@ fn write_map(
             pts.join(" ")
         );
     }
-    for (p, v) in tracks {
+    for (p, v) in tracks.iter().filter(|t| near(t.0)) {
         s += &format!(
             "<circle cx='{:.1}' cy='{:.1}' r='1.6' fill='{}' fill-opacity='0.7'/>\n",
             (p[0] - x0) * k,
@@ -439,17 +685,30 @@ fn write_map(
             speed_colour(*v)
         );
     }
-    for v in sim.views(net) {
+    for v in sim.views(net).into_iter().filter(|v| near(v.xz)) {
         let shape = match v.class {
             VehicleClass::Lorry | VehicleClass::Bus => 4.5,
             VehicleClass::Motorbike => 2.5,
             _ => 3.5,
         };
         s += &format!(
-            "<circle cx='{:.1}' cy='{:.1}' r='{shape}' fill='#1d3557' stroke='white' stroke-width='0.8'/>\n",
+            "<circle cx='{:.1}' cy='{:.1}' r='{shape}' fill='{}' stroke='white' stroke-width='0.8'/>\n",
             (v.xz[0] - x0) * k,
-            (v.xz[1] - z0) * k
+            (v.xz[1] - z0) * k,
+            if v.speed < 0.3 { "#c1121f" } else { "#1d3557" }
         );
+    }
+    if let Some((_, vertices)) = &view {
+        for &vx in vertices {
+            let p = net.graph().vertices[vx as usize];
+            s += &format!(
+                "<circle cx='{:.1}' cy='{:.1}' r='9' fill='none' stroke='#333' stroke-width='2'/><text x='{:.1}' y='{:.1}' font-family='sans-serif' font-size='18' fill='#333'>vertex {vx}</text>\n",
+                (p[0] - x0) * k,
+                (p[1] - z0) * k,
+                (p[0] - x0) * k + 12.0,
+                (p[1] - z0) * k - 12.0
+            );
+        }
     }
     s += &format!(
         "<circle cx='{:.1}' cy='{:.1}' r='{:.1}' fill='none' stroke='#e76f51' stroke-width='2' stroke-dasharray='8 6'/>\n",
@@ -462,7 +721,9 @@ fn write_map(
         (b.center[0] - x0) * k,
         (b.center[1] - z0) * k
     );
-    s += "<text x='16' y='30' font-family='sans-serif' font-size='20' fill='#333'>Traffic core T3: vehicle tracks every 5 s, red = standing, green = 20 m/s; dashed = the rider's bubble</text>\n</svg>\n";
+    s += &format!(
+        "<text x='16' y='30' font-family='sans-serif' font-size='20' fill='#333'>{title}</text>\n</svg>\n"
+    );
     std::fs::write(out, s).expect("write svg");
 }
 

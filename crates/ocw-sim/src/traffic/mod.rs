@@ -13,8 +13,13 @@
 //! - **Junctions** ([`Control`]): signals with cycles from the tick
 //!   ([`signals`]), `stop` (halt, then give way), give way, right before
 //!   left on equal minor roads (left where traffic keeps left), priority
-//!   of the higher class; vehicles do not enter a junction whose exit has
-//!   no room.
+//!   of the higher class; vehicles do not enter a junction without room
+//!   for their body behind it, measured over short exit edges (don't
+//!   block the box); a vehicle in the junction holds others only while it
+//!   moves or its rear is in it, never one arriving on the edge it leaves
+//!   on; one with right of way standing at the line is not waited for
+//!   (18H: the gridlocks around short side-road edges). [`TrafficSim::waits`]
+//!   tells why each standing vehicle stands.
 //! - **Routes** respect `oneway` and access per class ([`EdgeRules`]; the
 //!   default [`ClassRules`] derives everything from the road class, T2's
 //!   `TRFC` data implements the trait later).
@@ -53,6 +58,8 @@ pub mod world;
 mod tests;
 #[cfg(test)]
 mod tests_around;
+#[cfg(test)]
+mod tests_junctions;
 
 use ocw_world::RoadNetwork;
 use ocw_world::graph::{RoadClass, VertexId};
@@ -161,6 +168,10 @@ const LOOK_AHEAD_M: f64 = 200.0;
 const JUNCTION_M: f64 = 80.0;
 /// A vehicle that crossed a vertex is "in the junction" for this many metres.
 const BOX_M: f64 = 10.0;
+/// A rear closer than this to the vertex behind is still in the junction
+/// (m); a vehicle enters a junction only with room for its body, its
+/// standstill gap and this behind the vertex (don't block the box).
+const REAR_IN_M: f64 = 1.5;
 /// A vehicle stuck this long is removed (s; a safety valve).
 const STUCK_S: f64 = 600.0;
 
@@ -181,6 +192,47 @@ pub struct VehicleView {
     /// Position (x, z) and heading (unit, x, z).
     pub xz: [f64; 2],
     pub heading: [f64; 2],
+}
+
+/// Why a vehicle stands (the bench's and the tests' diagnosis of queues).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Wait {
+    /// The exit behind the junction has no room.
+    ExitFull,
+    /// A rider comes at the junction (18B: vehicles always yield).
+    Rider,
+    /// A red or amber light.
+    Signal,
+    /// The halt at a stop line.
+    StopLine,
+    /// A vehicle is in the junction.
+    InBox,
+    /// A vehicle with right of way comes.
+    Yield,
+    /// Behind another vehicle or a rider.
+    Queue,
+    /// None of these (starting, a route end).
+    Other,
+}
+
+/// A standing vehicle, where and why (the bench, tests).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WaitView {
+    pub id: u32,
+    /// The vertex at the end of its step and the metres to it.
+    pub vertex: VertexId,
+    pub dist: f64,
+    /// The (edge, forward) it is on and the one it goes to next.
+    pub on: (usize, bool),
+    pub next: Option<(usize, bool)>,
+    pub why: Wait,
+    /// The vehicle right ahead (within 40 m), by id.
+    pub behind: Option<u32>,
+    /// The vehicle it waits for at the junction (one with right of way,
+    /// in the junction or in the full exit), by id.
+    pub blocker: Option<u32>,
+    /// The control at the vertex for it.
+    pub ctrl: Control,
 }
 
 /// Counters for tests and tools.
@@ -321,6 +373,10 @@ struct Approach {
     waiting: bool,
     wait_s: f64,
     in_box: bool,
+    /// In the junction: the edge it is leaving on, and whether its rear
+    /// is still in the junction (within [`REAR_IN_M`] of the vertex).
+    edge: u32,
+    rear_in: bool,
     id: u32,
     /// A rider (T4: vehicles always yield to riders).
     rider: bool,
@@ -1052,11 +1108,15 @@ impl TrafficSim {
                     waiting,
                     wait_s: v.wait_s,
                     in_box: false,
+                    edge: st.edge,
+                    rear_in: false,
                     id: v.f.id,
                     rider: false,
                 });
             }
-            if v.pos.step > 0 && v.pos.s < BOX_M {
+            // In the junction: the front within the box, or a long body's
+            // rear still in it.
+            if v.pos.step > 0 && v.pos.s < BOX_M.max(v.length + REAR_IN_M) {
                 let prev = v.f.route[v.pos.step - 1];
                 self.approaches.push(Approach {
                     vertex: net.start_vertex(st.edge as usize, st.forward).0,
@@ -1069,6 +1129,8 @@ impl TrafficSim {
                     waiting: false,
                     wait_s: 0.0,
                     in_box: true,
+                    edge: st.edge,
+                    rear_in: v.pos.s - v.length < REAR_IN_M,
                     id: v.f.id,
                     rider: false,
                 });
@@ -1093,6 +1155,8 @@ impl TrafficSim {
                     waiting: false,
                     wait_s: 0.0,
                     in_box: false,
+                    edge: u.edge as u32,
+                    rear_in: false,
                     id: 0,
                     rider: true,
                 });
@@ -1105,6 +1169,11 @@ impl TrafficSim {
     /// The leader of vehicle `i` in its lane (on this step or the next
     /// ones): (gap bumper to bumper, its speed, a rider).
     fn leader(&self, net: &RoadNetwork, i: usize) -> Option<(f64, f64, bool)> {
+        self.leader_who(net, i).map(|(g, sp, r, _)| (g, sp, r))
+    }
+
+    /// [`Self::leader`] and who it is (a slot's `who`).
+    fn leader_who(&self, net: &RoadNetwork, i: usize) -> Option<(f64, f64, bool, u32)> {
         let v = &self.vehicles[i];
         let k = self.slot_of[i];
         let me = self.slots[k];
@@ -1121,7 +1190,7 @@ impl TrafficSim {
             && next.key == me.key
         {
             let (l, sp, rider) = slot_len(next);
-            return Some((next.s - me.s - l, sp, rider));
+            return Some((next.s - me.s - l, sp, rider, next.who));
         }
         let st = v.f.route[v.pos.step];
         let mut base = kin::step_len(net, &st) - v.pos.s;
@@ -1138,7 +1207,7 @@ impl TrafficSim {
                 && s.who != i as u32
             {
                 let (l, sp, rider) = slot_len(s);
-                return Some((base + s.s - l, sp, rider));
+                return Some((base + s.s - l, sp, rider, s.who));
             }
             base += kin::step_len(net, ns);
             step += 1;
@@ -1149,52 +1218,82 @@ impl TrafficSim {
     /// Whether vehicle `i` must wait at the end of its step (signals,
     /// stop, give way, a full exit).
     fn must_stop(&self, net: &RoadNetwork, i: usize, dist: f64) -> bool {
+        self.wait_reason(net, i, dist).is_some()
+    }
+
+    /// Why vehicle `i` must wait at the end of its step, if it must, and
+    /// the vehicle (index) it waits for when there is one.
+    fn wait_reason(&self, net: &RoadNetwork, i: usize, dist: f64) -> Option<(Wait, Option<u32>)> {
         let v = &self.vehicles[i];
         if v.committed || v.ctrl == Control::None || dist > JUNCTION_M {
-            return false;
+            return None;
         }
-        // No room behind the junction: wait before it.
-        if let Some(next) = v.f.route.get(v.pos.step + 1) {
-            let lanes = self.rules[next.edge as usize].lanes_in(next.forward).max(1);
-            let want = lane_key(next.edge, next.forward, v.lane.min(lanes - 1));
-            let at = self.slots.partition_point(|s| s.key < want);
-            if let Some(s) = self.slots.get(at)
-                && s.key == want
-                && (s.who as usize) < self.vehicles.len()
-            {
-                let o = &self.vehicles[s.who as usize];
-                if s.s - o.length < v.length + 1.0 && o.v < 2.0 && dist < 30.0 {
-                    return true;
-                }
-            }
+        // No room behind the junction for the whole body: wait before
+        // it (don't block the box), also where the exit is a short edge
+        // and the queue reaches back over the next vertex.
+        let need = v.length + v.f.driver.gap + REAR_IN_M + 0.5;
+        if dist < 30.0
+            && let Some((room, sp, who)) = self.exit_room(net, i, need)
+            && room < need
+            && sp < 2.0
+        {
+            return Some((Wait::ExitFull, Some(who)));
         }
         let st = v.f.route[v.pos.step];
         let vertex = net.end_vertex(st.edge as usize, st.forward).0;
         if self.rider_conflict(i, vertex, dist) {
-            return true;
+            return Some((Wait::Rider, None));
         }
         match v.ctrl {
-            Control::None | Control::Priority => false,
+            Control::None | Control::Priority => None,
             Control::Signals => {
                 let (light, age) = signals::light(vertex, v.sig_group, self.time_ms());
                 let can_stop = dist - 2.0 > v.v * v.v / (2.0 * v.f.driver.decel);
-                match light {
+                let stop = match light {
                     Light::Green => false,
                     Light::Amber => can_stop && !v.lunatic,
                     // Lunatics run a light that just turned red.
                     Light::Red => !(v.lunatic && age < 2_000 && !can_stop),
-                }
+                };
+                stop.then_some((Wait::Signal, None))
             }
-            Control::Stop if !v.stop_done => true,
+            Control::Stop if !v.stop_done => Some((Wait::StopLine, None)),
             Control::Stop | Control::GiveWay | Control::RightBeforeLeft => {
                 self.conflict(i, vertex, dist)
             }
         }
     }
 
+    /// The room behind the junction at the end of vehicle `i`'s step: the
+    /// metres from the vertex to the rear of the first vehicle in its lane
+    /// along the route (over short edges too), that vehicle's speed and
+    /// index; `None` when there is none within `reach`.
+    fn exit_room(&self, net: &RoadNetwork, i: usize, reach: f64) -> Option<(f64, f64, u32)> {
+        let v = &self.vehicles[i];
+        let mut base = 0.0;
+        let mut step = v.pos.step + 1;
+        while base < reach {
+            let ns = v.f.route.get(step)?;
+            let lanes = self.rules[ns.edge as usize].lanes_in(ns.forward).max(1);
+            let want = lane_key(ns.edge, ns.forward, v.lane.min(lanes - 1));
+            let at = self.slots.partition_point(|s| s.key < want);
+            if let Some(s) = self.slots.get(at)
+                && s.key == want
+                && s.who != i as u32
+                && (s.who as usize) < self.vehicles.len()
+            {
+                let o = &self.vehicles[s.who as usize];
+                return Some((base + s.s - o.length, o.v, s.who));
+            }
+            base += kin::step_len(net, ns);
+            step += 1;
+        }
+        None
+    }
+
     /// Whether a vehicle with right of way over `i` comes, or one is in
     /// the junction.
-    fn conflict(&self, i: usize, vertex: u32, dist: f64) -> bool {
+    fn conflict(&self, i: usize, vertex: u32, dist: f64) -> Option<(Wait, Option<u32>)> {
         let v = &self.vehicles[i];
         let st = v.f.route[v.pos.step];
         let from = dir_key(st.edge, st.forward);
@@ -1211,8 +1310,13 @@ impl TrafficSim {
                 continue;
             }
             if b.in_box {
-                if b.v > 0.5 || b.dist < 1.0 {
-                    return true;
+                // One leaving on the edge this vehicle arrives on is in
+                // the other half of that road, past it; one standing
+                // with its rear out of the junction blocks nobody's way
+                // through it (a full exit is [`Wait::ExitFull`]). Only
+                // one moving through, or standing in it, does.
+                if b.edge != st.edge && (b.rear_in || b.v > 0.5) {
+                    return Some((Wait::InBox, Some(b.who)));
                 }
                 continue;
             }
@@ -1221,6 +1325,13 @@ impl TrafficSim {
             let from_right = if keep_left { cross > 0.5 } else { cross < -0.5 };
             let prior = b.level > level || (b.level == level && level < 2 && from_right);
             if !prior {
+                continue;
+            }
+            // One with right of way that stands at the line (held by a
+            // queue, a full exit, a rider) is not coming: going before it
+            // breaks the gridlock of a turn into a short side road whose
+            // own vehicle waits for it (spec 18H).
+            if b.waiting && b.level > level {
                 continue;
             }
             // Deadlock breaker: equals all waiting – the one waiting
@@ -1235,10 +1346,10 @@ impl TrafficSim {
             }
             let eta_b = b.dist / b.v.max(0.5);
             if eta_b < eta + gap && b.dist < 100.0 {
-                return true;
+                return Some((Wait::Yield, Some(b.who)));
             }
         }
-        false
+        None
     }
 
     /// The acceleration of vehicle `i`: (a, interacting, the binding
@@ -2527,6 +2638,58 @@ impl TrafficSim {
             .iter()
             .find(|v| v.f.id == id)
             .map(|v| v.manner)
+    }
+
+    /// The vehicles standing (under 0.3 m/s), where and why (the bench,
+    /// tests: queues and gridlocks).
+    pub fn waits(&mut self, net: &RoadNetwork) -> Vec<WaitView> {
+        // The indexes as the next step builds them (they are rebuilt from
+        // the state at every step, so this changes nothing).
+        self.index_users();
+        self.build_slots(net);
+        self.build_approaches(net);
+        self.build_rels(net);
+        let mut out = Vec::new();
+        for (i, v) in self.vehicles.iter().enumerate() {
+            if v.v >= 0.3 {
+                continue;
+            }
+            let st = v.f.route[v.pos.step];
+            let dist = kin::step_len(net, &st) - v.pos.s;
+            let lead = self.leader_who(net, i);
+            let behind = lead.and_then(|(gap, _, _, who)| {
+                ((who as usize) < self.vehicles.len() && gap < 40.0)
+                    .then(|| self.vehicles[who as usize].f.id)
+            });
+            let reason = self.wait_reason(net, i, dist);
+            let why = match reason {
+                Some((w, _)) => w,
+                None => match lead {
+                    Some((gap, sp, _, _)) if gap < 15.0 && sp < 1.0 => Wait::Queue,
+                    _ => Wait::Other,
+                },
+            };
+            let blocker = reason
+                .and_then(|r| r.1)
+                .filter(|&w| (w as usize) < self.vehicles.len())
+                .map(|w| self.vehicles[w as usize].f.id);
+            out.push(WaitView {
+                id: v.f.id,
+                vertex: net.end_vertex(st.edge as usize, st.forward),
+                dist,
+                on: (st.edge as usize, st.forward),
+                next: v
+                    .f
+                    .route
+                    .get(v.pos.step + 1)
+                    .map(|n| (n.edge as usize, n.forward)),
+                why,
+                behind,
+                blocker,
+                ctrl: v.ctrl,
+            });
+        }
+        out
     }
 
     /// The ids, speeds and accelerations of the vehicles (tests).
