@@ -26,6 +26,8 @@ pub mod frame_rate;
 pub mod gear;
 pub mod ground;
 pub mod ground_detail;
+pub mod heart;
+pub mod heart_hud;
 pub mod house_style;
 pub mod houses;
 pub mod hud;

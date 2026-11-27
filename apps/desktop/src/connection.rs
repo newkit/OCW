@@ -81,6 +81,8 @@ impl Plugin for ConnectionPlugin {
                 ocw_ui::status::StatusPlugin,
                 // `traffic` and the `[traffic]` settings (spec 14 Phase 18).
                 ocw_ui::traffic::TrafficPlugin,
+                // `hr.test`: a test heart rate for the HUD's heart.
+                ocw_ui::hr_test::HrTestPlugin,
             ));
         }
         register_commands(app);

@@ -42,6 +42,7 @@ pub mod controls;
 pub mod events;
 pub mod god;
 pub mod history;
+pub mod hr_test;
 pub mod join;
 pub mod key_entry;
 pub mod menu;
