@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use web_time::Instant;
 
+use super::aircraft::{AircraftSound, AircraftSynth};
 use super::cues::{Cue, CueVoice};
 use super::drone::{DroneSound, DroneSynth};
 use super::dsp::{Svf, smoothing};
@@ -57,6 +58,9 @@ pub enum MixerMsg {
     /// bump or crash): its place's left and right gains (distance and
     /// direction) and the air's low-pass.
     SpatialCue(Cue, Placement, Instant),
+    /// The aircraft heard now (spec 14 Phase 18, T8; every frame while
+    /// any is heard, once empty to fade them out).
+    Aircraft(Vec<AircraftSound>),
 }
 
 /// See the module docs.
@@ -77,6 +81,7 @@ pub struct Mixer {
     placed: Vec<(CueVoice, [f32; 2], Option<Svf>)>,
     drone: DroneSynth,
     drone_sound: Option<DroneSound>,
+    aircraft: AircraftSynth,
     /// Coefficient of the per-block smoothing.
     smooth: f32,
     /// Samples into the current block.
@@ -105,6 +110,7 @@ impl Mixer {
             placed: Vec::new(),
             drone: DroneSynth::new(sr),
             drone_sound: None,
+            aircraft: AircraftSynth::new(sr),
             smooth: smoothing(0.06, sr, BLOCK),
             phase: 0,
             rx: None,
@@ -132,6 +138,7 @@ impl Mixer {
             self.others = OthersSynth::new(sr);
             self.weather = WeatherSynth::new(sr);
             self.drone = DroneSynth::new(sr);
+            self.aircraft = AircraftSynth::new(sr);
             self.smooth = smoothing(0.06, sr, BLOCK);
             self.voices.clear();
             self.placed.clear();
@@ -161,6 +168,7 @@ impl Mixer {
                 }
             }
             MixerMsg::Drone(d) => self.drone_sound = d,
+            MixerMsg::Aircraft(a) => self.aircraft.apply(&a),
         }
     }
 
@@ -294,6 +302,10 @@ impl Mixer {
         let fx = RIDE_LEVEL * g.get(Bus::Effects);
         // The photographer's shutter and drone, placed, on the effects bus.
         let (mut pl, mut pr) = self.drone.sample(self.drone_sound.as_ref());
+        // The aircraft, placed, on the effects bus (spec 14 Phase 18, T8).
+        let (al, ar) = self.aircraft.sample();
+        pl += al;
+        pr += ar;
         for (v, [l, r], air) in &mut self.placed {
             let mut s = v.sample(sr);
             if let Some(f) = air {
