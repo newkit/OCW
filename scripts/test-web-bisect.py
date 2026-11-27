@@ -28,6 +28,14 @@ ride of the Hills route with ?log=1&gpu=webgl2&quality=low&SWITCH:
   nosky        no clouds.wesl pipeline;  noegui   no egui pipeline;
   frames=30 / frames=0   "the cameras stop drawing", the page lives on;
   ios=safe     all of them, the ride still draws;
+  the shadows  (v6.77) the iPhone (iOS WebKit, WebGL 2) rides without
+               shadows by default ("shadows off on iOS WebKit with WebGL 2"
+               in the log, the quality line "shadows off (iOS WebKit …)")
+               in the saver memory mode; noshadow=0 turns them on (1024²),
+               shadowmap=512&noshadow=0 at 512², shadowfix=hw2x2,near
+               names the fix; Android keeps them (1024², no iOS line);
+               every ride logs the renderer's GPU allocations ("gpu
+               allocated N MB", "gpu ~N MB" in the memory samples);
   killed       a load whose pagehide never comes (the browser killed it):
                the next load names its last sign of life (the pulse: time,
                wasm, frames).
@@ -72,7 +80,16 @@ if (!navigator.gpu) {
 }
 """
 ALL = ["base", "nosee", "noarrays", "plain", "noshadow", "nomsaa", "nosky", "noegui", "novoice", "noaudio",
-       "pipelines=serial", "frames=30", "frames=0", "ios=safe", "killed"]
+       "pipelines=serial", "frames=30", "frames=0", "ios=safe", "killed",
+       "noshadow=0", "shadowmap=512&noshadow=0", "shadowmap=1024", "shadowfix=hw2x2,near&noshadow=0"]
+# The shadow cases (v6.77): what the quality line says about the shadows.
+SHADOW_CASES = {
+    "noshadow=0": "shadows 1024² × 1 over 70 m",
+    "shadowmap=512&noshadow=0": "shadows 512² × 1 over 70 m",
+    "shadowmap=1024": "shadows 1024² × 1 over 70 m",
+    "shadowfix=hw2x2,near&noshadow=0": "shadows 1024² × 1 over 70 m",
+}
+IOS_OFF = "shadows off on iOS WebKit with WebGL 2: the shadow pass closed the page on an iPhone (iOS 18.7)"
 ANDROID = ["base", "nosee", "noegui", "pipelines=serial", "ios=safe"]
 # Our shaders and the switch that keeps them from compiling.
 SHADERS = {
@@ -230,12 +247,35 @@ def main():
             check(f"{phone} {case}: the log has the pipeline compiles", len(compiled) >= 3, compiled[:3])
         check(f"{phone} {case}: the log has the first frames' times", re.search(r" P frame 1: \d+ ms", log), "")
         check(f"{phone} {case}: the log has the memory samples", re.search(r" P memory: wasm \d+ MB.*frames \d+", log), "")
+        if case != "frames=0":
+            check(f"{phone} {case}: the log has the GPU allocations",
+                  re.search(r"gpu allocated \d+ MB \(textures \d+ MB in \d+, buffers", log)
+                  and re.search(r" P memory: wasm \d+ MB.*gpu ~\d+ MB \(renderer \d+ MB", log),
+                  [ln for ln in log.split("\n") if "gpu allocated" in ln][:1])
+        quality = (re.findall(r"quality: low \([^\n]*", log) or [""])[0]
+        ios_default = phone == "iphone" and "noshadow" not in case and "shadowmap" not in case and case != "ios=safe"
+        if ios_default:
+            check(f"{phone} {case}: shadows off by default on iOS WebKit (log, quality line)",
+                  IOS_OFF in log and "shadows off (iOS WebKit with WebGL 2" in quality, quality[:200])
+            check(f"{phone} {case}: the saver memory mode on iOS", "world memory: saver" in log, "")
+        if phone == "android":
+            check(f"{phone} {case}: Android keeps its shadows (no iOS default)",
+                  IOS_OFF not in log and ("shadows 1024² × 1" in quality or case == "ios=safe"), quality[:200])
+        if case in SHADOW_CASES:
+            check(f"{phone} {case}: the shadows are on as asked", SHADOW_CASES[case] in quality and IOS_OFF not in log,
+                  quality[:200])
         check(f"{phone} {case}: a 'Script error.' gets its note", "details are hidden" in log, "")
         sdk = [u for u in fetched if "livekit-client" in u]
         check(f"{phone} {case}: LiveKit's SDK is not fetched for a solo ride", not sdk, sdk)
         names = (re.findall(r"(?:bisect|render) switches: [^\n]*", log) or [""])
         joined = " | ".join(names)
-        if case == "base":
+        if case in SHADOW_CASES:
+            if "shadowmap=" in case:
+                n = re.search(r"shadowmap=(\d+)", case).group(1)
+                check(f"{phone} {case}: the log names the size", f"shadow map: {n}² at most" in log, "")
+            if "shadowfix" in case:
+                check(f"{phone} {case}: the log names the fix", "shadowfix=hw2x2,near" in joined, joined)
+        elif case == "base":
             check(f"{phone} base: WebGL 2 paces the pipelines (4 per frame)", "4 pipeline(s) per frame" in joined, joined)
             check(f"{phone} base: the trees' shader compiles", any("see_through.wesl" in c for c in compiled),
                   [c for c in compiled if "ocw_render" in c][:4])
@@ -255,7 +295,7 @@ def main():
         finish(pg, phone, case, text, ctx)
 
     def finish(pg, phone, case, text, ctx):
-        name = case.replace("=", "-")
+        name = case.replace("=", "-").replace("&", "_").replace(",", "+")
         with open(f"{base}-{phone}-{name}.txt", "w") as f:
             f.write(text)
         path = f"{base}-{phone}-{name}.png"

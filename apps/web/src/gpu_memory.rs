@@ -80,6 +80,35 @@ impl GpuMemory {
     }
 }
 
+/// The renderer's allocations as the page reads them
+/// (`window.ocw.gpuAllocated()`, the page log's memory lines; 10G).
+pub fn allocated_json(a: &bevy::render::render_resource::GpuAllocated) -> String {
+    serde_json::json!({
+        "textures": a.textures,
+        "texture_bytes": a.texture_bytes,
+        "buffers": a.buffers,
+        "buffer_bytes": a.buffer_bytes,
+        "total": a.total_bytes(),
+        "peak": a.peak_bytes,
+    })
+    .to_string()
+}
+
+/// One line for the log: "gpu allocated 61 MB (textures 48 MB in 120,
+/// buffers 13 MB in 300; peak 70 MB)".
+pub fn allocated_line(a: &bevy::render::render_resource::GpuAllocated) -> String {
+    let mb = |b: u64| b as f64 / 1048576.0;
+    format!(
+        "gpu allocated {:.0} MB (textures {:.0} MB in {}, buffers {:.0} MB in {}; peak {:.0} MB)",
+        mb(a.total_bytes()),
+        mb(a.texture_bytes),
+        a.textures,
+        mb(a.buffer_bytes),
+        a.buffers,
+        mb(a.peak_bytes)
+    )
+}
+
 /// The bytes of a texture of `size` (width, height, layers) in a format
 /// whose blocks of `block` texels take `block_bytes`, with `mips` levels.
 pub fn texture_bytes(size: [u32; 3], block: (u32, u32), block_bytes: u32, mips: u32) -> u64 {
@@ -213,13 +242,30 @@ fn sum_cpu_memory(
     CPU_MESH_BYTES.store(mesh as u64, Relaxed);
 }
 
+/// The page log's line of the renderer's allocations whenever their total
+/// moved by [`LOG_STEP_BYTES`] (10G: the next phone log shows the GPU
+/// memory before a kill).
+pub const LOG_STEP_BYTES: u64 = 8 << 20;
+
+fn log_allocated(mut last: Local<Option<u64>>) {
+    let a = bevy::render::render_resource::gpu_allocated();
+    let total = a.total_bytes();
+    if total == 0 {
+        return;
+    }
+    if last.is_none_or(|l| total.abs_diff(l) >= LOG_STEP_BYTES) {
+        *last = Some(total);
+        info!("{}", allocated_line(&a));
+    }
+}
+
 /// Sums the GPU memory in the render world (no-op without one: the
 /// native tests).
 pub struct GpuMemoryPlugin;
 
 impl Plugin for GpuMemoryPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Last, sum_cpu_memory);
+        app.add_systems(Last, (sum_cpu_memory, log_allocated));
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.add_systems(Render, sum_gpu_memory.in_set(RenderSystems::Cleanup));
             // The heap's trace in the render world (`heap::mark`).
@@ -254,5 +300,51 @@ mod tests {
                 .summary()
                 .starts_with("gpu meshes 0 MB")
         );
+    }
+
+    /// The vendored renderer's count of a texture (10G): mips, layers,
+    /// samples; depth formats that cannot be copied.
+    #[test]
+    fn the_renderer_counts_texture_bytes() {
+        use bevy::render::render_resource::gpu_allocated::texture_bytes;
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+        let e = |width, height, depth_or_array_layers| Extent3d {
+            width,
+            height,
+            depth_or_array_layers,
+        };
+        let d2 = TextureDimension::D2;
+        // A 1024² sun shadow map in Depth32Float: 4 MB; 2048²: 16 MB.
+        let depth = TextureFormat::Depth32Float;
+        assert_eq!(texture_bytes(e(1024, 1024, 1), d2, depth, 1, 1), 4 << 20);
+        assert_eq!(texture_bytes(e(2048, 2048, 1), d2, depth, 1, 1), 16 << 20);
+        // Depth24Plus cannot be copied: 4 bytes a texel; MSAA 4×.
+        let d24 = TextureFormat::Depth24Plus;
+        assert_eq!(texture_bytes(e(10, 10, 1), d2, d24, 1, 4), 1600);
+        // Mips and layers.
+        let rgba = TextureFormat::Rgba8Unorm;
+        assert_eq!(texture_bytes(e(4, 4, 2), d2, rgba, 3, 1), 2 * (64 + 16 + 4));
+        // A 3D texture's depth halves with each level.
+        let d3 = TextureDimension::D3;
+        assert_eq!(texture_bytes(e(4, 4, 4), d3, rgba, 2, 1), 256 + 32);
+    }
+
+    /// The renderer's allocations for the page log (10G).
+    #[test]
+    fn the_allocations_read_as_json_and_a_line() {
+        let a = bevy::render::render_resource::GpuAllocated {
+            texture_bytes: 48 << 20,
+            textures: 120,
+            buffer_bytes: 13 << 20,
+            buffers: 300,
+            peak_bytes: 70 << 20,
+        };
+        assert_eq!(
+            allocated_line(&a),
+            "gpu allocated 61 MB (textures 48 MB in 120, buffers 13 MB in 300; peak 70 MB)"
+        );
+        let v: serde_json::Value = serde_json::from_str(&allocated_json(&a)).unwrap();
+        assert_eq!(v["total"], 61u64 << 20);
+        assert_eq!(v["textures"], 120);
     }
 }

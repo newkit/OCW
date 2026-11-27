@@ -84,6 +84,9 @@ fn apply_setting_at_start(world: &mut World) {
         .and_then(|s| QualitySetting::parse(&s.value("display.quality").to_string()))
         .unwrap_or_default();
     set_quality(world, setting);
+    // The log says what runs, the shadows as drawn (a phone's page log;
+    // spec 14 Phase 10, 10G).
+    info!("{}", describe(world));
 }
 
 /// Applies a setting: resolves it and hands the preset to the renderer.
@@ -120,7 +123,29 @@ pub fn describe(world: &World) -> String {
         QualitySetting::Auto => c.reason.to_string(),
         QualitySetting::Fixed(_) => "chosen".into(),
     };
-    format!("quality: {} ({why}) – {}", c.level, preset.summary())
+    format!(
+        "quality: {} ({why}) – {}",
+        c.level,
+        preset.summary_drawn(shadows_drawn(world, &preset))
+    )
+}
+
+/// The sun's shadows as drawn: the map's size (the preset's within the
+/// app's cap, `ShadowMapCap`), or off and why (`RenderSwitches`; spec 14
+/// Phase 10, 10G).
+pub fn shadows_drawn(world: &World, preset: &QualityPreset) -> Result<usize, &'static str> {
+    let s = world
+        .get_resource::<ocw_render::switches::RenderSwitches>()
+        .copied()
+        .unwrap_or_default();
+    if s.no_shadow {
+        return Err(s.shadows_off_why.long());
+    }
+    let cap = world
+        .get_resource::<ocw_render::quality::ShadowMapCap>()
+        .copied()
+        .unwrap_or_default();
+    Ok(cap.limit(preset.shadow_map_px))
 }
 
 /// The console's `gpu`: "gpu: WebGL2 – adapter …; quality: …".
@@ -201,5 +226,40 @@ mod tests {
             QualityPreset::default()
         );
         assert!(run(&mut desktop, "gpu").contains("gpu: native"));
+    }
+
+    /// The quality line names the shadows as drawn (spec 14 Phase 10,
+    /// 10G): the map within a phone's cap, or off with the reason.
+    #[test]
+    fn the_quality_line_shows_the_shadows_as_drawn() {
+        use ocw_render::quality::ShadowMapCap;
+        use ocw_render::switches::{RenderSwitches, ShadowsOffWhy};
+        let mut web = app(QualityContext {
+            api: GpuApi::WebGl2,
+            device: DeviceInfo::default(),
+            xr: None,
+        });
+        let out = run(&mut web, "quality low");
+        assert!(out.contains("shadows 2048² × 1 over 70 m"), "{out}");
+        // A phone's memory cap: the map drawn is 1024², and the line says so.
+        web.world_mut().insert_resource(ShadowMapCap(Some(1024)));
+        let out = run(&mut web, "quality");
+        assert!(out.contains("shadows 1024² × 1 over 70 m"), "{out}");
+        // Off on iOS WebKit with WebGL 2, with the reason.
+        web.world_mut().insert_resource(RenderSwitches {
+            no_shadow: true,
+            shadows_off_why: ShadowsOffWhy::IosWebKit,
+            ..Default::default()
+        });
+        let out = run(&mut web, "quality");
+        assert!(
+            out.contains("shadows off (iOS WebKit with WebGL 2: the shadow pass closed the page on an iPhone (iOS 18.7))"),
+            "{out}"
+        );
+        let last = out.lines().last().unwrap_or_default();
+        assert!(
+            last.contains("shadows off") && !last.contains("1024²"),
+            "{out}"
+        );
     }
 }

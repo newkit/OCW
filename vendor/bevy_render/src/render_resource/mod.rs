@@ -7,6 +7,8 @@ mod bindless;
 mod buffer;
 mod buffer_vec;
 mod gpu_array_buffer;
+// OCW patch: the GPU memory allocated through the wrappers (10G).
+pub mod gpu_allocated;
 mod pipeline;
 mod pipeline_cache;
 mod pipeline_specializer;
@@ -24,6 +26,7 @@ pub use bindless::*;
 pub use buffer::*;
 pub use buffer_vec::*;
 pub use gpu_array_buffer::*;
+pub use gpu_allocated::{gpu_allocated, GpuAllocated};
 pub use pipeline::*;
 pub use pipeline_cache::*;
 pub use pipeline_specializer::*;

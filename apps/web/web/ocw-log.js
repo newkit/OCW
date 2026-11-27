@@ -221,17 +221,38 @@
   document.addEventListener("resume", function () { add("page", "resumed"); });
   // The memory every 15 s while the app runs (what it used before the
   // browser closed it), only when it changed by 8 MB or more.
-  var lastMem = 0;
+  var lastMem = 0, lastGpu = 0;
   setInterval(function () {
     var wasm = 0;
     try { if (window.ocw && window.ocw.wasmMemory) wasm = window.ocw.wasmMemory(); } catch (e) { wasm = 0; }
-    if (!wasm || Math.abs(wasm - lastMem) < 8 * 1048576) return;
+    var g = gpuBytes();
+    if (!wasm || (Math.abs(wasm - lastMem) < 8 * 1048576 && Math.abs(g - lastGpu) < 8 * 1048576)) return;
     lastMem = wasm;
+    lastGpu = g;
     var js = window.performance && performance.memory
       ? ", JS heap " + mb(performance.memory.usedJSHeapSize) + " of " + mb(performance.memory.jsHeapSizeLimit) : "";
-    add("page", "memory: wasm " + mb(wasm) + js);
+    add("page", "memory: wasm " + mb(wasm) + js + gpuText(g));
   }, 15000);
   function mb(b) { return Math.round(b / 1048576) + " MB"; }
+  // The GPU memory the renderer allocated (textures and buffers created
+  // through it: render targets, depth and shadow maps, meshes, images;
+  // window.ocw.gpuAllocated(), 10G) plus the canvas' own buffers (about
+  // two colour buffers and a depth buffer of its size, 4 bytes a pixel):
+  // an estimate – the browser's GPU process keeps its own share.
+  function gpuBytes() {
+    var g = 0;
+    try { if (window.ocw && window.ocw.gpuAllocated) g = Number(JSON.parse(window.ocw.gpuAllocated()).total || 0); } catch (e) { g = 0; }
+    return g;
+  }
+  function canvasBytes() {
+    var c = document.getElementById("ocw-canvas") || document.querySelector("canvas");
+    return c && c.width && c.height ? c.width * c.height * 4 * 3 : 0;
+  }
+  function gpuText(g) {
+    if (!g) return "";
+    var c = canvasBytes();
+    return ", gpu ~" + mb(g + c) + " (renderer " + mb(g) + (c ? ", canvas " + mb(c) : "") + ")";
+  }
 
   // The early log's samples (every 100 ms for EARLY_MS) and frames.
   function wasmBytes() {
@@ -248,18 +269,19 @@
   function pulse() {
     if (!storage) return;
     sset(KEY_PULSE, JSON.stringify({started: started, t: Math.round(now()), wasm: wasmBytes(), js: jsHeap(),
-      frames: window.ocwFrames || 0, last: lines.length ? lines[lines.length - 1].slice(0, 200) : ""}));
+      gpu: gpuBytes(), frames: window.ocwFrames || 0, last: lines.length ? lines[lines.length - 1].slice(0, 200) : ""}));
   }
-  var sampled = {t: -1e9, wasm: 0, js: 0};
+  var sampled = {t: -1e9, wasm: 0, js: 0, gpu: 0};
   function sample() {
     var t = now();
     if (t > EARLY_MS) { clearInterval(pulseTimer); add("page", "early log ends (" + (EARLY_MS / 1000) + " s): lines are saved every 1.5 s from now on"); return; }
-    var wasm = wasmBytes(), js = jsHeap();
+    var wasm = wasmBytes(), js = jsHeap(), gpu = gpuBytes();
     pulse();
-    var moved = Math.abs(wasm - sampled.wasm) >= 1048576 || Math.abs(js - sampled.js) >= 1048576;
+    var moved = Math.abs(wasm - sampled.wasm) >= 1048576 || Math.abs(js - sampled.js) >= 1048576
+      || Math.abs(gpu - sampled.gpu) >= 1048576;
     if ((wasm || js) && (moved || t - sampled.t >= 1000)) {
-      sampled = {t: t, wasm: wasm, js: js};
-      add("page", "memory: wasm " + (wasm ? mb(wasm) : "-") + (js ? ", JS heap " + mb(js) : "") + ", frames " + (window.ocwFrames || 0));
+      sampled = {t: t, wasm: wasm, js: js, gpu: gpu};
+      add("page", "memory: wasm " + (wasm ? mb(wasm) : "-") + (js ? ", JS heap " + mb(js) : "") + gpuText(gpu) + ", frames " + (window.ocwFrames || 0));
     }
   }
   pulseTimer = setInterval(sample, 100);
@@ -410,7 +432,8 @@
       + (previous.dropped ? " (" + previous.dropped + " older ones dropped)" : "") + ", "
       + (previous.ended || "ended without pagehide – the browser closed or killed the page (memory?), or it crashed")
       + (previous.pulse ? "; last sign of life at +" + (previous.pulse.t / 1000).toFixed(1) + " s (wasm " + mb(previous.pulse.wasm)
-        + (previous.pulse.js ? ", JS heap " + mb(previous.pulse.js) : "") + ", frames " + previous.pulse.frames + ")" : "") + " ---";
+        + (previous.pulse.js ? ", JS heap " + mb(previous.pulse.js) : "")
+        + (previous.pulse.gpu ? ", gpu renderer " + mb(previous.pulse.gpu) : "") + ", frames " + previous.pulse.frames + ")" : "") + " ---";
   }
   function report() {
     return header().then(function (h) {

@@ -93,6 +93,21 @@ pub struct DeviceInfo {
     pub max_touch_points: u32,
     /// An iPad that reports a Mac (`MacIntel` with `maxTouchPoints > 1`).
     pub ipad_as_mac: bool,
+    /// iOS or iPadOS: every browser there is WebKit ([`is_ios_webkit`] of
+    /// the page's user agent, platform and touch points; spec 14 Phase 10,
+    /// 10G – the shadows are off there on WebGL 2).
+    pub ios: bool,
+}
+
+/// iOS or iPadOS, whatever the browser (Safari, Firefox, Chrome, Edge –
+/// all WebKit there): `iPhone`, `iPad` or `iPod` in the user agent, or an
+/// iPad asking for desktop pages (a `Macintosh` user agent or the
+/// `MacIntel` platform with more than one touch point; a Mac has none).
+pub fn is_ios_webkit(user_agent: &str, platform: &str, max_touch_points: u32) -> bool {
+    ["iPhone", "iPad", "iPod"]
+        .iter()
+        .any(|d| user_agent.contains(d))
+        || ((user_agent.contains("Macintosh") || platform == "MacIntel") && max_touch_points > 1)
 }
 
 impl DeviceInfo {
@@ -101,7 +116,15 @@ impl DeviceInfo {
     /// "not known".
     pub fn from_json(text: &str) -> Self {
         let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        let touch = v["max_touch_points"]
+            .as_u64()
+            .map_or(0, |n| n.min(1024) as u32);
         Self {
+            ios: is_ios_webkit(
+                v["user_agent"].as_str().unwrap_or(""),
+                v["platform"].as_str().unwrap_or(""),
+                touch,
+            ),
             mobile: v["mobile"].as_bool().unwrap_or(false),
             coarse_pointer: v["coarse_pointer"].as_bool().unwrap_or(false),
             cores: v["cores"].as_u64().map_or(0, |c| c.min(1024) as u32),
@@ -350,6 +373,74 @@ mod tests {
             Medium
         );
         assert_eq!(QualitySetting::parse("vr"), Some(QualitySetting::Fixed(Vr)));
+    }
+
+    /// User agents of the browsers on iOS / iPadOS (all WebKit there; spec
+    /// 14 Phase 10, 10G: the shadows are off on them with WebGL 2) and of
+    /// those that are not.
+    const IPHONE_SAFARI: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
+    const IPHONE_FIREFOX: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/145.0 Mobile/15E148 Safari/605.1.15";
+    const IPHONE_CHROME: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1";
+    const IPAD_SAFARI: &str = "Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
+    const IPAD_CHROME: &str = "Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1";
+    /// iPadOS asks for desktop pages: a Mac's user agent (also a Mac's).
+    const MAC_SAFARI: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Safari/605.1.15";
+    const ANDROID_CHROME: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+    const ANDROID_FIREFOX: &str =
+        "Mozilla/5.0 (Android 14; Mobile; rv:133.0) Gecko/133.0 Firefox/133.0";
+    const WINDOWS_CHROME: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    const LINUX_FIREFOX: &str =
+        "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
+
+    #[test]
+    fn ios_webkit_is_every_browser_on_iphone_and_ipad() {
+        for ua in [
+            IPHONE_SAFARI,
+            IPHONE_FIREFOX,
+            IPHONE_CHROME,
+            IPAD_SAFARI,
+            IPAD_CHROME,
+        ] {
+            assert!(is_ios_webkit(ua, "iPhone", 5), "{ua}");
+            // Whatever the platform says.
+            assert!(is_ios_webkit(ua, "", 0), "{ua}");
+        }
+        // An iPad asking for desktop pages: a Mac's agent with touch.
+        assert!(is_ios_webkit(MAC_SAFARI, "MacIntel", 5));
+        assert!(is_ios_webkit(MAC_SAFARI, "", 5));
+        assert!(is_ios_webkit("", "MacIntel", 5));
+        // A Mac has no touch points; Android, Windows and Linux are not iOS,
+        // touch screens or not.
+        assert!(!is_ios_webkit(MAC_SAFARI, "MacIntel", 0));
+        assert!(!is_ios_webkit(MAC_SAFARI, "MacIntel", 1));
+        for (ua, p) in [
+            (ANDROID_CHROME, "Linux armv81"),
+            (ANDROID_FIREFOX, "Linux aarch64"),
+            (WINDOWS_CHROME, "Win32"),
+            (LINUX_FIREFOX, "Linux x86_64"),
+        ] {
+            assert!(!is_ios_webkit(ua, p, 5), "{ua}");
+            assert!(!is_ios_webkit(ua, p, 0), "{ua}");
+        }
+        // From the page's JSON.
+        let info = |json: &str| DeviceInfo::from_json(json);
+        let firefox_ios = info(&format!(
+            r#"{{"mobile": true, "max_touch_points": 5, "user_agent": "{IPHONE_FIREFOX}", "platform": "iPhone"}}"#
+        ));
+        assert!(firefox_ios.ios && firefox_ios.handheld());
+        let ipad_desktop = info(&format!(
+            r#"{{"coarse_pointer": true, "max_touch_points": 5, "ipad_as_mac": true, "user_agent": "{MAC_SAFARI}", "platform": "MacIntel"}}"#
+        ));
+        assert!(ipad_desktop.ios);
+        let mac = info(&format!(
+            r#"{{"max_touch_points": 0, "user_agent": "{MAC_SAFARI}", "platform": "MacIntel"}}"#
+        ));
+        assert!(!mac.ios);
+        let android = info(&format!(
+            r#"{{"mobile": true, "max_touch_points": 5, "user_agent": "{ANDROID_CHROME}"}}"#
+        ));
+        assert!(!android.ios && android.handheld());
+        assert!(!DeviceInfo::default().ios);
     }
 
     #[test]

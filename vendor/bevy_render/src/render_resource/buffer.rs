@@ -13,6 +13,8 @@ wgpu_wrapper! {
 pub struct Buffer {
     id: BufferId,
     value: WgpuBuffer,
+    /// OCW patch: counted in [`super::gpu_allocated`] while it lives.
+    _live: std::sync::Arc<super::gpu_allocated::Live>,
 }
 
 impl Buffer {
@@ -38,6 +40,7 @@ impl From<wgpu::Buffer> for Buffer {
     fn from(value: wgpu::Buffer) -> Self {
         Buffer {
             id: BufferId::new(),
+            _live: super::gpu_allocated::Live::buffer(&value),
             value: WgpuBuffer::new(value),
         }
     }

@@ -576,10 +576,13 @@ pub fn app_with_settings(
     let memory = apply_memory_mode(&mut config, &device_info());
     app.insert_resource(ocw_render::package::StreamRadiusCap(memory.ring_cap()));
     if memory != memory::MemoryMode::Normal {
-        info!(
-            "world memory: {} (fewer tiles in memory and on the GPU)",
-            memory.name()
-        );
+        // Once the log is set up (it was lost before the plugins; v6.77).
+        app.add_systems(Startup, move || {
+            info!(
+                "world memory: {} (fewer tiles in memory and on the GPU)",
+                memory.name()
+            )
+        });
     }
     app.insert_resource(settings)
         .insert_resource(settings::Warnings(warnings))
@@ -593,14 +596,29 @@ pub fn app_with_settings(
     let record = config.record;
     let route = config.route.clone();
     // The bisect switches (10G), before the render plugins read them.
-    let bisect = config.bisect;
-    let switches = bisect.render_switches(cfg!(feature = "webgl2"));
-    ocw_render::switches::install(&switches);
-    app.insert_resource(switches);
+    let mut bisect = config.bisect;
     if let Some(s) = bisect.summary() {
         // Once the log is set up (the plugins below).
         app.add_systems(Startup, move || info!("bisect switches: {s}"));
     }
+    // iOS WebKit on WebGL 2 rides without shadows (10G: the shadow pass
+    // closed the page on an iPhone, iOS 18.7).
+    if bisect.platform_defaults(device_info().ios, cfg!(feature = "webgl2")) {
+        app.add_systems(Startup, || {
+            info!("{}", ocw_render::switches::ios_shadows_line())
+        });
+    }
+    let shadow_cap = shadow_map_cap(&bisect, memory);
+    if let Some(n) = bisect.render.shadow_map
+        && !bisect.render.no_shadow
+    {
+        app.add_systems(Startup, move || {
+            info!("shadow map: {n}² at most (shadowmap={n}; 1 cascade on WebGL 2)")
+        });
+    }
+    let switches = bisect.render_switches(cfg!(feature = "webgl2"));
+    ocw_render::switches::install(&switches);
+    app.insert_resource(switches);
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -654,7 +672,7 @@ pub fn app_with_settings(
     })
     .add_plugins(OcwRenderPlugins)
     // Phones: smaller shadow maps (the iPhone's memory, v5.42).
-    .insert_resource(ocw_render::quality::ShadowMapCap(memory.shadow_map_cap()))
+    .insert_resource(ocw_render::quality::ShadowMapCap(shadow_cap))
     .insert_resource(memory.tile_pace())
     .insert_resource(ocw_render::package::PlantThinning(memory.plant_thinning()))
     // Near the phone's budget the world steps down (`memory::MemoryGuard`).
@@ -711,6 +729,12 @@ pub fn app_with_settings(
     #[cfg(feature = "webxr")]
     app.add_plugins(webxr::WebXrPlugin);
     app
+}
+
+/// The sun's largest shadow map: the address's `shadowmap=N` (10G), else
+/// the memory mode's cap (phones 1024², `memory=minimal` 512²).
+pub fn shadow_map_cap(bisect: &bisect::Bisect, memory: memory::MemoryMode) -> Option<usize> {
+    bisect.render.shadow_map.or(memory.shadow_map_cap())
 }
 
 /// The memory mode of this visit (the page's `memory=`, else by the
@@ -1155,6 +1179,17 @@ pub fn page_xr_shot(json: &str) -> String {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = wasmMemory)]
 pub fn page_memory() -> f64 {
     browser::memory_bytes() as f64
+}
+
+/// `window.ocw.gpuAllocated()`: the GPU memory allocated through the
+/// renderer's textures and buffers (render targets, depth and shadow maps
+/// included; the vendored `bevy_render`'s count, 10G) as JSON:
+/// `{"textures":…,"texture_bytes":…,"buffers":…,"buffer_bytes":…,
+/// "total":…,"peak":…}` (bytes).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = gpuAllocated)]
+pub fn page_gpu_allocated() -> String {
+    gpu_memory::allocated_json(&bevy::render::render_resource::gpu_allocated())
 }
 
 /// `window.ocw.heap()`: the live heap and its peak, the GPU memory

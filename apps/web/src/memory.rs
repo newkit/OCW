@@ -14,7 +14,9 @@
 //! `pixelRatioCap`: WebKit cannot take the preset's cap). After a page
 //! died in a ride it rides on in `memory=saver`, after a second death in
 //! `memory=minimal`, then it stops (`ocw-gpu.js` `nextMemoryStep`);
-//! `memory=normal` is the desktop's. Desktops are unchanged.
+//! `memory=normal` is the desktop's. iPhones and iPads (iOS WebKit) start
+//! in the saver mode (spec 14 Phase 10, 10G, v6.77). Desktops are
+//! unchanged.
 
 use bevy::prelude::*;
 use ocw_client::quality::DeviceInfo;
@@ -231,9 +233,13 @@ impl MemoryMode {
         }
     }
 
-    /// The page's choice, else Phone on a phone or tablet, else Normal.
+    /// The page's choice, else Saver on iOS / iPadOS (WebKit: the iPhone
+    /// of 2026-11-27 rode with shadows only in the saver mode, spec 14
+    /// Phase 10, 10G), Phone on another phone or tablet, else Normal.
     pub fn resolve(page: Option<Self>, device: &DeviceInfo) -> Self {
-        page.unwrap_or(if device.handheld() {
+        page.unwrap_or(if device.ios {
+            Self::Saver
+        } else if device.handheld() {
             Self::Phone
         } else {
             Self::Normal
@@ -276,13 +282,25 @@ mod tests {
 
     #[test]
     fn phones_take_less_and_desktops_stay() {
-        let iphone = device(r#"{"mobile": true, "coarse_pointer": true, "max_touch_points": 5}"#);
-        let ipad =
-            device(r#"{"coarse_pointer": true, "max_touch_points": 5, "ipad_as_mac": true}"#);
+        let android = device(r#"{"mobile": true, "coarse_pointer": true, "max_touch_points": 5}"#);
+        let tablet = device(r#"{"coarse_pointer": true, "max_touch_points": 5}"#);
         let pc =
             device(r#"{"mobile": false, "coarse_pointer": false, "cores": 12, "memory_gb": 8}"#);
-        assert_eq!(MemoryMode::resolve(None, &iphone), MemoryMode::Phone);
-        assert_eq!(MemoryMode::resolve(None, &ipad), MemoryMode::Phone);
+        assert_eq!(MemoryMode::resolve(None, &android), MemoryMode::Phone);
+        assert_eq!(MemoryMode::resolve(None, &tablet), MemoryMode::Phone);
+        // iOS / iPadOS (WebKit): the saver mode from the start (10G).
+        let iphone = device(
+            r#"{"mobile": true, "coarse_pointer": true, "max_touch_points": 5, "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/145.0 Mobile/15E148 Safari/605.1.15"}"#,
+        );
+        let ipad = device(
+            r#"{"coarse_pointer": true, "max_touch_points": 5, "ipad_as_mac": true, "platform": "MacIntel", "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Safari/605.1.15"}"#,
+        );
+        assert_eq!(MemoryMode::resolve(None, &iphone), MemoryMode::Saver);
+        assert_eq!(MemoryMode::resolve(None, &ipad), MemoryMode::Saver);
+        assert_eq!(
+            MemoryMode::resolve(Some(MemoryMode::Phone), &iphone),
+            MemoryMode::Phone
+        );
         assert_eq!(MemoryMode::resolve(None, &pc), MemoryMode::Normal);
         assert_eq!(
             MemoryMode::resolve(None, &DeviceInfo::default()),

@@ -381,9 +381,33 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         {
             r.value = Some(info.trainer_value());
         }
+        // Graphics says when the shadows are off and why (spec 14 Phase
+        // 10, 10G: off by default on iOS WebKit with WebGL 2).
+        if page == sub::Page::Graphics
+            && let Some(row) = shadows_row(world)
+        {
+            let at = rows
+                .iter()
+                .position(|r| row_setting(r) == Some("display.quality"))
+                .map_or(0, |i| i + 1);
+            rows.insert(at, row);
+        }
         rows
     };
     for_platform(rows, platform(world))
+}
+
+/// Graphics' Shadows row while the shadows are off (`None`: they are on,
+/// the row is not shown).
+fn shadows_row(world: &World) -> Option<Row> {
+    let s = world.get_resource::<ocw_render::switches::RenderSwitches>()?;
+    s.no_shadow.then(|| Row {
+        label: "Shadows".into(),
+        value: Some(s.shadows_off_why.short().into()),
+        left: None,
+        right: None,
+        confirm: None,
+    })
 }
 
 /// The calendar's knowledge of the clock and the place (empty without the
@@ -410,6 +434,19 @@ fn page_text(world: &World, page: Page) -> Vec<String> {
         return ocw_client::menu::calendar::season_note(calendar_info(world))
             .into_iter()
             .collect();
+    }
+    // Why the shadows are off (spec 14 Phase 10, 10G).
+    if page == Page::Sub(sub::Page::Graphics)
+        && let Some(s) = world.get_resource::<ocw_render::switches::RenderSwitches>()
+        && s.no_shadow
+    {
+        let mut out = vec![format!("Shadows off: {}.", s.shadows_off_why.long())];
+        out.extend(
+            world
+                .get_resource::<MenuHooks>()
+                .map_or_else(Vec::new, |h| (h.text)(world, page)),
+        );
+        return out;
     }
     world
         .get_resource::<MenuHooks>()
@@ -1047,6 +1084,36 @@ mod tests {
                 v.title
             );
         }
+    }
+
+    /// Graphics shows "Shadows: off on iOS (WebGL 2)" after Quality, with
+    /// the reason in its text, only while the shadows are off (spec 14
+    /// Phase 10, 10G).
+    #[test]
+    fn graphics_says_when_the_shadows_are_off() {
+        use ocw_render::switches::{RenderSwitches, ShadowsOffWhy};
+        let mut app = app(Platform::Browser);
+        let shadows = |app: &App| {
+            sub_rows(app.world(), sub::Page::Graphics)
+                .into_iter()
+                .position(|r| r.label == "Shadows")
+        };
+        assert_eq!(shadows(&app), None);
+        app.world_mut().insert_resource(RenderSwitches {
+            no_shadow: true,
+            shadows_off_why: ShadowsOffWhy::IosWebKit,
+            ..Default::default()
+        });
+        let rows = sub_rows(app.world(), sub::Page::Graphics);
+        let at = shadows(&app).expect("a Shadows row");
+        assert_eq!(row_setting(&rows[at - 1]), Some("display.quality"));
+        assert_eq!(rows[at].value.as_deref(), Some("off on iOS (WebGL 2)"));
+        let text = page_text(app.world(), Page::Sub(sub::Page::Graphics));
+        assert!(
+            text.iter()
+                .any(|t| t.contains("closed the page on an iPhone")),
+            "{text:?}"
+        );
     }
 
     #[test]

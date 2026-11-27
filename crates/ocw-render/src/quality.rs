@@ -319,14 +319,24 @@ impl QualityPreset {
 
     /// The preset in one line (the console's `quality` and `gpu`).
     pub fn summary(&self) -> String {
+        self.summary_drawn(Ok(self.shadow_map_px))
+    }
+
+    /// [`Self::summary`] with the shadows as drawn: `Ok(px)` the sun's map
+    /// (the preset's within a phone's cap or `shadowmap=`), `Err(why)` off
+    /// (spec 14 Phase 10, 10G: iOS WebKit on WebGL 2).
+    pub fn summary_drawn(&self, shadows: Result<usize, &str>) -> String {
         let (n, distance) = self.cascades_drawn();
+        let shadows = match shadows {
+            Ok(px) => format!("shadows {px}² × {n} over {distance:.0} m"),
+            Err(why) => format!("shadows off ({why})"),
+        };
         let km = |m: Option<f32>| match m {
             Some(m) => format!("{:.1} km", m / 1000.0),
             None => "full".into(),
         };
         format!(
-            "shadows {px}² × {n} over {distance:.0} m, MSAA {msaa}, view {view}, trees {trees}, house LOD × {lod:.2}, particles {p}, pixel ratio {ratio}, ground detail × {gd:.2} to {gdm:.0} m",
-            px = self.shadow_map_px,
+            "{shadows}, MSAA {msaa}, view {view}, trees {trees}, house LOD × {lod:.2}, particles {p}, pixel ratio {ratio}, ground detail × {gd:.2} to {gdm:.0} m",
             msaa = match self.msaa_samples {
                 0 | 1 => "off".to_string(),
                 s => format!("{s}×"),

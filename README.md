@@ -763,6 +763,42 @@ what helps. `=0` turns a single switch on again, e.g.
 `…&ios=safe&nosee=0` is everything off but the trees' shader; `pipelines=N`
 compiles N per frame, `pipelines=all` all at once.
 
+**What the iPhone found (iOS 18.7, Firefox for iOS, 2026-11-27): the
+shadows.** With everything on, the page was closed right after the first
+full frame (all 24 shader programs compiled by 3.5 s, wasm 143 MB);
+`ios=safe` rode, and **`noshadow=1` alone rode** (300 frames, the memory
+flat at 143 MB) – `noarrays=1`, `plain=1` and everything else on still
+closed it, `nosky=1` rode only on the automatic retry with `memory=saver`.
+So the sun's shadow map (on that phone 1024² in one cascade over 70 m) is
+what tips it over – most likely the page's total memory on the GPU, not a
+wrong shader. **Now, on iPhones and iPads (every browser there is Safari's
+WebKit) with WebGL 2, the shadows are off by default**, and the world
+starts in the phone's **saver** memory mode (fewer tiles kept); the log
+says "shadows off on iOS WebKit with WebGL 2 …", the quality line "shadows
+off (…)", and *Settings → Display → Graphics* shows *Shadows: off on iOS
+(WebGL 2)*. Links without `gpu=webgl2` do the same: iPhones always take the
+WebGL 2 build (Safari's WebGPU is only used with `gpu=webgpu`, and then the
+shadows stay on). The log also shows the GPU memory the renderer allocated
+("gpu allocated … MB", and "gpu ~… MB" in the memory lines, with the
+canvas), so a phone's log says how much it held before it was closed.
+
+To find out whether shadows survive in a smaller form, tap these and send
+"rides" or "closed" (and the log of the first that closed):
+
+15. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1> – the new default: no shadows (should ride)
+16. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&shadowmap=512> – shadows with a 512² map
+17. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&shadowmap=256> – shadows with a 256² map
+18. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&shadowmap=1024> – shadows with the 1024² map of before (expected to close)
+19. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&noshadow=0&shadowfix=hw2x2> – shadows (1024²) with the simplest filter (one sample per pixel instead of nine)
+20. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&noshadow=0&shadowfix=near> – shadows (1024²) only 30 m around the rider (fewer things drawn into the map)
+21. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&shadowmap=512&shadowfix=hw2x2,near> – all three together
+
+`noshadow=0` turns the shadows on again at the size of before (1024² on a
+phone), `shadowmap=N` (256, 512, 1024, 2048, 4096) turns them on with a
+map of at most N² (one cascade on WebGL 2), `shadowfix=` takes `hw2x2`,
+`near` or both (`hw2x2,near`); `memory=phone` starts with the phone's
+normal memory mode instead of the saver.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:

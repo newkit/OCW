@@ -44,6 +44,7 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -209,6 +210,15 @@ def main():
         check(f"{phone}: no home folder in the log (the app's source paths shortened: cargo:…, ~/…)",
               "/home/" not in text and "/Users/" not in text and "cargo:" in text,
               [ln for ln in text.split("\n") if "/home/" in ln][:2])
+        # The GPU memory estimate (10G, v6.77): the renderer's allocations
+        # and the memory samples with the GPU.
+        check(f"{phone}: the log has the renderer's GPU allocations",
+              re.search(r"gpu allocated \d+ MB \(textures \d+ MB in \d+, buffers \d+ MB in \d+; peak \d+ MB\)", body)
+              and re.search(r" P memory: wasm \d+ MB.*gpu ~\d+ MB \(renderer \d+ MB", body),
+              [ln for ln in body.split("\n") if "gpu " in ln][:2])
+        ios_off = "shadows off on iOS WebKit with WebGL 2" in body
+        check(f"{phone}: the iOS shadow default only on the iPhone", ios_off == (phone == "iphone"),
+              [ln for ln in body.split("\n") if "shadows" in ln][:2])
         check(f"{phone}: console.error arrives as E", " E ocw-test: an error line for the log" in body)
         uncaught = [ln for ln in body.split("\n") if "ocw-test: an uncaught error" in ln]
         check(f"{phone}: an uncaught error arrives with file:line", uncaught and " ! uncaught" in uncaught[0]
@@ -244,7 +254,9 @@ def main():
                   note.startswith("Copied") or "selected" in note, note)
         shot(pg, phone, "copy")
         # Download.
-        with pg.expect_download(timeout=15000) as dl:
+        # The log's .txt (a ride photo may download meanwhile: the ride
+        # photographer's JPEG, seen on the iPhone without shadows, v6.77).
+        with pg.expect_download(predicate=lambda d: d.suggested_filename.endswith(".txt"), timeout=15000) as dl:
             pg.click("#ocw-log button[data-log=download]")
         path = dl.value.path()
         got = open(path, encoding="utf-8").read() if path else ""
