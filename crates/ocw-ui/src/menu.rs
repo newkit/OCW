@@ -168,6 +168,7 @@ impl Plugin for MenuPlugin {
                                 "bridge",
                                 "ant",
                                 "devices",
+                                "traffic",
                             ])
                             .default_value("toggle"),
                     )
@@ -210,6 +211,8 @@ impl Plugin for MenuPlugin {
                         Some("ant") => Action::OpenSub(sub::Page::Ant),
                         // Settings → Trainer → Devices (scenes).
                         Some("devices") => Action::OpenSub(sub::Page::Devices),
+                        // Settings → Traffic (spec 14 Phase 18; scenes).
+                        Some("traffic") => Action::OpenSub(sub::Page::Traffic),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };
@@ -336,6 +339,11 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
             .map(|w| w.0.clone())
             .unwrap_or_default();
         ocw_client::menu::weather::rows(page, &w)
+    } else if ocw_client::menu::traffic::is_traffic_page(page) {
+        // Settings → Traffic (spec 14 Phase 18): the session's road
+        // traffic and who decides it.
+        let info = crate::traffic::menu_info(world, platform(world));
+        ocw_client::menu::traffic::rows(page, s, &info)
     } else if page.is_voice_page() {
         let empty = VoiceMenuInfo::default();
         let info = world.get_resource::<VoiceMenu>().map_or(&empty, |v| &v.0);
@@ -1065,9 +1073,9 @@ mod tests {
                 "Account",
                 "Controls, input mapping",
                 "Trainer",
-                "Audio",
+                "Audio, voice",
                 "Display",
-                "Voice",
+                "Traffic",
                 "Back"
             ]
         );

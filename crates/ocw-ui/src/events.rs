@@ -105,6 +105,18 @@ pub fn event_command() -> Command {
                 .help("A badly injured rider is DNF"),
         )
         .arg(
+            Arg::new("traffic")
+                .long("traffic")
+                .value_parser(["off", "light", "normal", "busy", "lunatic"])
+                .help("Road traffic in the event (spec 14 Phase 18, Q2; default: none, races included)"),
+        )
+        .arg(
+            Arg::new("driver-manners")
+                .long("driver-manners")
+                .value_parser(["polite", "mostly_polite", "some_realism"])
+                .help("How the event's drivers behave around riders (with --traffic; default polite)"),
+        )
+        .arg(
             Arg::new("neutral-service")
                 .long("neutral-service")
                 .action(clap::ArgAction::SetTrue)
@@ -184,8 +196,9 @@ pub fn run_event(world: &mut World, m: &clap::ArgMatches) -> Result<String, Stri
     let mut rules = organiser_rules(args, &defaults)?;
     rules.physics = physics();
     rules.weather_physics = weather_physics;
+    let traffic = organiser_traffic(args);
     let start = |spec: ocw_sim::EventSpec, bots| {
-        ClientCore::event_start_message_organiser(&spec, bots, weather.as_ref(), &rules)
+        ClientCore::event_start_message_with_traffic(&spec, bots, weather.as_ref(), &rules, traffic)
     };
     let msg = match sub {
         "race" => start(
@@ -229,6 +242,18 @@ pub fn run_event(world: &mut World, m: &clap::ArgMatches) -> Result<String, Stri
         return Err("not riding".into());
     }
     Ok(String::new())
+}
+
+/// The organiser's road traffic of `event … --traffic L [--driver-manners
+/// M]` (spec 14 Phase 18, Q2): `None` – no road traffic in the event.
+fn organiser_traffic(args: &clap::ArgMatches) -> Option<ocw_core::traffic::RoadRules> {
+    let opt = |k: &str| args.try_get_one::<String>(k).ok().flatten();
+    opt("traffic").map(|l| ocw_core::traffic::RoadRules {
+        level: ocw_core::traffic::RoadTraffic::parse(l).unwrap_or_default(),
+        manners: opt("driver-manners")
+            .and_then(|m| ocw_core::traffic::DriverManners::parse(m))
+            .unwrap_or_default(),
+    })
 }
 
 /// The Organiser rules page's settings (spec §14 Phase 12 K6): the
@@ -398,5 +423,35 @@ mod tests {
         assert!(rules("race --time-limit 500", &auto()).is_err());
         assert!(rules("race --collisions hard", &auto()).is_err());
         assert_eq!(rules("tt --aids on", &auto()).unwrap().aids, Some(true));
+    }
+
+    /// Spec 14 Phase 18, Q2: no road traffic in an event unless the
+    /// organiser asks for it.
+    #[test]
+    fn event_traffic_is_the_organisers() {
+        use ocw_core::traffic::{DriverManners, RoadTraffic};
+        let traffic = |line: &str| {
+            let m = event_command()
+                .try_get_matches_from(std::iter::once("event").chain(line.split_whitespace()))
+                .unwrap();
+            let (_, args) = m.subcommand().unwrap();
+            organiser_traffic(args)
+        };
+        assert_eq!(traffic("race"), None);
+        assert_eq!(traffic("group --watts 180"), None);
+        let t = traffic("group --traffic light --driver-manners mostly_polite").unwrap();
+        assert_eq!(
+            (t.level, t.manners),
+            (RoadTraffic::Light, DriverManners::MostlyPolite)
+        );
+        assert_eq!(
+            traffic("tt --traffic busy").unwrap().manners,
+            DriverManners::Polite
+        );
+        assert!(
+            event_command()
+                .try_get_matches_from(["event", "race", "--traffic", "jammed"])
+                .is_err()
+        );
     }
 }

@@ -104,10 +104,10 @@ shot = 7
 
 [[scene]]
 name = "menu-audio-voice"
-description = "In-game menu: Settings -> Audio -> Voice with the voice echo test (spec 7, Echo bot: on, 300 ms delay) and the Echo rider standing ahead"
+description = "In-game menu: Settings -> Audio, voice -> Voice -> Devices and options -> Volume and echo test with the voice echo test (spec 7, Echo bot: on, 300 ms delay) and the Echo rider standing ahead"
 args = ["--route", "hills", "--bots", "0", "--echo-bot"]
-at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu down", "7.2=menu down", "7.6=menu select"]
-shot = 9.5
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu down", "7.2=menu down", "7.6=menu select", "8.0=menu down", "8.3=menu down", "8.6=menu down", "8.9=menu down", "9.2=menu down", "9.6=menu select", "10.0=menu down", "10.3=menu down", "10.6=menu down", "10.9=menu down", "11.2=menu down", "11.6=menu select"]
+shot = 13.5
 
 [[scene]]
 name = "menu-voice-rows"
@@ -148,6 +148,46 @@ kit = "sash"
 """
 at = ["2=menu workshop-page", "2.6=menu down", "3.2=menu select"]
 shot = 5.5
+
+[[scene]]
+name = "menu-traffic"
+description = "In-game menu: Settings -> Traffic (spec 14 Phase 18, T1): the master switch, road traffic busy and driver manners mostly polite (desktop only), aircraft simulated, UFOs rare, Sound and live data; a rider on a red road bike in a chevron kit behind it"
+args = ["--route", "hills", "--bots", "3"]
+riders = """
+active = "Cleo Sprinter"
+
+[[rider]]
+name = "Cleo Sprinter"
+weight_kg = 61.0
+ftp_w = 215
+bike = "road"
+frame_color = "#C62828"
+jersey_color = "#FFB300"
+helmet_color = "#212121"
+kit = "chevrons"
+"""
+at = ["1.5=set --temp traffic.road busy", "1.5=set --temp traffic.manners mostly_polite", "1.6=set --temp traffic.ufo rare", "2=menu traffic"]
+shot = 5
+
+[[scene]]
+name = "menu-traffic-more"
+description = "In-game menu: Settings -> Traffic -> Sound and live data (spec 14 Phase 18, T1): Sound, Aircraft: live and Live traffic data dimmed until their sources are built (Q5, Q6); a rider on a blue gravel bike in a stripes kit"
+args = ["--route", "hills", "--bots", "2"]
+riders = """
+active = "Dora Gravel"
+
+[[rider]]
+name = "Dora Gravel"
+weight_kg = 84.0
+ftp_w = 270
+bike = "gravel"
+frame_color = "#1565C0"
+jersey_color = "#2E7D32"
+helmet_color = "#FAFAFA"
+kit = "stripes"
+"""
+at = ["2=menu traffic", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select"]
+shot = 6.5
 
 [[scene]]
 name = "menu-workouts"

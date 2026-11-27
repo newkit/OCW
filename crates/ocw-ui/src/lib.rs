@@ -53,6 +53,7 @@ pub mod settings;
 pub mod status;
 pub mod timemachine;
 pub mod touch;
+pub mod traffic;
 pub mod trust;
 pub mod view_distance;
 pub mod weather;

@@ -120,6 +120,18 @@ struct Args {
     /// anyone, or nobody (the weather stays as started).
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     weather_control: ocw_server::ClockAccess,
+    /// The session's road traffic (spec 14 Phase 18, 18A; nothing drives
+    /// yet): off, light, normal, busy or lunatic.
+    #[arg(long, default_value = "off", value_parser = ocw_server::traffic::parse_level)]
+    traffic: ocw_core::traffic::RoadTraffic,
+    /// How drivers behave around riders (Q8): polite, mostly_polite,
+    /// some_realism.
+    #[arg(long, default_value = "polite", value_parser = ocw_server::traffic::parse_manners)]
+    driver_manners: ocw_core::traffic::DriverManners,
+    /// Who may change the road traffic (Q2): the host, anyone, or nobody
+    /// (it stays as started).
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    traffic_control: ocw_server::ClockAccess,
     /// Whether the weather affects the physics (spec §14 Phase 9, S6, Q4:
     /// wind, air density, wet roads; on by default, events follow their
     /// organiser's rule). The host changes it like the weather.
@@ -787,6 +799,10 @@ fn main() {
             damage: args.damage == "on",
             collision_access: args.collision_control,
             weather_access: args.weather_control,
+            road_traffic: args.traffic,
+            driver_manners: args.driver_manners,
+            traffic_access: args.traffic_control,
+            air_seed: None,
             weather: args
                 .weather
                 .as_deref()

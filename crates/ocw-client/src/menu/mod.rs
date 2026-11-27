@@ -27,6 +27,7 @@ pub mod pages;
 pub mod sharing;
 pub mod start;
 pub mod time;
+pub mod traffic;
 pub mod trust;
 pub mod voice;
 pub mod weather;

@@ -695,6 +695,66 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("weather.provider {}"),
     },
+    // Traffic (spec 14 Phase 18, 18A; Q1: aircraft on, road traffic and
+    // UFOs off on a first start). Road traffic is the session's (the host
+    // decides in shared rides, the organiser in events, Q2) and only in
+    // the desktop app (Q9); aircraft and UFOs are the rider's own view.
+    SettingDef {
+        key: "traffic.enabled",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Traffic: the master switch; off = empty roads and sky (in shared rides the host's road traffic stays: it can touch you)",
+        scope: Scope::Live,
+        apply: Apply::Command("traffic enabled {}"),
+    },
+    SettingDef {
+        key: "traffic.road",
+        kind: Kind::Choice(&["off", "light", "normal", "busy", "lunatic"]),
+        default: "off",
+        description: "Road traffic: cars, vans, lorries, buses, motorbikes, tractors; normal follows the time of day, light a quarter, busy 1.5 x; lunatic: drivers speed and overtake dangerously (in shared rides the host decides, in events the organiser; desktop only)",
+        scope: Scope::Live,
+        apply: Apply::Command("traffic road {}"),
+    },
+    SettingDef {
+        key: "traffic.manners",
+        kind: Kind::Choice(&["polite", "mostly_polite", "some_realism"]),
+        default: "polite",
+        description: "Driver manners: polite (legal distance, no horns), mostly_polite (an occasional honk at a rider in the middle of the road), some_realism (now and then a close pass that never touches); the host decides in shared rides",
+        scope: Scope::Live,
+        apply: Apply::Command("traffic manners {}"),
+    },
+    SettingDef {
+        key: "traffic.air",
+        kind: Kind::Choice(&["off", "simulated", "live"]),
+        default: "simulated",
+        description: "Aircraft: airliners, small planes, helicopters, gliders, balloons; simulated, or live positions where a feed is reachable (until then simulated); for you only",
+        scope: Scope::Live,
+        apply: Apply::Command("traffic air {}"),
+    },
+    SettingDef {
+        key: "traffic.ufo",
+        kind: Kind::Choice(&["off", "rare", "often"]),
+        default: "off",
+        description: "UFOs: rare (now and then on clear nights), often (also by day high in the sky); they play with the unicorn, never touch a rider, never in events; for you only",
+        scope: Scope::Live,
+        apply: Apply::Command("traffic ufo {}"),
+    },
+    SettingDef {
+        key: "traffic.sound",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Sounds of vehicles and aircraft",
+        scope: Scope::Live,
+        apply: Apply::Command("traffic sound {}"),
+    },
+    SettingDef {
+        key: "traffic.live_road",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Live traffic data: live road events or density where the world has a suitable source (none yet: the traffic follows the statistics)",
+        scope: Scope::Live,
+        apply: Apply::Command("traffic live_road {}"),
+    },
     SettingDef {
         key: "ride.record",
         kind: Kind::Bool,
@@ -1120,6 +1180,11 @@ const NOT_IN_BROWSER: &[&str] = &[
     // computer's size and tilt apply in both.
     "vr.enabled",
     "vr.mirror",
+    // Road traffic only in the desktop app (spec 14 Phase 18 Q9 (b));
+    // aircraft and UFOs everywhere.
+    "traffic.road",
+    "traffic.manners",
+    "traffic.live_road",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,
@@ -1737,6 +1802,62 @@ mod tests {
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(s.get("photographer.others").unwrap(), Value::Bool(false));
         assert_eq!(s.get("photographer.enabled").unwrap(), Value::Bool(true));
+    }
+
+    /// Spec 14 Phase 18, T1: the `[traffic]` rows, Q1's first-start
+    /// defaults, the file round trip, the apply commands, Q9's platforms.
+    #[test]
+    fn traffic_settings_round_trip() {
+        use crate::menu::model::Platform;
+        let s = Settings::default();
+        for (k, v) in [
+            ("traffic.enabled", "on"),
+            ("traffic.road", "off"),
+            ("traffic.manners", "polite"),
+            ("traffic.air", "simulated"),
+            ("traffic.ufo", "off"),
+            ("traffic.sound", "on"),
+            ("traffic.live_road", "off"),
+        ] {
+            assert_eq!(s.get(k).map(|v| v.to_string()).as_deref(), Ok(v), "{k}");
+        }
+        assert!(
+            s.startup_commands().is_empty(),
+            "defaults: nothing to apply"
+        );
+        let mut s = Settings::default();
+        s.set("traffic.road", "lunatic").unwrap();
+        s.set("traffic.manners", "some_realism").unwrap();
+        s.set("traffic.ufo", "often").unwrap();
+        s.set("traffic.air", "off").unwrap();
+        assert!(s.set("traffic.road", "jammed").is_err());
+        let text = s.to_toml();
+        assert!(text.contains("[traffic]"), "{text}");
+        let (back, warnings) = Settings::parse(&text).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(back.get("traffic.road"), Ok(Value::Text("lunatic".into())));
+        assert_eq!(back.get("traffic.ufo"), Ok(Value::Text("often".into())));
+        assert_eq!(
+            back.startup_commands(),
+            [
+                "traffic road lunatic",
+                "traffic manners some_realism",
+                "traffic air off",
+                "traffic ufo often",
+            ]
+        );
+        // Q9: road traffic only on the desktop, the sky everywhere.
+        for k in ["traffic.road", "traffic.manners", "traffic.live_road"] {
+            assert!(applies(k, Platform::Desktop) && !applies(k, Platform::Browser));
+        }
+        for k in [
+            "traffic.enabled",
+            "traffic.air",
+            "traffic.ufo",
+            "traffic.sound",
+        ] {
+            assert!(applies(k, Platform::Browser), "{k}");
+        }
     }
 
     #[test]

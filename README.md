@@ -556,10 +556,11 @@ Browsers start sound only after a click or key press (the autoplay rule).
 Until then a hint at the top says "click or press a key", and the
 game sound (the desktop's synthesised bike, wind, tyres, weather, cues)
 starts with your first gesture. *Settings → Audio* has the volumes (with a
-test sound), Mute and the output device (Chromium). *Settings → Voice* has
-the voice switches, the voice volume, the participants, the microphone and
-speaker, spatial voice and the echo test (*Settings → Audio → Voice → Echo
-test*, or `voice.echo on`). These are the desktop's pages and settings.
+test sound), Mute and the output device (Chromium). *Settings → Audio, voice →
+Voice* has the voice switches, the participants, the microphone and
+speaker, spatial voice, the voice volume and the echo test (*… → Devices and
+options → Volume and echo test*, or `voice.echo on`; `menu voice` opens the
+page at once). These are the desktop's pages and settings.
 
 Voice needs a shared ride on a server that knows a LiveKit server. Solo rides
 in the page never connect. Start [LiveKit](#voice-chat) and the game server
@@ -579,7 +580,7 @@ machines, give the server a LiveKit URL they can reach (`--bind 0.0.0.0`,
 TCP 7880 and 7881 open plus its UDP media port: 7882 with `rtc.udp_port`
 set, as the bundled voice server does, else LiveKit's range 50000–60000).
 Every ride starts with *My voice* off (muted): M / Shift+M (gamepad Select
-/ R3) switch your voice / the voices; *Settings → Voice* has *My voice*
+/ R3) switch your voice / the voices; *Settings → Audio, voice → Voice* has *My voice*
 (who hears you) and *I hear* (whom you hear) as two rows, as on the
 desktop.
 
@@ -1762,6 +1763,21 @@ start, with your last choice marked and focused – Enter takes it.
   steering mode (press A for autodrive). The HUD shows "manual | WILD". The
   camera follows over terrain and trees.
 
+**Traffic** (spec 14 Phase 18; *Settings → Traffic*, console `traffic`): the
+switches are built, the vehicles come in the next steps. *Traffic* turns
+everything off; *Road traffic* (off, light, normal, busy, lunatic – drivers
+who speed and overtake in stupid places) and *Driver manners* (polite, mostly
+polite, some realism) are the ride's: solo yours, in a shared ride the
+host's (`ocw-server --traffic-control host|anyone|nobody`), in an event the
+organiser's (none unless the organiser asks, races included); a guest sees
+them dimmed with who decides. Road traffic is in the desktop app only;
+*Aircraft* (off, simulated) and *UFOs* (off, rare, often) are yours, in both
+apps; *Sound and live data* has the sounds and the dimmed *Aircraft: live*
+and *Live traffic data* rows. First start: aircraft on, road traffic and
+UFOs off. `traffic` shows what the ride has; `traffic road busy`,
+`traffic manners mostly_polite`, `traffic ufo rare` change it for this
+session (`set traffic.road busy` saves it).
+
 **Collisions** (spec §14 Phase 12, K1 / K2; `ride.collisions`, on by
 default): riders are solid. Touching another rider from the side or the
 back is a **soft bump** – both are pushed apart, the faster one slows, the
@@ -2291,6 +2307,7 @@ event tt [--laps N | --km X]                # alone, no drafting, against your b
 event race --physics open                   # race mode: open | profile (default) | equal
 event race --weather thunderstorm           # the organiser's weather, fixed for the event
 event race --aids on --chaotic-bots on      # the organiser's rules (below)
+event group --traffic light                 # road traffic in the event (default: none, races too)
 event status | event cancel | event dismiss
 ```
 
@@ -2574,6 +2591,13 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `keys.<action>`, `pad.<action>` | a key name or two with a comma (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `Delete,Q`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the input mapping (`bind` lists the actions; only the changed ones are saved, in `[settings.keys]` / `[settings.pad]` of `ocw.toml`) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); while on, the HUD always shows the rider's health and the bike's condition; Settings → Controls → Damage (the old `display.damage` switch is gone: a value left in `settings.toml` is reported as unknown and ignored) | at once |
 | `display.gps` | on / off (on): the GPS line in the HUD, bottom left (console `hud.gps`; world packages and route files only) | at once |
+| `traffic.enabled` | on / off (on): traffic – the master switch; off = empty roads and sky (a shared ride's road traffic stays: the host decides it); Settings → Traffic | at once |
+| `traffic.road` | off / light / normal / busy / lunatic (off): road traffic of the rides you decide – solo rides and the rides you host (in a shared ride the host decides, in events the organiser, races have none; `ocw-server --traffic`); desktop app only; nothing drives yet (spec 14 Phase 18, T1) | at once |
+| `traffic.manners` | polite / mostly_polite / some_realism (polite): how drivers behave around riders – legal distance and no horns, an occasional honk, now and then a close pass that never touches (`ocw-server --driver-manners`); desktop app only | at once |
+| `traffic.air` | off / simulated / live (simulated): aircraft in your sky, for you only (the same flights for every rider of a ride, from the server's air seed); live is simulated until the live feed is built | at once |
+| `traffic.ufo` | off / rare / often (off): UFOs, for you only; never in events | at once |
+| `traffic.sound` | on / off (on): the sounds of vehicles and aircraft | at once |
+| `traffic.live_road` | on / off (off): live traffic data where a world has a source (none yet: shown greyed); desktop app only | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
@@ -3546,7 +3570,7 @@ itself, **with *My voice* off** (your microphone muted, every ride; spec
 §7.1.7 Q7); solo rides (the local server, bots only) never connect.
 Riders are at full volume up to 5 m and fade to silence at 10 m; the game
 server sends a rider's voice only to riders who can hear it (spec §7.1.7
-Q6, Q10, Q20). *Settings → Voice* has two separate rows (spec §7.1.7 Q16):
+Q6, Q10, Q20). *Settings → Audio, voice → Voice* has two separate rows (spec §7.1.7 Q16):
 
 - **My voice** – who hears you: *off* (the microphone muted; others see an
   X over your mouth) or *on* for *Everybody* (everybody within 10 m) or

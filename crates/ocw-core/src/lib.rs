@@ -9,6 +9,7 @@ pub mod hearts;
 pub mod kit;
 pub mod name;
 pub mod timestamp;
+pub mod traffic;
 
 pub use bike::{BikeType, KitPattern, PhysicsProfile, ProfileId, Rgb, RiderLook};
 pub use character::{Age, BaseBody, BodyBuild, BodyShape, Character};

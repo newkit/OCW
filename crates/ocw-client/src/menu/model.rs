@@ -421,9 +421,12 @@ const SETTINGS_ITEMS: &[Item] = &[
         ItemKind::Open(Page::Sub(sub::Page::Controls)),
     ),
     item("Trainer", ItemKind::Open(Page::Sub(sub::Page::Trainer))),
-    item("Audio", ItemKind::Open(Page::Sub(sub::Page::Audio))),
+    // Voice chat is on the Audio page now (Audio, voice → Voice; console
+    // `menu voice`): Traffic took its place (spec 14 Phase 18, 18A; the
+    // ten-foot maximum of seven items).
+    item("Audio, voice", ItemKind::Open(Page::Sub(sub::Page::Audio))),
     item("Display", ItemKind::Open(Page::Sub(sub::Page::Display))),
-    item("Voice", ItemKind::Open(Page::Sub(sub::Page::Voice))),
+    item("Traffic", ItemKind::Open(Page::Sub(sub::Page::Traffic))),
     BACK,
 ];
 /// The browser's downloads (spec §14 Phase 10, B6; art project §2.1:
@@ -2067,9 +2070,9 @@ mod tests {
                 "Account",
                 "Controls, input mapping",
                 "Trainer",
-                "Audio",
+                "Audio, voice",
                 "Display",
-                "Voice",
+                "Traffic",
                 "Back"
             ]
         );
