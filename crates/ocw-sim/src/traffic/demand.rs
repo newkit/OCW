@@ -85,18 +85,44 @@ impl DriverManners {
         })
     }
 
-    /// The share of overtakes closer than the legal distance (never
-    /// touching; T4 uses it).
+    /// The share of drivers who pass closer than the legal distance
+    /// (never under [`super::around::PASS_FLOOR_M`]), and the same share
+    /// again who squeeze past in marginal sight (T4, Q8 (c)).
     pub fn close_pass_share(self) -> f64 {
         match self {
             Self::Polite | Self::Honking => 0.0,
-            Self::Realistic => 0.05,
+            Self::Realistic => 0.15,
         }
     }
 
-    /// Whether drivers honk at a rider who blocks the lane for long (T4).
+    /// Whether drivers honk at a rider they waited behind for long (T4,
+    /// Q8 (b) and (c)).
     pub fn honks(self) -> bool {
-        self == Self::Honking
+        self != Self::Polite
+    }
+}
+
+impl From<ocw_core::traffic::DriverManners> for DriverManners {
+    fn from(m: ocw_core::traffic::DriverManners) -> Self {
+        use ocw_core::traffic::DriverManners as M;
+        match m {
+            M::Polite => Self::Polite,
+            M::MostlyPolite => Self::Honking,
+            M::SomeRealism => Self::Realistic,
+        }
+    }
+}
+
+impl From<ocw_core::traffic::RoadTraffic> for TrafficLevel {
+    fn from(t: ocw_core::traffic::RoadTraffic) -> Self {
+        use ocw_core::traffic::RoadTraffic as R;
+        match t {
+            R::Off => Self::Off,
+            R::Light => Self::Light,
+            R::Normal => Self::Normal,
+            R::Busy => Self::Busy,
+            R::Lunatic => Self::Lunatic,
+        }
     }
 }
 

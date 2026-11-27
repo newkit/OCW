@@ -1363,6 +1363,9 @@ enum ContactKind {
   // Slipped on wet leaves in a corner (spec 4.6.2 Q6; damage on, never in
   // group rides).
   CONTACT_KIND_LEAVES = 10;
+  // A road vehicle (spec 14 Phase 18 T4, Q4): a car that could not stop
+  // hit the rider, or the rider steered into it.
+  CONTACT_KIND_VEHICLE = 11;
 }
 
 message CrashState {

@@ -714,6 +714,20 @@ fn demand_follows_the_hour_profile() {
     assert!(counts[1].2 > 3 * counts[0].2);
 }
 
+/// The class rules with overtaking forbidden everywhere (T4: riders are
+/// not passed there).
+struct NoPassing;
+
+impl EdgeRules for NoPassing {
+    fn edge_rule(&self, net: &RoadNetwork, edge: usize) -> EdgeRule {
+        rules::class_rule(net, edge)
+    }
+
+    fn passing(&self, _net: &RoadNetwork, _edge: usize) -> PassRule {
+        PassRule::new(around::Country::De, false, [true, true])
+    }
+}
+
 #[test]
 fn vehicles_queue_behind_a_rider() {
     let g = graph(
@@ -721,7 +735,8 @@ fn vehicles_queue_behind_a_rider() {
         &[(0, 1, RoadClass::Secondary)],
     );
     let net = RoadNetwork::new(g);
-    let mut sim = TrafficSim::new(&net, Box::new(ClassRules), cfg(2, 20, TrafficLevel::Off));
+    // Overtaking forbidden (T4): the car waits behind.
+    let mut sim = TrafficSim::new(&net, Box::new(NoPassing), cfg(2, 20, TrafficLevel::Off));
     let bubble = Bubble {
         center: [1500.0, 0.0],
         radius: 2000.0,
@@ -739,6 +754,7 @@ fn vehicles_queue_behind_a_rider() {
             forward: true,
             speed: 7.0,
             length: 1.8,
+            ..RoadUser::default()
         };
         sim.step(&net, &[bubble], &[user], &time);
         rider += 7.0 * 0.02;
