@@ -6,7 +6,7 @@
 #   scripts/deploy-test.sh Weela        (or scripts/deploy-test-windows.sh Weela)
 #
 # 1. On the machine: a release build with VR (`cargo build --release -p
-#    ocw-desktop --features vr`) and the material library (`cargo run -p
+#    ocw-desktop --features vr,voice`) and the material library (`cargo run -p
 #    ocw-assets -- materials fetch`); it says which world the kiosk rides
 #    and the SHA-256 of the world files it has (scripts/ocw-kiosk.ps1
 #    worldinfo).
