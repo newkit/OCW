@@ -407,7 +407,10 @@ this site; riding alone it does not call other servers.</li>
 <li><b>Riding together</b> (the rides on the public server): the page connects to OCW's game and voice
 server at <code>ocw-server.fly.dev</code> (hosted by Fly.io in Frankfurt). Everyone on it sees the name you
 ride with, your rider and where you ride; the server gets your power, cadence and steering to run the
-ride; its log at Fly.io notes when a rider joins and leaves, with the name and IP address. Your voice is off when a ride starts; when you turn it on (M), it
+ride; its log at Fly.io notes when a rider joins and leaves, with the name and IP address. While you ride
+there, the name you ride with is also shown to anyone on the server's public status page
+(<a href="https://ocw-server.fly.dev/">ocw-server.fly.dev</a>), with how long and how far you have ridden this
+time – never your IP address or where you ride. Your voice is off when a ride starts; when you turn it on (M), it
 goes through the voice server to the riders who hear you, and is not recorded
 (<a href="https://fly.io/legal/privacy-policy/">Fly.io's privacy policy</a>).</li>
 <li><b>Your settings</b> (graphics, audio, controls, the trainer's mode, remembered Bluetooth devices) are kept

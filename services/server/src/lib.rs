@@ -1025,13 +1025,18 @@ impl GameServer {
 
     /// The public statistics' numbers now (spec 11.5 *Status page*):
     /// riders and their speeds, people and bots apart, the rides started
-    /// and the riders in voice – counts only, no names or positions.
+    /// and the riders in voice, and each rider on the road by the name it
+    /// rides under (11.5 Q1 (b)) – no accounts, addresses or positions.
     pub fn public_observation(&self) -> public_stats::Observation {
         let client_bots: Vec<RiderId> = self
             .bot_conns
             .iter()
             .filter_map(|c| self.riders.get(c).copied())
             .collect();
+        // A client's ride is its connection (it keeps it across a world
+        // switch); a server rider's its id, apart from those.
+        let conn_of: BTreeMap<RiderId, u64> = self.riders.iter().map(|(c, r)| (*r, c.0)).collect();
+        let echo = self.session.echo_rider();
         let mut o = public_stats::Observation {
             rides_humans: self.ride_starts.0,
             rides_bots: self.ride_starts.1,
@@ -1039,7 +1044,13 @@ impl GameServer {
             ..Default::default()
         };
         for (id, speed, server_rider) in self.session.motions() {
-            o.add(server_rider || client_bots.contains(&id), speed);
+            let bot = server_rider || client_bots.contains(&id);
+            let key = conn_of
+                .get(&id)
+                .copied()
+                .unwrap_or(1 << 63 | u64::from(id.0));
+            let name = self.session.rider_name(id).unwrap_or_default();
+            o.add_named(key, name, bot, Some(id) == echo, speed);
         }
         o
     }
@@ -4756,9 +4767,10 @@ mod tests {
     /// The public statistics (spec 11.5 *Status page*): server bots and
     /// `ocw-bot` clients count as bots, people as people; joins and
     /// leaves move the count; a world switch is no new ride; the report
-    /// names nobody.
+    /// names the riders on the road by the names they ride under (11.5
+    /// Q1 (b)), bots marked, a refused name as the fallback the others see.
     #[test]
-    fn public_statistics_count_people_and_bots_without_names() {
+    fn public_statistics_count_people_and_bots_and_name_them() {
         let mut server = GameServer::new(
             Route::test_loop(),
             ServerConfig {
@@ -4796,16 +4808,38 @@ mod tests {
         server.handle(ada, &hello_as(PROTOCOL_VERSION, None, "Ada Rider B"));
         let o = server.public_observation();
         assert_eq!((o.rides_humans, o.rides_bots, o.humans), (2, 1, 1));
+        // A hostile name is refused by the name checks: the list has the
+        // fallback the other riders see.
+        let eve = server.connect();
+        server.handle(
+            eve,
+            &hello_as(PROTOCOL_VERSION, None, "<script>alert(1)</script>"),
+        );
+        let o = server.public_observation();
         let mut stats = public_stats::PublicStats::new(1_795_694_400);
         stats.observe(1_795_694_400, ocw_core::SIM_DT, &o);
-        let json = serde_json::to_string(&stats.report(
-            1_795_694_400,
-            "test",
-            &public_stats::WorldNote::default(),
-        ))
-        .unwrap();
-        for name in ["Ada", "Bea", "linux-1", "Tester"] {
-            assert!(!json.contains(name), "{json}");
+        let report = stats.report(1_795_694_400, "test", &public_stats::WorldNote::default());
+        let named: Vec<(&str, bool)> = report
+            .riders
+            .online
+            .iter()
+            .map(|r| (r.name.as_str(), r.bot))
+            .collect();
+        let eve_name = snapshot_name(&server, server.riders[&eve].0);
+        assert!(eve_name.starts_with("Rider "), "{eve_name}");
+        assert_eq!(
+            named,
+            [
+                ("Ada Rider B", false),
+                (eve_name.as_str(), false),
+                ("Bot 1", true),
+                ("Bot 2", true),
+            ],
+            "{report:?}"
+        );
+        let json = serde_json::to_string(&report).unwrap();
+        for gone in ["Bea", "<script>", "127.0.0.1"] {
+            assert!(!json.contains(gone), "{json}");
         }
     }
 

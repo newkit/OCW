@@ -16,8 +16,8 @@
 //! the endpoint also answers `GET /` from a browser (no `Upgrade` header:
 //! a WebSocket to `/` still goes to the voice server) with a small HTML
 //! page, `GET /stats.json` with the public statistics
-//! ([`crate::public_stats`], counts only) and the page's files under
-//! [`ASSET_PREFIX`]. LiveKit's own paths (`/rtc…`, `/twirp/…`) and
+//! ([`crate::public_stats`]: counts and the names riders ride under, no
+//! addresses or positions) and the page's files under [`ASSET_PREFIX`]. LiveKit's own paths (`/rtc…`, `/twirp/…`) and
 //! everything else are passed on as before.
 //!
 //! Passing on: the request head is read (up to [`MAX_HEAD`] bytes), then
@@ -156,8 +156,15 @@ impl StatusBoard {
     }
 
     /// Publishes the statistics (later `/stats.json` requests get them).
+    /// `<`, `>` and `&` (only ever inside strings: riders' names) are
+    /// sent as `\u` escapes, so no name reads as markup anywhere.
     pub fn set_stats(&self, report: &crate::public_stats::StatsReport) {
-        let text = serde_json::to_string_pretty(report).unwrap_or_default() + "\n";
+        let text = serde_json::to_string_pretty(report)
+            .unwrap_or_default()
+            .replace('<', "\\u003c")
+            .replace('>', "\\u003e")
+            .replace('&', "\\u0026")
+            + "\n";
         self.0.write().unwrap_or_else(|e| e.into_inner()).stats = text;
     }
 
@@ -809,6 +816,80 @@ mod tests {
         assert!(r.starts_with("HTTP/1.1 204"));
         let r = answer(b"PUT /stats.json HTTP/1.1\r\n\r\n", &s).unwrap();
         assert!(r.starts_with("HTTP/1.1 405"));
+    }
+
+    /// The riders on the road by name (11.5 Q1 (b)): a hostile name is
+    /// sent as text that no browser reads as markup, and the page puts
+    /// names in only as text, with a cap and "+N more".
+    #[test]
+    fn named_riders_are_served_as_text_and_the_page_sets_them_as_text() {
+        let s = status();
+        let mut stats = crate::public_stats::PublicStats::new(1_795_694_400);
+        let mut o = crate::public_stats::Observation::default();
+        o.add_named(1, "Ada Rider", false, false, 8.0);
+        o.add_named(2, "<script>alert(1)</script> & co", false, false, 8.0);
+        o.add_named(1 << 63 | 3, "Echo", true, true, 0.0);
+        stats.observe(1_795_694_400, 1.0, &o);
+        s.set_stats(&stats.report(
+            1_795_694_460,
+            "0.2.6",
+            &crate::public_stats::WorldNote::default(),
+        ));
+        let r = answer(b"GET /stats.json HTTP/1.1\r\n\r\n", &s).unwrap();
+        assert!(r.contains("Content-Type: application/json; charset=utf-8\r\n"));
+        assert!(r.contains("X-Content-Type-Options: nosniff\r\n"));
+        let body = &r[r.find("\r\n\r\n").unwrap() + 4..];
+        assert!(
+            !body.contains('<') && !body.contains('>') && !body.contains('&'),
+            "{body}"
+        );
+        let v: serde_json::Value = serde_json::from_str(body).unwrap();
+        let online = v["riders"]["online"].as_array().unwrap();
+        let names: Vec<&str> = online.iter().map(|o| o["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            ["<script>alert(1)</script> & co", "Ada Rider", "Echo"]
+        );
+        assert_eq!(
+            (online[2]["bot"].as_bool(), online[2]["echo"].as_bool()),
+            (Some(true), Some(true))
+        );
+        assert_eq!(online[1]["riding_s"], 60);
+        assert_eq!(v["riders"]["more"], 0);
+        // The page: names only through textContent, never as HTML.
+        let page = s.page_html();
+        for bad in [
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+        ] {
+            assert!(!page.contains(bad), "{bad}");
+        }
+        assert!(page.contains("String(o.name)") && page.contains("e.textContent = text"));
+        assert!(page.contains("var CAP = 50;") && page.contains("\" more\""));
+        assert!(page.contains("id=\"names\""));
+        // The privacy note says what is shown.
+        assert!(page.contains("The names riders ride under are shown here while they ride"));
+        assert!(page.contains("no IP addresses") && page.contains("no positions"));
+        assert!(!page.contains("counts only"));
+    }
+
+    /// The eight tiles fill whole rows: 4 a row on desktop, 2 on a phone
+    /// (not 5 + 3 from `auto-fill`).
+    #[test]
+    fn the_stat_tiles_fill_whole_rows() {
+        let page = status().page_html();
+        let tiles = page.matches("<div class=\"stat\">").count();
+        assert_eq!(tiles, 8);
+        assert!(!page.contains("auto-fill"));
+        assert!(
+            page.contains(
+                ".grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));"
+            )
+        );
+        assert!(page.contains(".grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }"));
+        assert_eq!(tiles % 4, 0);
     }
 
     #[test]

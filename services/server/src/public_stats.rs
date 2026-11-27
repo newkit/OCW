@@ -2,12 +2,17 @@
 //! what `https://APP.fly.dev/stats.json` and the status page at `/` show –
 //! riders online now (people and bots apart), today's peak, rides started
 //! and kilometres ridden today and since the counting began, the 50 Hz
-//! tick's load, the riders in voice, the world and the server's version
-//! and uptime.
+//! tick's load, the riders in voice, the riders on the road now by the
+//! names they ride under (11.5 Q1 (b), v6.71), the world and the server's
+//! version and uptime.
 //!
-//! **Counts only.** Nothing here takes a rider's name, account, address or
-//! position: the game loop hands over numbers ([`Observation`]), so the
-//! JSON cannot leak them. "Today" is the UTC day. The totals may be kept
+//! **Names, no more.** The game loop hands over numbers and, for each
+//! rider on the road now, the name the other riders see on its name tag
+//! (after the server's name checks), whether it is a bot or the Echo
+//! rider, and its speed ([`Observation`], [`RiderTick`]). Nothing here
+//! takes an account, an address, a device or a position, so the JSON
+//! cannot leak them; a rider's name leaves the list when it leaves the
+//! road. "Today" is the UTC day. The totals may be kept
 //! across restarts in a small file ([`Saved`], `ocw-server
 //! --public-stats-file`); without it they start again at every start.
 //!
@@ -25,8 +30,28 @@ pub const MAX_COUNTED_MPS: f64 = 30.0;
 /// The tick load is the mean and 95th percentile over this window.
 pub const TICK_WINDOW_S: u32 = 60;
 
-/// What the game loop counts in one tick (no names, no positions).
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+/// At most this many riders are named in `/stats.json` (people first);
+/// the rest are counted in `riders.more`.
+pub const ONLINE_CAP: usize = 50;
+
+/// One rider on the road in this tick: what the other riders see of it
+/// (its name tag), no account, address or position.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RiderTick {
+    /// Stable for one ride (a client's connection, a server rider's id);
+    /// only used to follow the ride, never published.
+    pub key: u64,
+    /// The name it rides under, as the game shows it to the others.
+    pub name: String,
+    pub bot: bool,
+    /// The Echo rider (spec 7 *Echo bot*).
+    pub echo: bool,
+    /// m/s, counted like [`Observation::add`] (capped).
+    pub speed_mps: f64,
+}
+
+/// What the game loop counts in one tick (no positions).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Observation {
     /// Riders on the road now: people, and bots (server bots, the Echo
     /// rider, `ocw-bot` clients).
@@ -41,16 +66,23 @@ pub struct Observation {
     pub rides_bots: u64,
     /// Riders who say they are in the voice room now.
     pub voice: u32,
+    /// The riders on the road, named (see [`Self::add_named`]).
+    pub riders: Vec<RiderTick>,
+}
+
+/// A speed as it is counted: finite, at most [`MAX_COUNTED_MPS`].
+fn counted(speed_mps: f64) -> f64 {
+    if speed_mps.is_finite() {
+        speed_mps.abs().min(MAX_COUNTED_MPS)
+    } else {
+        0.0
+    }
 }
 
 impl Observation {
-    /// Adds one rider with its speed (m/s).
+    /// Adds one rider with its speed (m/s) to the counts.
     pub fn add(&mut self, bot: bool, speed_mps: f64) {
-        let v = if speed_mps.is_finite() {
-            speed_mps.abs().min(MAX_COUNTED_MPS)
-        } else {
-            0.0
-        };
+        let v = counted(speed_mps);
         if bot {
             self.bots += 1;
             self.bots_mps += v;
@@ -58,6 +90,18 @@ impl Observation {
             self.humans += 1;
             self.humans_mps += v;
         }
+    }
+
+    /// Adds one rider to the counts and to the named list.
+    pub fn add_named(&mut self, key: u64, name: &str, bot: bool, echo: bool, speed_mps: f64) {
+        self.add(bot, speed_mps);
+        self.riders.push(RiderTick {
+            key,
+            name: name.to_owned(),
+            bot,
+            echo,
+            speed_mps: counted(speed_mps),
+        });
     }
 }
 
@@ -107,12 +151,42 @@ pub struct WorldNote {
 }
 
 /// Riders now.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Now {
     pub humans: u32,
     pub bots: u32,
     /// In the voice room.
     pub voice: u32,
+    /// The riders on the road now by the names they ride under: people
+    /// first, then bots, each by name; at most [`ONLINE_CAP`].
+    pub online: Vec<OnlineRider>,
+    /// Riders on the road beyond the cap (not named).
+    pub more: u32,
+}
+
+/// One rider on the road now, in `/stats.json`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OnlineRider {
+    /// The name it rides under (raw text: the page escapes it).
+    pub name: String,
+    /// A server bot, an `ocw-bot` client or the Echo rider.
+    pub bot: bool,
+    /// The Echo rider (the voice echo test).
+    pub echo: bool,
+    /// How long it has been on the road in this ride (s).
+    pub riding_s: i64,
+    /// Km ridden in this ride.
+    pub km: f64,
+}
+
+/// A ride followed for the named list.
+#[derive(Debug, Clone)]
+struct Riding {
+    name: String,
+    bot: bool,
+    echo: bool,
+    since_unix_s: i64,
+    m: f64,
 }
 
 /// The tick's load over the last [`TICK_WINDOW_S`] seconds.
@@ -152,6 +226,8 @@ pub struct PublicStats {
     /// The ride counters at the last observation.
     last_rides: (u64, u64),
     now: Now,
+    /// The riders on the road by their ride's key.
+    online: std::collections::BTreeMap<u64, Riding>,
     /// Tick work in µs, a ring over the window.
     ticks: Vec<u32>,
     next_tick: usize,
@@ -182,6 +258,7 @@ impl PublicStats {
             saved,
             last_rides: (0, 0),
             now: Now::default(),
+            online: Default::default(),
             ticks: Vec::with_capacity(window),
             next_tick: 0,
         }
@@ -219,7 +296,46 @@ impl PublicStats {
             humans: o.humans,
             bots: o.bots,
             voice: o.voice,
+            ..Default::default()
         };
+        // The named list: who left the road is gone; a new key is a new ride.
+        let keys: std::collections::BTreeSet<u64> = o.riders.iter().map(|r| r.key).collect();
+        self.online.retain(|k, _| keys.contains(k));
+        for r in &o.riders {
+            let e = self.online.entry(r.key).or_insert_with(|| Riding {
+                name: r.name.clone(),
+                bot: r.bot,
+                echo: r.echo,
+                since_unix_s: now_unix_s,
+                m: 0.0,
+            });
+            if e.name != r.name {
+                e.name.clone_from(&r.name);
+            }
+            e.bot = r.bot;
+            e.echo = r.echo;
+            e.m += counted(r.speed_mps) * dt_s;
+        }
+    }
+
+    /// The named list at `now_unix_s`: people first, then bots, by name;
+    /// at most [`ONLINE_CAP`], and how many more.
+    fn online_now(&self, now_unix_s: i64) -> (Vec<OnlineRider>, u32) {
+        let mut all: Vec<&Riding> = self.online.values().collect();
+        all.sort_by_cached_key(|r| (r.bot, r.name.to_lowercase(), r.since_unix_s));
+        let more = all.len().saturating_sub(ONLINE_CAP) as u32;
+        let list = all
+            .into_iter()
+            .take(ONLINE_CAP)
+            .map(|r| OnlineRider {
+                name: r.name.clone(),
+                bot: r.bot,
+                echo: r.echo,
+                riding_s: (now_unix_s - r.since_unix_s).max(0),
+                km: (r.m / 10.0).round() / 100.0,
+            })
+            .collect();
+        (list, more)
     }
 
     /// One tick's work (physics, bots, snapshots).
@@ -286,7 +402,14 @@ impl PublicStats {
             uptime_s: (now_unix_s - self.started_unix_s).max(0),
             since_unix_s: self.saved.since_unix_s,
             world: world.clone(),
-            riders: self.now,
+            riders: {
+                let (online, more) = self.online_now(now_unix_s);
+                Now {
+                    online,
+                    more,
+                    ..self.now.clone()
+                }
+            },
             today,
             total: round(&self.saved.total),
             tick: self.tick_load(),
@@ -446,12 +569,16 @@ mod tests {
         assert_eq!((t.mean_ms, t.p95_ms, t.max_ms), (2.0, 2.0, 2.0));
     }
 
-    /// The JSON has counts only: no rider names, no addresses, no
-    /// positions (spec 11.5 *Status page*).
+    /// The JSON names the riders on the road (the names they ride under)
+    /// and nothing else of them: no addresses, accounts, devices or
+    /// positions (spec 11.5 *Status page*, Q1 (b)).
     #[test]
-    fn the_report_has_no_names_addresses_or_positions() {
+    fn the_report_names_riders_but_has_no_addresses_or_positions() {
         let mut s = PublicStats::new(NOON);
-        s.observe(NOON, SIM_DT, &obs(&[8.0], &[0.0], (1, 1)));
+        let mut o = obs(&[], &[], (1, 1));
+        o.add_named(7, "Ada Rider", false, false, 8.0);
+        o.add_named(1 << 63 | 2, "Echo", true, true, 0.0);
+        s.observe(NOON, SIM_DT, &o);
         let world = WorldNote {
             id: Some("liechtenstein".into()),
             name: Some("Liechtenstein".into()),
@@ -466,27 +593,150 @@ mod tests {
                     keys(x, out);
                 }
             }
+            if let Some(a) = v.as_array() {
+                for x in a {
+                    keys(x, out);
+                }
+            }
         }
         let mut all = Vec::new();
         keys(&v, &mut all);
         for k in &all {
             for bad in [
-                "ip",
-                "addr",
-                "position",
-                "rider_name",
-                "account",
-                "x",
-                "z",
-                "lat",
+                "ip", "addr", "position", "account", "device", "key", "x", "z", "lat", "lon",
+                "road", "distance",
             ] {
                 assert_ne!(k, bad);
             }
-            assert!(!k.contains("addr") && !k.contains("pos"), "{k}");
+            assert!(
+                !k.contains("addr") && !k.contains("pos") && !k.contains("ip"),
+                "{k}"
+            );
         }
+        let online = v["riders"]["online"].as_array().unwrap();
+        assert_eq!(online.len(), 2);
+        let mut fields: Vec<&str> = online[0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["bot", "echo", "km", "name", "riding_s"]);
+        assert_eq!(v["riders"]["online"][0]["name"], "Ada Rider");
+        assert_eq!(v["riders"]["online"][1]["echo"], true);
+        assert_eq!(v["riders"]["online"][1]["bot"], true);
         assert_eq!(v["world"]["name"], "Liechtenstein");
         assert_eq!(v["riders"]["humans"], 1);
         assert_eq!(v["today"]["date"], "2026-11-26");
         assert_eq!(v["today"]["rides_humans"], 1);
+        // The ride's key never leaves the server.
+        let text = v.to_string();
+        assert!(!text.contains("9223372036854775810"), "{text}");
+    }
+
+    fn named(riders: &[(u64, &str, bool)], speed: f64) -> Observation {
+        let mut o = Observation::default();
+        for &(key, name, bot) in riders {
+            o.add_named(key, name, bot, false, speed);
+        }
+        o
+    }
+
+    /// Joins and leaves move the names; people come first, bots marked;
+    /// each ride has its own time and km, and a new ride starts again.
+    #[test]
+    fn the_named_list_follows_joins_and_leaves() {
+        let mut s = PublicStats::new(NOON);
+        // Bea for 100 s at 10 m/s, then Ada and a bot join.
+        for _ in 0..(100 * SIM_TICK_HZ) {
+            s.observe(NOON, SIM_DT, &named(&[(2, "Bea Climber", false)], 10.0));
+        }
+        let three = [
+            (2, "Bea Climber", false),
+            (1 << 63 | 1, "Bot 1", true),
+            (5, "ada Rider", false),
+        ];
+        s.observe(NOON + 100, SIM_DT, &named(&three, 0.0));
+        let r = s.report(NOON + 160, "v", &WorldNote::default());
+        let names: Vec<(&str, bool)> = r
+            .riders
+            .online
+            .iter()
+            .map(|o| (o.name.as_str(), o.bot))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("ada Rider", false),
+                ("Bea Climber", false),
+                ("Bot 1", true)
+            ]
+        );
+        assert_eq!(r.riders.more, 0);
+        let bea = &r.riders.online[1];
+        assert_eq!(bea.riding_s, 160);
+        assert!((bea.km - 1.0).abs() < 1e-9, "{bea:?}");
+        assert_eq!(
+            (r.riders.online[0].riding_s, r.riders.online[0].km),
+            (60, 0.0)
+        );
+        // Bea leaves: her name is gone at once.
+        s.observe(NOON + 170, SIM_DT, &named(&three[1..], 0.0));
+        let r = s.report(NOON + 170, "v", &WorldNote::default());
+        assert!(
+            r.riders.online.iter().all(|o| o.name != "Bea Climber"),
+            "{r:?}"
+        );
+        assert_eq!(r.riders.online.len(), 2);
+        // She comes back on a new connection: a new ride from 0.
+        s.observe(
+            NOON + 200,
+            SIM_DT,
+            &named(&[(9, "Bea Climber", false)], 0.0),
+        );
+        let r = s.report(NOON + 200, "v", &WorldNote::default());
+        assert_eq!(r.riders.online.len(), 1);
+        assert_eq!(
+            (r.riders.online[0].riding_s, r.riders.online[0].km),
+            (0, 0.0)
+        );
+        // Nobody on the road: an empty list.
+        s.observe(NOON + 210, SIM_DT, &Observation::default());
+        let r = s.report(NOON + 210, "v", &WorldNote::default());
+        assert!(r.riders.online.is_empty());
+    }
+
+    /// At most [`ONLINE_CAP`] names (people before bots); the rest counted.
+    #[test]
+    fn the_named_list_is_capped_with_people_first() {
+        let mut s = PublicStats::new(NOON);
+        let names: Vec<String> = (0..60).map(|i| format!("Rider {i:02}")).collect();
+        let mut riders: Vec<(u64, &str, bool)> = vec![(1000, "Bot 1", true)];
+        riders.extend(
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| (i as u64, n.as_str(), false)),
+        );
+        s.observe(NOON, SIM_DT, &named(&riders, 5.0));
+        let r = s.report(NOON, "v", &WorldNote::default());
+        assert_eq!(r.riders.online.len(), ONLINE_CAP);
+        assert_eq!(r.riders.more, 11);
+        assert!(r.riders.online.iter().all(|o| !o.bot));
+        assert_eq!(r.riders.online[0].name, "Rider 00");
+        assert_eq!((r.riders.humans, r.riders.bots), (60, 1));
+    }
+
+    /// A name is passed on as raw text: the page sets it as text, never
+    /// as HTML, and the JSON escapes what JSON needs.
+    #[test]
+    fn hostile_names_stay_text_in_the_json() {
+        let mut s = PublicStats::new(NOON);
+        let evil = "<script>alert(\"x\")</script>";
+        s.observe(NOON, SIM_DT, &named(&[(1, evil, false)], 1.0));
+        let text = serde_json::to_string(&s.report(NOON, "v", &WorldNote::default())).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(back["riders"]["online"][0]["name"], evil);
     }
 }

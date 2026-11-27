@@ -635,6 +635,11 @@ impl Session {
         }
     }
 
+    /// The name a rider rides under (the name tag the others see).
+    pub fn rider_name(&self, id: RiderId) -> Option<&str> {
+        self.riders.get(&id).map(|r| r.name.as_str())
+    }
+
     /// Renames a rider (dev tools; the name tag and the standings).
     pub fn rename(&mut self, id: RiderId, name: impl Into<String>) -> bool {
         match self.riders.get_mut(&id) {
