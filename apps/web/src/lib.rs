@@ -279,6 +279,13 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
                 _ => bad(),
             },
             ("cache", Some(w)) => w.use_cache = value != "0",
+            // Bisecting (10G): `base=all` loads the base sections the
+            // browser leaves out (the road traffic's `TRFC`).
+            ("base", Some(w)) => match value.as_str() {
+                "all" => w.skip_sections.clear(),
+                "lean" => w.skip_sections = world::BROWSER_SKIPPED_SECTIONS.to_vec(),
+                _ => bad(),
+            },
             ("allow-unsigned", Some(w)) if dev_page => w.allow_unsigned = value != "0",
             ("trust", Some(w)) if dev_page && value == "dev" => w.trust_dev = true,
             ("trust-root", Some(w)) if dev_page => {

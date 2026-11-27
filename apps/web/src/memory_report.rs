@@ -119,35 +119,84 @@ fn report(path: &str, route: Option<&str>) {
     }
     // A phone (v5.42): the per-tile parts along the course only, cut while
     // the base is decoded from its chunks (as the browser does).
-    let phone = std::env::var("OCW_PHONE").is_ok();
-    let s = if phone {
+    // `OCW_PHONE=phone|saver|minimal` (any other value: phone): the rings
+    // of that memory mode. The browser's base (v7.00, 10G): without the
+    // road traffic's section, the chunks one at a time as they come;
+    // `OCW_BASE_ALL=1` decodes TRFC too, `OCW_HOLD_CHUNKS=1` holds every
+    // chunk first (the driver before v7.00).
+    let phone = std::env::var("OCW_PHONE").ok();
+    let s = if let Some(mode) = phone {
         let mut opts = WorldOptions::new("memory-report");
         opts.route = route.map(str::to_string);
-        let rings = crate::memory::MemoryMode::Phone
-            .course_rings(crate::memory::MemoryMode::Phone.residency(Default::default()))
+        let mode = crate::memory::MemoryMode::parse(&mode)
+            .flatten()
+            .filter(|m| *m != crate::memory::MemoryMode::Normal)
+            .unwrap_or(crate::memory::MemoryMode::Phone);
+        let rings = mode
+            .course_rings(mode.residency(Default::default()))
             .expect("a phone's");
-        let parts: Vec<Vec<u8>> = chunks
-            .iter()
-            .filter(|(name, _)| {
-                name == "sections"
-                    || (name.starts_with("section ")
-                        && !STREAM_SKIPPED_SECTIONS
-                            .iter()
-                            .any(|t| name == &format!("section {}", String::from_utf8_lossy(*t))))
-            })
-            .map(|(_, r)| bytes[r.clone()].to_vec())
-            .collect();
+        let skip: Vec<[u8; 4]> = if std::env::var("OCW_BASE_ALL").is_ok() {
+            Vec::new()
+        } else {
+            crate::world::BROWSER_SKIPPED_SECTIONS.to_vec()
+        };
+        let wanted = |name: &str| {
+            name == "sections"
+                || (name.starts_with("section ")
+                    && !STREAM_SKIPPED_SECTIONS
+                        .iter()
+                        .copied()
+                        .chain(skip.iter())
+                        .any(|t| name == format!("section {}", String::from_utf8_lossy(t))))
+        };
         drop(sections);
-        let mut kept = 0;
-        let (s, _) = step("phone: base decoded, cut to the course", || {
-            StreamedPackage::from_chunks_kept(header, parts, |p| {
-                let k = crate::world::course_tiles(p, &opts, rings);
-                kept = k.as_ref().map_or(0, |k| k.len());
-                k
-            })
-            .expect("base")
+        let held: Option<Vec<Vec<u8>>> = std::env::var("OCW_HOLD_CHUNKS").is_ok().then(|| {
+            chunks
+                .iter()
+                .filter(|(name, _)| wanted(name))
+                .map(|(_, r)| bytes[r.clone()].to_vec())
+                .collect()
         });
-        println!("  ({kept} tiles along the course)");
+        let mut kept = 0;
+        let mut lines = Vec::new();
+        let (s, _) = step(
+            &format!("phone ({}): base decoded, cut", mode.name()),
+            || {
+                let mut log = |l: String| lines.push((l, heap::live(), heap::peak()));
+                let mut decode = ocw_world::package::BaseDecode {
+                    skip: skip.clone(),
+                    log: Some(&mut log),
+                };
+                let keep = |p: &ocw_world::WorldPackage| {
+                    let k = crate::world::course_tiles(p, &opts, rings);
+                    kept = k.as_ref().map_or(0, |k| k.len());
+                    k
+                };
+                match held {
+                    Some(parts) => {
+                        StreamedPackage::from_chunks_with(header, parts, keep, &mut decode)
+                    }
+                    None => StreamedPackage::from_chunks_with(
+                        header,
+                        chunks
+                            .iter()
+                            .filter(|(name, _)| wanted(name))
+                            .map(|(_, r)| bytes[r.clone()].to_vec()),
+                        keep,
+                        &mut decode,
+                    ),
+                }
+                .expect("base")
+            },
+        );
+        for (l, live, peak) in &lines {
+            println!(
+                "    {l:<52} heap {} (peak {})",
+                mb(*live as i64),
+                mb(*peak as i64)
+            );
+        }
+        println!("  ({kept} tiles along the course, rings {rings})");
         s
     } else {
         let (s, _) = step("base decoded (StreamedPackage)", || {

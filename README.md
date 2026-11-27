@@ -888,6 +888,45 @@ and the log of the first that closed:
 (`small,nosave`); `all` is `small,once,nosave`. None of them becomes the
 iPhone's default before the phone says it rides.
 
+**The iPhone's third crash (2026-11-27): loading a world.** The Hills ride,
+but loading Andorra or Tenerife from the live page closed it – the
+loading screen still showed "road graph, routes, land use, buildings: 15.9
+MB of 15.9 MB / first tiles: 0 of 0". Measured in WebKit at that phone's
+size, **Tenerife's load took the wasm memory to 481 MB** (all 167 MB of its
+base held at once, then the road graph decoded and a whole road network
+built just to choose the tiles along the route), Andorra's to 167 MB –
+and then the ride's first 3 × 3 tiles add 120 – 134 MB of meshes on the
+GPU and take the wasm memory to about 250 MB. **Now** the base is fetched
+and decoded a few MB at a time, each part dropped as soon as it is read,
+a big part is no longer copied, the road traffic's data (`TRFC`: the
+browser shows no road traffic) is neither downloaded nor decoded, and the
+tiles along the route are chosen from the road graph alone (and the road
+network no longer indexes every road of the world for a moment): Tenerife's
+load peaks at 247 MB, Andorra's at 152 MB, Liechtenstein's at 156 MB
+(desktops and Android stream the same way and gain the same). **Every step
+of a world's load is a line in the log** – "world load: base: section LUSE
+(3.21 MB) decoded – wasm 152 MB, heap 104 MB (peak 129 MB)", "ride
+prepared: …", "first tiles here", "scene rebuilt: riding", then "riding
+2.1 s – …" whenever the memory grew – and each such line is kept in the tab
+at once, so after a closed page the log's *page load before* says **"last
+world load stage: …"**. The note after a closed page now says what really
+changes on the phone: on an iPhone the shadows are off already, so it no
+longer promises "the smallest shadows".
+
+Tap these and send "rides" or "closed" and, for the first one that
+closed, the log of the reloaded page (*Copy* or *Share*; the title line of
+*the page load before* with its *last world load stage* is what helps):
+
+30. <https://newkit.github.io/OCW/?world=europe/andorra&gpu=webgl2&quality=low&log=1> – Andorra (a small world)
+31. <https://newkit.github.io/OCW/?world=europe/andorra&gpu=webgl2&quality=low&log=1&memory=minimal> – Andorra with the least memory (one ring of tiles, every third tree)
+32. <https://newkit.github.io/OCW/?world=europe/spain/tenerife&gpu=webgl2&quality=low&log=1> – Tenerife (a big world)
+33. <https://newkit.github.io/OCW/?world=europe/andorra&gpu=webgl2&quality=low&log=1&base=all> – Andorra with the road traffic's data loaded as before (bisecting only)
+
+If it still closes, the last stage tells where: a "base: …" line means
+while the world's data was loaded, "scene rebuilt" or "riding …" means
+while the first tiles were drawn (the next thing to make smaller on
+iPhones).
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:

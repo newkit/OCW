@@ -1140,7 +1140,30 @@ mod tests {
             app.world().contains_resource::<Session>(),
             "the ride started"
         );
+        // The page log's stages of the load, each with the memory (10G;
+        // other tests load worlds too, so only their presence is checked).
+        let stages = crate::world::stages();
+        for want in [
+            "world load: base: ",
+            "world load: base: section GRPH (",
+            "world load: base decoded",
+            "world load: ride prepared: route Vaduz–Malbun",
+            "world load: first tiles here (",
+            "world load: session started",
+            "world load: scene rebuilt: riding",
+        ] {
+            assert!(
+                stages
+                    .iter()
+                    .any(|l| l.starts_with(want) && l.contains(" MB (peak ")),
+                "no {want:?} in {stages:?}"
+            );
+        }
         let pw = app.world().resource::<PackageWorld>();
+        assert!(
+            pw.home().traffic.is_none(),
+            "no road traffic in the browser"
+        );
         // Fetch radius 1 at tile 0,0 of the 5 × 2 package: 4 tiles.
         assert_eq!(pw.home().tiles.len(), 4);
         assert!(pw.home().graph.is_some());

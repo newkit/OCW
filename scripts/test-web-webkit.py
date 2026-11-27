@@ -54,6 +54,16 @@ gives the page a `navigator.gpu` with an adapter, as Safari 26 has:
   mac      Safari on macOS (1280 × 720): the Hills ride on WebGL 2, draws;
            the desktop HUD unchanged (not compact, scale 1, keys), the
            Devices panel open, no power buttons.
+  world    (spec 14 Phase 10, 10G: the iPhone that closed the page while a
+           world's base loaded, 2026-11-27) a mid-size world (--world,
+           default liechtenstein, from target/web/worlds: `make web-worlds`;
+           skipped with a note when it is not there) loaded as the
+           reporting iPhone (430 × 932 at 3, Safari's user agent, WebGL 2,
+           Low): the page log has every stage ("world load: …" with the
+           wasm memory: the base's sections, the ride, the first tiles,
+           the scene), the road traffic's section is left out, and the
+           wasm memory up to the ride's start stays under --world-budget-mb
+           (the peak-memory regression check); it rides and draws.
 
   No check may see a page error (an uncaught exception) in any case.
 
@@ -123,6 +133,12 @@ TOO_OLD = ("This browser is too old for Open Cycling World – please update "
            "(Safari 16.4 / Chrome 91 / Firefox 89 or newer).")
 # The phone cases: the device, the insets (top, right, bottom, left) and
 # the page's APIs.
+# The world case's bound (MB of wasm memory up to the ride's start, 10G,
+# v7.00): Liechtenstein measured 156 MB in WebKit at 430 × 932 (164 MB before;
+# most of it is the renderer's start, the base adds ~10 MB).
+WORLD_BUDGET_MB = 180.0
+STAGE_RE = re.compile(r"world load: (.*?) – wasm (\d+) MB, heap (\d+) MB \(peak (\d+) MB\)")
+
 PHONES = {
     "iphone": ("iPhone 15", (59, 0, 34, 0), NO_FULLSCREEN + NO_WAKE_LOCK),
     "iphone-landscape": ("iPhone 15 landscape", (0, 59, 21, 59), NO_FULLSCREEN + FAKE_WAKE_LOCK),
@@ -197,6 +213,9 @@ def main():
     p.add_argument("--dir", default="target/web")
     p.add_argument("--out", default="test-output/web")
     p.add_argument("--seconds", type=float, default=20.0, help="riding after the ride shows")
+    p.add_argument("--world", default="liechtenstein", help="the world case's world (target/web/worlds; '' skips it)")
+    p.add_argument("--world-budget-mb", type=float, default=WORLD_BUDGET_MB,
+                   help="the most wasm memory the world case's load may reach before the ride starts")
     p.add_argument("--python", default=None, help="a Python with Playwright (default: the venv of make deps-webkit)")
     a = p.parse_args()
     if not in_venv():
@@ -530,6 +549,66 @@ def main():
         summary["too-old"] = {"start": st, "ride": st2}
         ctx.close()
 
+    def world_load(browser, pw):
+        """A world's load as the reporting iPhone (10G): the stages in the
+        log with the memory, no TRFC, the wasm memory under the bound."""
+        if not a.world:
+            return
+        if not os.path.isfile(os.path.join(a.dir, "worlds", a.world, "latest")):
+            print(f"world: skipped – no {a.world} in {a.dir}/worlds (make web-worlds)", flush=True)
+            summary["world"] = {"skipped": f"no {a.world} in {a.dir}/worlds"}
+            return
+        dev = dict(pw.devices["iPhone 15"])
+        dev["viewport"] = {"width": 430, "height": 932}
+        dev["screen"] = {"width": 430, "height": 932}
+        ctx = browser.new_context(**dev)
+        ctx.add_init_script(FAKE_GPU)
+        ctx.add_init_script(PHONES["iphone"][2])
+        pg = ctx.new_page()
+        errors, own = [], []
+
+        def on_console(m):
+            ln = f"[world] {time.time() - t0:7.2f} s  {m.type}: {m.text[:600]}"
+            lines.append(ln)
+            own.append(m.text)
+
+        pg.on("console", on_console)
+        pg.on("pageerror", lambda e: (lines.append(f"[world] PAGEERROR {e}"), errors.append(str(e)[:300])))
+        keys = "target/web-keys/root.hex"
+        trust = ("&trust-root=" + open(keys).read().strip()) if os.path.isfile(keys) else "&allow-unsigned=1"
+        pg.goto(root + f"?world={a.world}{trust}&gpu=webgl2&quality=low&log=1&touch=on&bots=0")
+        try:
+            pg.wait_for_function("() => window.ocwGpu && document.getElementById('ocw-status').hidden"
+                                 " && window.ocwFrames > 20", timeout=300000)
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"[world] wait: {e}")
+        pg.wait_for_timeout(5000)
+        st = json.loads(pg.evaluate(state_js))
+        shot = f"{base}-world-{os.path.basename(a.world)}.png"
+        pg.screenshot(path=shot)
+        drawn, how = image_drawn(shot)
+        stages = [(m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4)))
+                  for m in (STAGE_RE.search(t) for t in own) if m]
+        names = [x[0] for x in stages]
+        start = next((i for i, n in enumerate(names) if n.startswith("scene rebuilt")), len(names) - 1)
+        load_wasm = max((x[1] for x in stages[:start + 1]), default=0)
+        summary["world"] = {"world": a.world, "stages": stages, "load_wasm_mb": load_wasm, "state": st}
+        print(f"world {a.world}: wasm up to the ride's start {load_wasm} MB (bound {a.world_budget_mb:g} MB)", flush=True)
+        check("world: the load logs its stages with the memory (sections, decoded, ride, first tiles, scene)",
+              any(n.startswith("base: section ") for n in names) and "base decoded" in names
+              and any(n.startswith("ride prepared") for n in names)
+              and any(n.startswith("first tiles here") for n in names)
+              and any(n.startswith("scene rebuilt") for n in names), names[:30])
+        check("world: the road traffic's section (TRFC) is not decoded in the browser",
+              not any("section TRFC" in n and n.endswith("decoded") for n in names),
+              [n for n in names if "TRFC" in n or "left out" in n])
+        check(f"world: the load stays under {a.world_budget_mb:g} MB of wasm memory up to the ride's start",
+              0 < load_wasm <= a.world_budget_mb, f"{load_wasm} MB")
+        check("world: rides and draws", st.get("frames", 0) > 20 and not st.get("status") and drawn,
+              f"{how}; frames {st.get('frames')}; status {st.get('status')!r}")
+        check("world: no page errors", not errors, errors[:5])
+        ctx.close()
+
     summary = {"ok": False}
     with sync_playwright() as pw:
         browser = pw.webkit.launch()
@@ -629,6 +708,7 @@ def main():
                 summary[label] = st
                 ctx.close()
             too_old(browser, pw)
+            world_load(browser, pw)
             summary["ok"] = all(c["ok"] for c in checks)
         except Exception as e:  # noqa: BLE001
             summary["error"] = repr(e)

@@ -927,9 +927,6 @@ struct SectionReader {
     /// Keep the per-tile parts of these tiles only, cut after each
     /// section ([`StreamedPackage::from_chunks_kept`]).
     keep: Option<BTreeSet<TileKey>>,
-    /// The road graph is already there (read first): its section is
-    /// skipped.
-    skip_graph: bool,
 }
 
 impl SectionReader {
@@ -942,7 +939,6 @@ impl SectionReader {
             full,
             streamed,
             keep: None,
-            skip_graph: false,
         }
     }
 
@@ -956,9 +952,6 @@ impl SectionReader {
     }
 
     fn read_section(&mut self, tag: [u8; 4], payload: &[u8]) -> Result<(), String> {
-        if self.skip_graph && &tag == GRAPH_TAG {
-            return Ok(());
-        }
         let (samples, full, streamed) = (self.samples, self.full, self.streamed);
         let s = &mut self.s;
         let building_tags = &mut self.building_tags;
@@ -1147,6 +1140,211 @@ impl SectionReader {
     }
 }
 
+/// How [`StreamedPackage::from_chunks_with`] decodes a base: the sections
+/// it leaves out (their payload stepped over, e.g. the road traffic's
+/// `TRFC` in the browser, which shows no road traffic: spec 14 Phase 18
+/// Q9 (b)) and who hears of each step.
+#[derive(Default)]
+pub struct BaseDecode<'a> {
+    pub skip: Vec<[u8; 4]>,
+    pub log: Option<&'a mut dyn FnMut(String)>,
+}
+
+impl BaseDecode<'_> {
+    fn say(&mut self, line: String) {
+        if let Some(log) = self.log.as_mut() {
+            log(line);
+        }
+    }
+}
+
+fn section_mb(len: usize) -> String {
+    format!("{:.2} MB", len as f64 / 1e6)
+}
+
+/// Which tiles a phone's base keeps, from its road graph and routes
+/// ([`StreamedPackage::from_chunks_kept`]).
+pub type KeepChooser<'a> = Box<dyn FnOnce(&WorldPackage) -> Option<BTreeSet<TileKey>> + 'a>;
+
+/// A streamed package's base decoded chunk by chunk as the chunks come
+/// (spec 14 Phase 10 B7, 10G: the browser fetches the base a few MB at a
+/// time and pushes each batch here, so neither the whole base's bytes nor
+/// a copy of them is ever in memory – before, Tenerife's 146 MB of chunks
+/// were all held while the sections were decoded). The header chunk
+/// first ([`BaseDecoder::new`]), then the `sections` and `section …`
+/// chunks in file order ([`BaseDecoder::push`]; skipped ones may be
+/// missing); each complete section is decoded at once and its bytes
+/// dropped. With a `keep` chooser (a phone's course) the tiles are chosen
+/// from the road graph and the routes – the package's first sections –
+/// before the first other section, which is then cut as soon as it is
+/// decoded.
+pub struct BaseDecoder<'a, 'b> {
+    head: PackageHead,
+    buf: Vec<u8>,
+    pos: usize,
+    count: Option<u32>,
+    read: u32,
+    reader: SectionReader,
+    keep: Option<KeepChooser<'a>>,
+    kept: Option<BTreeSet<TileKey>>,
+    /// The graph, moved out of the reader when the tiles were chosen.
+    graph: Option<Arc<RoadGraph>>,
+    decode: &'a mut BaseDecode<'b>,
+}
+
+impl<'a, 'b> BaseDecoder<'a, 'b> {
+    /// From the `header` chunk.
+    pub fn new(
+        header: &[u8],
+        keep: Option<KeepChooser<'a>>,
+        decode: &'a mut BaseDecode<'b>,
+    ) -> Result<Self, String> {
+        let mut r = Bytes::new(header);
+        let head = read_head(&mut r)?;
+        r.finish("package header")?;
+        let reader = SectionReader::new(head.samples, true, true);
+        Ok(Self {
+            head,
+            buf: Vec::new(),
+            pos: 0,
+            count: None,
+            read: 0,
+            reader,
+            keep,
+            kept: None,
+            graph: None,
+            decode,
+        })
+    }
+
+    /// The next chunk (in file order): its complete sections are decoded
+    /// now, a section that goes on in the next chunk waits for it.
+    pub fn push(&mut self, chunk: Vec<u8>) -> Result<(), String> {
+        if self.head.version < 2 {
+            if !chunk.is_empty() {
+                return Err("a version 1 package has no sections".into());
+            }
+            return Ok(());
+        }
+        if self.pos == self.buf.len() {
+            // The usual case: sections end at chunk ends.
+            self.buf = chunk;
+        } else {
+            self.buf.drain(..self.pos);
+            self.buf.reserve_exact(chunk.len());
+            self.buf.extend_from_slice(&chunk);
+            drop(chunk);
+        }
+        self.pos = 0;
+        let buf = std::mem::take(&mut self.buf);
+        let r = self.sections(&buf);
+        self.buf = buf;
+        if self.pos == self.buf.len() {
+            // Read: freed now, not with the next chunk.
+            self.buf = Vec::new();
+            self.pos = 0;
+        }
+        r
+    }
+
+    fn sections(&mut self, buf: &[u8]) -> Result<(), String> {
+        loop {
+            let avail = &buf[self.pos..];
+            let Some(count) = self.count else {
+                if avail.len() < 4 {
+                    return Ok(());
+                }
+                self.count = Some(u32::from_le_bytes(avail[..4].try_into().expect("4 bytes")));
+                self.pos += 4;
+                continue;
+            };
+            if avail.is_empty() {
+                return Ok(());
+            }
+            if self.read >= count {
+                return Err("trailing bytes in the package sections".into());
+            }
+            if avail.len() < 12 {
+                return Ok(());
+            }
+            let tag: [u8; 4] = avail[..4].try_into().expect("4 bytes");
+            let len = u64::from_le_bytes(avail[4..12].try_into().expect("8 bytes"));
+            let len = usize::try_from(len).map_err(|_| "section too large")?;
+            if avail.len() - 12 < len {
+                return Ok(());
+            }
+            self.section(tag, &avail[12..12 + len])?;
+            self.pos += 12 + len;
+            self.read += 1;
+        }
+    }
+
+    fn section(&mut self, tag: [u8; 4], payload: &[u8]) -> Result<(), String> {
+        let name = String::from_utf8_lossy(&tag).into_owned();
+        if self.decode.skip.contains(&tag) {
+            self.decode.say(format!(
+                "section {name} ({}) not needed here: skipped",
+                section_mb(payload.len())
+            ));
+            return Ok(());
+        }
+        if &tag != GRAPH_TAG && &tag != ROUTES_TAG {
+            self.choose_tiles();
+        }
+        self.reader.section(tag, payload)?;
+        self.decode.say(format!(
+            "section {name} ({}) decoded",
+            section_mb(payload.len())
+        ));
+        Ok(())
+    }
+
+    /// The phone's tiles, from the graph and the routes read so far (once).
+    fn choose_tiles(&mut self) {
+        let Some(keep) = self.keep.take() else {
+            return;
+        };
+        self.graph = self.reader.s.graph.take().map(Arc::new);
+        let mut mini = Sections {
+            routes: self.reader.s.routes.clone(),
+            ..Sections::default()
+        }
+        .into_package(self.head.clone(), BTreeMap::new());
+        mini.graph = self.graph.clone();
+        self.kept = keep(&mini);
+        drop(mini);
+        if let Some(k) = &self.kept {
+            self.decode
+                .say(format!("the per-tile parts kept for {} tiles", k.len()));
+            self.reader.s.trim(k);
+        }
+        self.reader.keep = self.kept.clone();
+    }
+
+    /// The package's base, once every chunk was pushed.
+    pub fn finish(mut self) -> Result<StreamedPackage, String> {
+        if self.pos < self.buf.len() {
+            return Err("package truncated".into());
+        }
+        if self.head.version >= 2 && self.count.is_none() {
+            return Err("package truncated".into());
+        }
+        self.choose_tiles();
+        let kept = self.kept.take();
+        let graph = self.graph.take();
+        let mut p = StreamedPackage::of_sections(self.head, self.reader.finish());
+        if graph.is_some() {
+            p.base.graph = graph;
+        }
+        if let Some(k) = &kept {
+            // The sections are cut; the base's own copy of what it shares
+            // (a no-op but for the map types cut by `cut`).
+            p.keep_tiles(k);
+        }
+        Ok(p)
+    }
+}
+
 /// Sections a streaming client does not fetch with the base (spec §14
 /// Phase 8 T7, Phase 10 B2): the orthophoto corridor (`ORTC`) is tens to
 /// hundreds of MB in one chunk, more than the browser should load before
@@ -1209,7 +1407,17 @@ impl StreamedPackage {
         header: &[u8],
         chunks: impl IntoIterator<Item = Vec<u8>>,
     ) -> Result<Self, String> {
-        Self::decode_chunks(header, chunks, None, false)
+        Self::decode_chunks(header, chunks, &mut BaseDecode::default())
+    }
+
+    /// [`StreamedPackage::from_chunks`] with [`BaseDecode`]'s skipped
+    /// sections and log.
+    pub fn from_chunks_decoded(
+        header: &[u8],
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+        decode: &mut BaseDecode<'_>,
+    ) -> Result<Self, String> {
+        Self::decode_chunks(header, chunks, decode)
     }
 
     /// [`StreamedPackage::from_chunks`] keeping the per-tile parts only
@@ -1225,87 +1433,37 @@ impl StreamedPackage {
         chunks: Vec<Vec<u8>>,
         keep: impl FnOnce(&WorldPackage) -> Option<BTreeSet<TileKey>>,
     ) -> Result<Self, String> {
-        let mut r = Bytes::new(header);
-        let head = read_head(&mut r)?;
-        r.finish("package header")?;
-        // The graph and the routes first, wherever the chunks split them
-        // (a big section spans several chunks): the other sections are
-        // only stepped over.
-        let mut first = SectionReader::new(head.samples, false, true);
-        let total: usize = chunks.iter().map(Vec::len).sum();
-        let mut pos = 4;
-        while pos + 12 <= total {
-            let top = gather(&chunks, pos, 12).ok_or("package truncated")?;
-            let tag: [u8; 4] = top[..4].try_into().expect("4 bytes");
-            let len = u64::from_le_bytes(top[4..].try_into().expect("8 bytes"));
-            let len = usize::try_from(len).map_err(|_| "section too large")?;
-            if &tag == GRAPH_TAG || &tag == ROUTES_TAG {
-                let payload = gather(&chunks, pos + 12, len).ok_or("package truncated")?;
-                first.section(tag, &payload)?;
-            }
-            pos += 12 + len;
+        let mut decode = BaseDecode::default();
+        Self::from_chunks_with(header, chunks, keep, &mut decode)
+    }
+
+    /// [`StreamedPackage::from_chunks_kept`] with the sections of
+    /// `decode.skip` left undecoded and `decode.log` told of each step
+    /// (the browser's page log, spec 14 Phase 10, 10G *Bisecting a
+    /// phone's crash*: the last stage before a phone closed the page).
+    pub fn from_chunks_with<'a, 'b>(
+        header: &[u8],
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+        keep: impl FnOnce(&WorldPackage) -> Option<BTreeSet<TileKey>> + 'a,
+        decode: &'a mut BaseDecode<'b>,
+    ) -> Result<Self, String> {
+        let mut d = BaseDecoder::new(header, Some(Box::new(keep)), decode)?;
+        for c in chunks {
+            d.push(c)?;
         }
-        let mini = first.finish().into_package(head.clone(), BTreeMap::new());
-        let kept = keep(&mini);
-        // The graph read once: the second pass skips it.
-        let graph = mini.graph.clone();
-        let mut p = Self::decode_chunks(header, chunks, kept.clone(), graph.is_some())?;
-        if graph.is_some() {
-            p.base.graph = graph;
-        }
-        if let Some(k) = &kept {
-            // The sections are cut; the base's own copy of what it shares
-            // (a no-op but for the map types cut by `cut`).
-            p.keep_tiles(k);
-        }
-        Ok(p)
+        d.finish()
     }
 
     fn decode_chunks(
         header: &[u8],
         chunks: impl IntoIterator<Item = Vec<u8>>,
-        keep: Option<BTreeSet<TileKey>>,
-        skip_graph: bool,
+        decode: &mut BaseDecode<'_>,
     ) -> Result<Self, String> {
-        let mut r = Bytes::new(header);
-        let head = read_head(&mut r)?;
-        r.finish("package header")?;
-        let mut chunks = chunks.into_iter();
-        if head.version < 2 {
-            if chunks.any(|c| !c.is_empty()) {
-                return Err("a version 1 package has no sections".into());
-            }
-            return Ok(Self::of_sections(head, Sections::default()));
+        let mut d = BaseDecoder::new(header, None, decode)?;
+        for c in chunks {
+            d.push(c)?;
         }
-        let mut stream = ChunkStream {
-            chunks: &mut chunks,
-            buf: Vec::new(),
-            pos: 0,
-        };
-        let count = u32::from_le_bytes(
-            stream
-                .take(4)?
-                .ok_or("package truncated")?
-                .try_into()
-                .expect("4 bytes"),
-        );
-        let mut reader = SectionReader::new(head.samples, true, true);
-        reader.keep = keep;
-        reader.skip_graph = skip_graph;
-        for _ in 0..count {
-            let Some(top) = stream.take(12)? else {
-                break;
-            };
-            let tag: [u8; 4] = top[..4].try_into().expect("4 bytes");
-            let len = u64::from_le_bytes(top[4..].try_into().expect("8 bytes"));
-            let len = usize::try_from(len).map_err(|_| "section too large")?;
-            let payload = stream.take(len)?.ok_or("package truncated")?;
-            reader.section(tag, payload)?;
-        }
-        if stream.take(1)?.is_some() {
-            return Err("trailing bytes in the package sections".into());
-        }
-        Ok(Self::of_sections(head, reader.finish()))
+        d.finish()
     }
 
     fn of_sections(head: PackageHead, mut s: Sections) -> Self {
@@ -1629,11 +1787,31 @@ const FLAG_NAME: u8 = 16;
 ///   point count: u32, points: [f64; 2]   profile count: u32, heights: f32
 /// ```
 pub fn write_graph(g: &RoadGraph, b: &mut Vec<u8>) {
+    write_graph_with(g, b, usize::MAX, &mut |_| {});
+}
+
+/// [`write_graph`] handing `b` to `flush` whenever it holds `every` bytes
+/// or more (and once at the end), which may empty it: the graph's
+/// fingerprint hashes the bytes without holding all of them
+/// ([`RoadGraph::fingerprint`]; Tenerife's graph is 20 MB written, and a
+/// browser makes the fingerprint while a world loads, 14 Phase 10, 10G).
+pub fn write_graph_with(
+    g: &RoadGraph,
+    b: &mut Vec<u8>,
+    every: usize,
+    flush: &mut dyn FnMut(&mut Vec<u8>),
+) {
+    let mut full = |b: &mut Vec<u8>| {
+        if b.len() >= every {
+            flush(b);
+        }
+    };
     b.extend(GRAPH_VERSION.to_le_bytes());
     b.extend((g.vertices.len() as u32).to_le_bytes());
     for v in &g.vertices {
         b.extend(v[0].to_le_bytes());
         b.extend(v[1].to_le_bytes());
+        full(b);
     }
     b.extend((g.boundary_vertices.len() as u32).to_le_bytes());
     for v in &g.boundary_vertices {
@@ -1689,6 +1867,10 @@ pub fn write_graph(g: &RoadGraph, b: &mut Vec<u8>) {
         for h in &e.profile {
             b.extend((*h as f32).to_le_bytes());
         }
+        full(b);
+    }
+    if every != usize::MAX {
+        flush(b);
     }
 }
 
@@ -1804,61 +1986,6 @@ fn class_from(code: u8) -> Result<RoadClass, String> {
         .get(usize::from(code))
         .copied()
         .ok_or_else(|| format!("unknown road class {code}"))
-}
-
-/// `n` bytes from `pos` of the chunks read as one (copied; `None` past
-/// their end).
-fn gather(chunks: &[Vec<u8>], mut pos: usize, n: usize) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(n);
-    for c in chunks {
-        if pos >= c.len() {
-            pos -= c.len();
-            continue;
-        }
-        let take = (c.len() - pos).min(n - out.len());
-        out.extend_from_slice(&c[pos..pos + take]);
-        pos = 0;
-        if out.len() == n {
-            return Some(out);
-        }
-    }
-    (out.len() == n).then_some(out)
-}
-
-/// The bytes of a list of chunks read in order, a chunk at a time: what
-/// is asked for within the current chunk is borrowed from it, a read over
-/// the end of one joins only the rest of it with the next.
-struct ChunkStream<'c, I: Iterator<Item = Vec<u8>>> {
-    chunks: &'c mut I,
-    buf: Vec<u8>,
-    pos: usize,
-}
-
-impl<I: Iterator<Item = Vec<u8>>> ChunkStream<'_, I> {
-    /// The next `n` bytes; `None` at the end of the last chunk (an end
-    /// within the `n` bytes is an error).
-    fn take(&mut self, n: usize) -> Result<Option<&[u8]>, String> {
-        while self.buf.len() - self.pos < n {
-            let Some(next) = self.chunks.next() else {
-                if self.pos == self.buf.len() {
-                    return Ok(None);
-                }
-                return Err("package truncated".into());
-            };
-            if self.pos == self.buf.len() {
-                // The usual case: sections end at chunk ends.
-                self.buf = next;
-            } else {
-                self.buf.drain(..self.pos);
-                self.buf.reserve_exact(next.len());
-                self.buf.extend_from_slice(&next);
-            }
-            self.pos = 0;
-        }
-        let out = &self.buf[self.pos..self.pos + n];
-        self.pos += n;
-        Ok(Some(out))
-    }
 }
 
 pub(crate) struct Bytes<'a> {
@@ -3079,6 +3206,66 @@ mod tests {
         assert!(StreamedPackage::from_parts(&part("header")[..10], &[]).is_err());
         let cut = &bytes[sections_start..bytes.len() - 1];
         assert!(StreamedPackage::from_parts(part("header"), cut).is_err());
+    }
+
+    /// The browser leaves the road traffic out of the base (spec 14 Phase
+    /// 10, 10G; Phase 18 Q9 (b): it shows no road traffic): a section in
+    /// `BaseDecode::skip` is stepped over undecoded, the rest is the same,
+    /// and the log hears of each step.
+    #[test]
+    fn a_base_decoded_without_the_traffic_section_and_logged() {
+        let traffic = crate::traffic::TrafficData::default();
+        let p = WorldPackage {
+            time_zone: Some("Europe/Andorra".into()),
+            traffic: Some(Arc::new(traffic)),
+            ..package()
+        };
+        let bytes = p.to_bytes();
+        let chunks = crate::manifest::package_chunks(&bytes).unwrap();
+        assert!(chunks.iter().any(|(n, _)| n == "section TRFC"));
+        let range = |name: &str| chunks.iter().find(|(n, _)| n == name).unwrap().1.clone();
+        let parts: Vec<Vec<u8>> = chunks
+            .iter()
+            .filter(|(n, _)| n == "sections" || n.starts_with("section "))
+            .map(|(_, r)| bytes[r.clone()].to_vec())
+            .collect();
+        let header = &bytes[range("header")];
+        let whole = StreamedPackage::from_chunks(header, parts.clone()).unwrap();
+        assert!(whole.base().traffic.is_some());
+        let mut lines = Vec::new();
+        let mut log = |l: String| lines.push(l);
+        let lean = StreamedPackage::from_chunks_with(
+            header,
+            parts,
+            |_| None,
+            &mut BaseDecode {
+                skip: vec![*TRAFFIC_TAG],
+                log: Some(&mut log),
+            },
+        )
+        .unwrap();
+        assert!(lean.base().traffic.is_none());
+        assert_eq!(lean.base().time_zone.as_deref(), Some("Europe/Andorra"));
+        let mut want = whole.base().clone();
+        want.traffic = None;
+        assert_eq!(*lean.base(), want);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("section TRFC (") && l.ends_with("not needed here: skipped")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("section TZID (") && l.ends_with(") decoded")),
+            "{lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.contains("TRFC") && l.ends_with("decoded"))
+        );
     }
 
     /// A streaming client leaves the orthophoto corridor out of the base

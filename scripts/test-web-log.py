@@ -23,7 +23,9 @@ WebGL 2 – headless WebGPU is not a phone's). For each phone:
             Hide hides it, a reload keeps it hidden;
   previous  a reload shows the load before ("closed normally"); a load
             whose pagehide never comes (as when the browser kills the page)
-            shows as ended without pagehide, with its last line;
+            shows as ended without pagehide, with its last line; a world
+            load's stage line ("world load: …", 10G) is stored at once in
+            its own key and the next load names it as the last stage;
   taps      without ?log=1 five taps on the version stamp (bottom right)
             open it;
   too-old   no WebAssembly SIMD: the "too old" screen offers Show log, and
@@ -312,6 +314,14 @@ def main():
         pg.goto(root + "?route=hills&bots=1&touch=on&gpu=webgl2&quality=low")
         pg.wait_for_timeout(1500)
         pg.evaluate("window.ocwLog.add('ocw-test: the last line before the kill'); window.__noPagehide = true")
+        # A world load's stage (10G: the iPhone that closed the page while
+        # a world's base was decoded): the app's "world load:" line, as
+        # Bevy's tracing writes it, is in its own small key at once.
+        stage = ("world load: base: section LUSE (3.20 MB) decoded – wasm 61 MB, heap 38 MB (peak 44 MB)")
+        stored = pg.evaluate("(l) => { console.info('%cINFO%c apps/web/src/world.rs:80%c ' + l, '', '', '');"
+                             " return sessionStorage.getItem('ocw.log.stages'); }", stage)
+        check(f"{phone}: a world load's stage line is stored at once in its own key",
+              stage in (stored or "") and any(stage in ln for ln in pg.evaluate("window.ocwLog.stages()")), (stored or "")[:300])
         pg.wait_for_timeout(2500)
         pg.reload()
         pg.wait_for_timeout(2000)
@@ -319,6 +329,11 @@ def main():
         check(f"{phone}: a load killed without pagehide: the next load says so and has its last line",
               not prev.get("ended") and any("the last line before the kill" in ln for ln in prev.get("lines", [])),
               {"ended": prev.get("ended"), "lines": len(prev.get("lines", []))})
+        whole = report(pg)
+        check(f"{phone}: the load before names its last world load stage (with the memory)",
+              stage in (prev.get("stage") or "")
+              and "last world load stage: base: section LUSE (3.20 MB) decoded – wasm 61 MB" in whole,
+              {"stage": prev.get("stage")})
         pg.evaluate("window.ocwLog.show()")
         pg.wait_for_timeout(800)
         pg.evaluate("(() => { const b = document.querySelector('#ocw-log .body'); const s = b.querySelector('.sec');"

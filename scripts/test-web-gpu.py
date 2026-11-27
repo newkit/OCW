@@ -216,6 +216,19 @@ LOGIC = r"""
         && s3 === null && new URL(s2.href).searchParams.get("quality") === "low"
         && new URL(s2.href).searchParams.get("world") === "liechtenstein", JSON.stringify([s1, s2, s3]));
   const qs = (s) => new URLSearchParams(s);
+  // The death notes say what changes on the device (10G, v7.00): on an
+  // iPhone with WebGL 2 the shadows are off already – no "smallest shadows".
+  const ni = G.memoryStepNote("minimal", F.iphone, qs("world=europe/andorra&memory=minimal"));
+  const ns = G.memoryStepNote("saver", F.iphone, qs("world=europe/andorra&memory=saver"));
+  const nd = G.memoryStepNote("minimal", F.chrome, qs("world=liechtenstein&memory=minimal"));
+  const nw = G.memoryStepNote("minimal", F.iphone, qs("gpu=webgpu&memory=minimal"));
+  check("death notes: an iPhone on WebGL 2 is not promised smaller shadows (they are off already)",
+        !/shadows,|smallest shadows|smaller shadows/.test(ni) && /shadows are off here already/.test(ni)
+        && /one ring of world tiles/.test(ni) && /close to the route/.test(ni)
+        && !/fewer world tiles|smaller shadows/.test(ns) && /one pixel per point/.test(ns), JSON.stringify([ni, ns]));
+  check("death notes: desktops and an iPhone with its shadows on keep the smallest shadows",
+        /the smallest shadows/.test(nd) && !/off here already/.test(nd) && /the smallest shadows/.test(nw)
+        && /smaller shadows/.test(G.memoryStepNote("saver", F.chrome, qs(""))), JSON.stringify([nd, nw]));
   check("pixel ratio: an iPhone in WebKit draws at 1.5, at 1 in the saver modes",
         G.pixelRatioCap(F.iphone, qs(""), 3, false) === 1.5 && G.pixelRatioCap(F.iphone, qs("memory=saver"), 3, false) === 1
         && G.pixelRatioCap(F.iphone, qs("memory=minimal"), 3, false) === 1, "");

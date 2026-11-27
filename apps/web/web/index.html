@@ -956,9 +956,7 @@
         return {go: false, died: last.died};
       }
       history.replaceState(null, "", next.href);
-      gpuNote(next.mode === "saver"
-        ? "The page was closed in the ride (probably for memory) – riding on with less detail: fewer world tiles, smaller shadows, a sharper limit on the picture's pixels."
-        : "The page was closed again – riding on with the least detail: one ring of world tiles, the smallest shadows, the picture at one pixel per point.");
+      gpuNote(ocwGpuChoice.memoryStepNote(next.mode, gpuFacts, new URLSearchParams(location.search)));
       return {go: true, died: last.died};
     }
 

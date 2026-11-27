@@ -55,7 +55,7 @@ pub struct EdgeGeometry {
 }
 
 impl EdgeGeometry {
-    fn new(edge: &Edge) -> Self {
+    pub fn new(edge: &Edge) -> Self {
         let mut points = Vec::new();
         let mut cumulative = Vec::new();
         let mut s = 0.0;
@@ -755,24 +755,31 @@ impl RoadNetwork {
     /// least 200 m long) from `seed`: (edge, offset, forward). Falls back
     /// to any edge.
     pub fn random_start(&self, seed: u64) -> Option<(usize, f64, bool)> {
+        Self::random_start_in(&self.graph, seed)
+    }
+
+    /// [`RoadNetwork::random_start`] on a bare graph (the same start;
+    /// without building a network: the browser chooses a phone's tiles
+    /// from it while the base is decoded, 14 Phase 10, 10G).
+    pub fn random_start_in(graph: &RoadGraph, seed: u64) -> Option<(usize, f64, bool)> {
         let good = |e: &Edge| {
             e.dead_end_m.is_none()
                 && !matches!(e.class, RoadClass::Track | RoadClass::Path)
                 && e.length_m() >= 200.0
         };
-        let mut pool: Vec<usize> = (0..self.graph.edges.len())
-            .filter(|&i| good(&self.graph.edges[i]))
+        let mut pool: Vec<usize> = (0..graph.edges.len())
+            .filter(|&i| good(&graph.edges[i]))
             .collect();
         if pool.is_empty() {
-            pool = (0..self.graph.edges.len()).collect();
+            pool = (0..graph.edges.len()).collect();
         }
         if pool.is_empty() {
             return None;
         }
         let r = splitmix(seed);
         let edge = pool[(r % pool.len() as u64) as usize];
-        let e = &self.graph.edges[edge];
-        let len = self.geometry(edge).length();
+        let e = &graph.edges[edge];
+        let len = EdgeGeometry::new(e).length();
         let frac = (splitmix(r) >> 11) as f64 / (1u64 << 53) as f64;
         let offset = len * (0.1 + 0.4 * frac);
         let forward = match e.oneway {

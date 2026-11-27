@@ -55,6 +55,19 @@ struct Segments {
 
 impl Segments {
     fn new(g: &RoadGraph, keep: impl Fn(usize) -> bool) -> Self {
+        Self::new_in(g, keep, None)
+    }
+
+    /// [`Segments::new`] storing only the cells in `only` (`None`: all) –
+    /// the cells a caller will ask for: [`side_paths`] asks only near the
+    /// paths, and every road's segments of a big world held for a moment
+    /// were 100 MB more heap on Tenerife while a browser prepared its ride
+    /// (14 Phase 10, 10G).
+    fn new_in(
+        g: &RoadGraph,
+        keep: impl Fn(usize) -> bool,
+        only: Option<&std::collections::HashSet<(i64, i64)>>,
+    ) -> Self {
         let mut cells: HashMap<(i64, i64), Vec<(u32, u32)>> = HashMap::new();
         for (ei, e) in g.edges.iter().enumerate() {
             if !keep(ei) {
@@ -66,6 +79,9 @@ impl Segments {
                 let c = |v: f64| (v / CELL_M).floor() as i64;
                 for cx in c(x0)..=c(x1) {
                     for cz in c(z0)..=c(z1) {
+                        if only.is_some_and(|o| !o.contains(&(cx, cz))) {
+                            continue;
+                        }
                         cells
                             .entry((cx, cz))
                             .or_default()
@@ -115,12 +131,32 @@ pub fn side_paths(g: &RoadGraph) -> Vec<bool> {
         let e = &g.edges[ei];
         !is_path(e.class) && e.from != e.to && e.points.len() >= 2
     };
-    let roads = Segments::new(g, road);
+    let candidate = |e: &crate::graph::Edge| {
+        is_path(e.class) && !e.bridge && !e.tunnel && e.from != e.to && e.points.len() >= 2
+    };
+    // Only the cells the paths' checks below look into (each check is
+    // within `12 + half + ALONG_GAP_M` of a point on the path).
+    let mut wanted = std::collections::HashSet::new();
+    for e in g.edges.iter().filter(|e| candidate(e)) {
+        let r = 12.0 + e.width_m / 2.0 + ALONG_GAP_M;
+        let c = |v: f64| (v / CELL_M).floor() as i64;
+        for w in e.points.windows(2) {
+            let (x0, x1) = (w[0][0].min(w[1][0]) - r, w[0][0].max(w[1][0]) + r);
+            let (z0, z1) = (w[0][1].min(w[1][1]) - r, w[0][1].max(w[1][1]) + r);
+            for cx in c(x0)..=c(x1) {
+                for cz in c(z0)..=c(z1) {
+                    wanted.insert((cx, cz));
+                }
+            }
+        }
+    }
+    let roads = Segments::new_in(g, road, Some(&wanted));
+    drop(wanted);
     let (sin_max, cos_max) = ALONG_DEG.to_radians().sin_cos();
     g.edges
         .iter()
         .map(|e| {
-            if !is_path(e.class) || e.bridge || e.tunnel || e.from == e.to || e.points.len() < 2 {
+            if !candidate(e) {
                 return false;
             }
             let cum = cumulative(&e.points);

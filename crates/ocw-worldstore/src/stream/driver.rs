@@ -25,8 +25,8 @@ use ocw_world::manifest::{
 use ocw_world::package::StreamedPackage;
 
 use super::cache::{ChunkCache, ChunkStore};
-use super::load::{LoadStats, RangeFetch, StreamError, load_chunks};
-use super::plan::{RangeParams, base_chunks};
+use super::load::{LoadStats, RangeFetch, StreamError, load_chunks, load_chunks_logged};
+use super::plan::{RangeParams, base_batches, base_chunks};
 use super::progress::{LoadProgress, Stage, Storage};
 use super::{MAX_MANIFEST_BYTES, WorldRef, accept_manifest, sibling_url};
 
@@ -40,6 +40,23 @@ pub struct KeepTiles(pub Arc<KeepFn>);
 /// [`KeepTiles`]' function.
 pub type KeepFn =
     dyn Fn(&ocw_world::WorldPackage) -> Option<std::collections::BTreeSet<TileKey>> + Send + Sync;
+
+/// The base is fetched and decoded in batches of about this many bytes
+/// (a section larger than this comes alone).
+pub const BASE_BATCH_BYTES: u64 = 8 << 20;
+
+/// Where the driver tells the stages of a world's load (the browser's
+/// page log, spec 14 Phase 10, 10G *Bisecting a phone's crash*: the phone
+/// that closed the page while the base was decoded). The app adds the
+/// memory to each line.
+#[derive(Clone)]
+pub struct StageLog(pub Arc<dyn Fn(&str) + Send + Sync>);
+
+impl std::fmt::Debug for StageLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StageLog(..)")
+    }
+}
 
 impl std::fmt::Debug for KeepTiles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -63,6 +80,38 @@ pub struct StreamConfig {
     pub batch_tiles: usize,
     /// The tiles the base keeps its per-tile parts for (`None`: all).
     pub keep: Option<KeepTiles>,
+    /// Base sections this client neither fetches nor decodes (the
+    /// browser: the road traffic's `TRFC`, spec 14 Phase 18 Q9 (b) – it
+    /// shows no road traffic; 10G, the iPhone's memory).
+    pub skip_sections: Vec<[u8; 4]>,
+    /// Told of each stage of the base's load (`None`: silent).
+    pub log: Option<StageLog>,
+}
+
+impl StreamConfig {
+    /// The base chunks this client loads: [`base_chunks`] without
+    /// [`StreamConfig::skip_sections`].
+    pub fn base_wanted(&self, file: &FileEntry) -> Vec<usize> {
+        base_chunks(file)
+            .into_iter()
+            .filter(|&i| !self.skips_chunk(&file.chunks[i].name))
+            .collect()
+    }
+
+    fn skips_chunk(&self, name: &str) -> bool {
+        name.strip_prefix("section ").is_some_and(|tag| {
+            let tag = tag.split('#').next().unwrap_or(tag);
+            self.skip_sections
+                .iter()
+                .any(|t| t.as_slice() == tag.as_bytes())
+        })
+    }
+
+    fn say(&self, line: &str) {
+        if let Some(l) = &self.log {
+            (l.0)(line);
+        }
+    }
 }
 
 /// The decoded base of the package, handed to the app once.
@@ -328,7 +377,9 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
                     "{url}: the manifest lists no world package chunks (rebuild it with `world-builder sign`)"
                 ))
             })?;
-        let base_total = base_chunks(&file)
+        let base_total = self
+            .config
+            .base_wanted(&file)
             .iter()
             .map(|&i| file.chunks[i].size)
             .sum();
@@ -352,41 +403,88 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
 
     async fn base_step(&mut self, shared: &Mutex<StreamShared>) -> Result<(), StreamError> {
         let (m, trust, file, file_url) = self.manifest.clone().expect("after the manifest");
-        let wanted = base_chunks(&file);
-        let (chunks, stats) = load_chunks(
-            &self.fetch,
-            self.cache.as_ref(),
-            &m,
-            &file,
-            &file_url,
-            &wanted,
-            self.config.ranges,
-            &mut |bytes, _| {
-                shared.lock().expect("not poisoned").progress.base_done += bytes;
-            },
-        )
-        .await?;
-        // The sections decoded chunk by chunk, each freed once read (spec
-        // 14 Phase 10 B2, B7: the wasm memory keeps its peak, and
-        // Tenerife's base is 146 MB – joined into one buffer first, the
-        // chunks, the copy and the decoded base were there at once; the
-        // iPhone's memory, v5.42).
-        let mut header = None;
-        let mut sections = Vec::with_capacity(chunks.len());
-        for c in chunks {
-            if file.chunks[c.index].name == "header" {
-                header = Some(c.bytes);
+        let wanted = self.config.base_wanted(&file);
+        let all = base_chunks(&file);
+        let left_out: u64 = all
+            .iter()
+            .filter(|i| !wanted.contains(i))
+            .map(|&i| file.chunks[i].size)
+            .sum();
+        let size: u64 = wanted.iter().map(|&i| file.chunks[i].size).sum();
+        self.config.say(&format!(
+            "base: {} chunks, {:.1} MB to load{}",
+            wanted.len(),
+            size as f64 / 1e6,
+            if left_out > 0 {
+                format!(
+                    " ({:.2} MB of sections not needed here left out)",
+                    left_out as f64 / 1e6
+                )
             } else {
-                sections.push(c.bytes);
+                String::new()
             }
+        ));
+        // Fetched a few MB at a time and each batch decoded at once, its
+        // bytes dropped as soon as their sections are read (spec 14 Phase
+        // 10 B7, 10G: before, all of Tenerife's 146 MB of chunks were held
+        // while the sections were decoded – the wasm memory keeps its
+        // peak; the iPhone that closed the page while a base was decoded,
+        // 2026-11-27). The header chunk comes first (lowest offset).
+        let config = &self.config;
+        let mut say = |line: String| config.say(&format!("base: {line}"));
+        let mut decode = ocw_world::package::BaseDecode {
+            skip: config.skip_sections.clone(),
+            log: Some(&mut say),
+        };
+        let keep = config.keep.clone();
+        let mut chooser: Option<ocw_world::package::KeepChooser<'_>> =
+            keep.map(|k| -> ocw_world::package::KeepChooser<'_> { Box::new(move |p| (k.0)(p)) });
+        let mut decoder: Option<ocw_world::package::BaseDecoder<'_, '_>> = None;
+        let mut decode = Some(&mut decode);
+        let mut stats = LoadStats::default();
+        let mut loaded = 0u64;
+        for batch in base_batches(&file, &wanted, BASE_BATCH_BYTES) {
+            let (chunks, st) = load_chunks_logged(
+                &self.fetch,
+                self.cache.as_ref(),
+                &m,
+                &file,
+                &file_url,
+                &batch,
+                config.ranges,
+                &mut |bytes, _| {
+                    shared.lock().expect("not poisoned").progress.base_done += bytes;
+                },
+                &mut |line| config.say(&format!("base: {line}")),
+            )
+            .await?;
+            stats.add(&st);
+            for c in chunks {
+                loaded += c.bytes.len() as u64;
+                if file.chunks[c.index].name == "header" {
+                    let d = decode.take().expect("one header chunk");
+                    decoder = Some(
+                        ocw_world::package::BaseDecoder::new(&c.bytes, chooser.take(), d)
+                            .map_err(StreamError::Decode)?,
+                    );
+                    continue;
+                }
+                let d = decoder
+                    .as_mut()
+                    .ok_or_else(|| StreamError::Decode("the package has no header chunk".into()))?;
+                d.push(c.bytes).map_err(StreamError::Decode)?;
+            }
+            config.say(&format!(
+                "base: {:.1} of {:.1} MB loaded and decoded",
+                loaded as f64 / 1e6,
+                size as f64 / 1e6
+            ));
         }
-        let header =
-            header.ok_or_else(|| StreamError::Decode("the package has no header chunk".into()))?;
-        let package = match &self.config.keep {
-            Some(k) => StreamedPackage::from_chunks_kept(&header, sections, |p| (k.0)(p)),
-            None => StreamedPackage::from_chunks(&header, sections),
-        }
-        .map_err(StreamError::Decode)?;
+        let package = decoder
+            .ok_or_else(|| StreamError::Decode("the package has no header chunk".into()))?
+            .finish()
+            .map_err(StreamError::Decode)?;
+        self.config.say("base decoded");
         let elapsed = self.elapsed();
         let mut s = shared.lock().expect("not poisoned");
         let st = self.storage(&s);
@@ -496,6 +594,8 @@ mod tests {
             cache_budget: 1 << 20,
             batch_tiles: 4,
             keep: None,
+            skip_sections: Vec::new(),
+            log: None,
         }
     }
 
@@ -578,6 +678,99 @@ mod tests {
                 .iter()
                 .any(|l| l.starts_with("storage: "))
         );
+    }
+
+    /// The browser's base without the road traffic (spec 14 Phase 10,
+    /// 10G; Phase 18 Q9 (b)): a section of `skip_sections` is neither
+    /// fetched nor decoded, the loading screen counts only what is
+    /// loaded, and the stage log hears of each step in order.
+    #[test]
+    fn a_skipped_section_is_not_fetched_and_the_stages_are_logged() {
+        let pkg = ocw_world::WorldPackage {
+            traffic: Some(Arc::new(ocw_world::traffic::TrafficData::default())),
+            ..crate::stream::load::tests::package()
+        };
+        let bytes = pkg.to_bytes();
+        let mut m = Manifest::new("test/mini", "Mini", 3, 0, "test", vec![]).unwrap();
+        m.add_file("mini.ocwpkg", &bytes).unwrap();
+        let dir = format!("{BASE}test/mini/3/");
+        let fetch = MemoryFetch::with([
+            (format!("{BASE}test/mini/latest"), b"3\n".to_vec()),
+            (
+                format!("{dir}manifest.json"),
+                SignedManifest::unsigned(&m).to_json().into_bytes(),
+            ),
+            (format!("{dir}mini.ocwpkg"), bytes.clone()),
+        ]);
+        let file = m.package_file().unwrap().clone();
+        let trfc = file
+            .chunks
+            .iter()
+            .find(|c| c.name == "section TRFC")
+            .expect("the package has its traffic section")
+            .clone();
+        let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = lines.clone();
+        let mut config = config(UnsignedPolicy::Warn);
+        config.skip_sections = vec![*ocw_world::traffic::TRAFFIC_TAG];
+        config.log = Some(StageLog(Arc::new(move |l| {
+            sink.lock().unwrap().push(l.to_string())
+        })));
+        let store = MemoryStore::default();
+        let shared = Mutex::new(StreamShared::default());
+        let mut d = StreamDriver::new(&fetch, Some(&store), config, clock());
+        run(&mut d, &shared);
+        let s = shared.lock().unwrap();
+        let base = s.base.as_ref().expect("the base is there");
+        assert!(base.package.base().traffic.is_none());
+        assert_eq!(
+            base.package.base().time_zone.as_deref(),
+            Some("Europe/Vaduz")
+        );
+        // No request touched the traffic section's bytes.
+        let pkg_url = format!("{dir}mini.ocwpkg");
+        for (url, range) in fetch.requests() {
+            if url == pkg_url {
+                let r = range.expect("ranges");
+                assert!(
+                    r.end <= trfc.offset || r.start >= trfc.offset + trfc.size,
+                    "{r:?} overlaps TRFC at {}",
+                    trfc.offset
+                );
+            }
+        }
+        assert_eq!(s.progress.base_done, s.progress.base_total);
+        let all: u64 = base_chunks(&file)
+            .iter()
+            .map(|&i| file.chunks[i].size)
+            .sum();
+        assert_eq!(s.progress.base_total, all - trfc.size);
+        let lines = lines.lock().unwrap().clone();
+        let at = |p: &str| {
+            lines
+                .iter()
+                .position(|l| l.starts_with(p))
+                .unwrap_or_else(|| panic!("no {p:?} in {lines:?}"))
+        };
+        assert!(
+            lines[0].contains("MB of sections not needed here left out"),
+            "{lines:?}"
+        );
+        let verified = lines
+            .iter()
+            .position(|l| l.contains("chunks verified"))
+            .unwrap();
+        let cached = lines
+            .iter()
+            .position(|l| l.contains("written to the cache"))
+            .unwrap();
+        let section = at("base: section TZID");
+        let decoded = at("base decoded");
+        assert!(
+            verified < cached && cached < section && section < decoded,
+            "{lines:?}"
+        );
+        assert!(!lines.iter().any(|l| l.contains("TRFC")), "{lines:?}");
     }
 
     /// The second visit loads the base and the tiles from the cache: only
