@@ -306,6 +306,10 @@ pub struct TrafficPlugin;
 impl Plugin for TrafficPlugin {
     fn build(&self, app: &mut App) {
         register_commands(app);
+        // The simulated aircraft (T8).
+        if !app.is_plugin_added::<crate::air::AirPlugin>() {
+            app.add_plugins(crate::air::AirPlugin);
+        }
     }
 }
 

@@ -5979,3 +5979,124 @@ world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "5600,6540", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-10-28 14:00", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose here here 150 290 -10"]
 shot = 9
+
+# --- Road traffic (spec 14 Phase 18, 18E T5): vehicles as debug boxes --------
+# Render with the package that has the traffic data (`TRFC`):
+#   scripts/render-scenes.sh --remote marge --world data/traffic-build/liechtenstein.ocwpkg --only 'traffic-*'
+
+[[scene]]
+name = "traffic-boxes-vaduz"
+description = "Road traffic T5 in Vaduz centre: the server's vehicles as the client extrapolates them from their plans, drawn as debug boxes (cars, vans, lorries, buses; red brake lamps while braking or standing), busy traffic, raised chase camera; a rider on a green gravel bike in a stripes kit"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "220"]
+riders = """
+active = "Ada Rider"
+
+[[rider]]
+name = "Ada Rider"
+weight_kg = 58.0
+ftp_w = 230
+bike = "gravel"
+frame_color = "#2E7D32"
+jersey_color = "#F4511E"
+helmet_color = "#FAFAFA"
+kit = "stripes"
+"""
+at = ["1=traffic road busy", "1=traffic.boxes on", "2=camera.orbit 0 30 14"]
+shot = 14
+
+[[scene]]
+name = "traffic-boxes-top"
+description = "Road traffic T5 from above over Vaduz: every vehicle within 1.5 km of the rider as a debug box in its lane, queues at the junctions; a rider on a black time-trial bike in a chevron kit"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "300"]
+riders = """
+active = "Bea Climber"
+
+[[rider]]
+name = "Bea Climber"
+weight_kg = 76.0
+ftp_w = 290
+bike = "tt"
+frame_color = "#212121"
+jersey_color = "#1E88E5"
+helmet_color = "#FFB300"
+kit = "chevrons"
+"""
+at = ["1=traffic road busy", "1=traffic.boxes on", "2=camera.orbit 30 70 120"]
+shot = 14
+
+[[scene]]
+name = "traffic-boxes-video"
+description = "Video: road traffic T5 in Vaduz – vehicles driving, braking and pulling away around the rider as debug boxes, orbit camera behind and above; a rider on a red road bike in a sash kit"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "260"]
+riders = """
+active = "Cleo Sprinter"
+
+[[rider]]
+name = "Cleo Sprinter"
+weight_kg = 64.0
+ftp_w = 250
+bike = "road"
+frame_color = "#C62828"
+jersey_color = "#FFFFFF"
+helmet_color = "#C62828"
+kit = "sash"
+"""
+at = ["1=traffic road busy", "1=traffic.boxes on", "1.5=camera.orbit 20 26 30"]
+warmup = 5
+video = 8
+
+# --- Simulated aircraft (spec 14 Phase 18, 18E T8) ---------------------------
+# The aerodromes come from the package's AERO section (`world-builder
+# traffic`, T2); a package without it gets the airports of the NEARBY table
+# (TFN and TFS for Tenerife). `air` lists what flies, `air.spot` puts the
+# unicorn beside the path of the nearest aircraft of a kind or mission.
+
+[[scene]]
+name = "air-tfn-approach"
+description = "Video: an airliner on the 3° glide slope to Tenerife North (runway 30, the wind from the north-west) passes the hovering unicorn at 120 m, gear down, over La Laguna (spec 18C, T8)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-07-15 10:00", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "1=character --hair long --hair-colour auburn --glasses 1", "2=god.flight hover", "3=god on", "4=air.spot arrival 120 11", "4.2=air"]
+video = 14
+warmup = 5
+pick = false
+
+[[scene]]
+name = "air-contrails-blackforest"
+description = "A cold, humid November morning over the Black Forest: the airliners on the Rhine valley airways draw long persistent contrails that drift with the wind aloft (Schmidt–Appleman, spec 18C, T8); the unicorn looking up from 600 m"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-11-27 10:30", "0.5=weather clear clouds=0.25 type=cirrus temp=2 humidity=0.85 wind=6 dir=250", "0.5=hud off", "0.5=hud.profile off", "1=character --hair-colour black --glasses 1", "2=god.flight hover", "3=god on", "4=god.pose here here 600 200 22", "4.5=air"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "air-contrails-dry"
+description = "The same sky on a hot, dry summer day: the same airliners, no contrails at all (spec 18C, T8)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-07-15 10:30", "0.5=weather clear clouds=0 temp=33 humidity=0.2", "0.5=hud off", "0.5=hud.profile off", "1=character --hair long --hair-colour blond", "2=god.flight hover", "3=god on", "4=god.pose here here 600 200 22", "4.5=air"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "air-dusk-lights"
+description = "Dusk at Tenerife: the nearest airliner's navigation lights (red left, green right, white tail), the red beacon and the strobes, seen from the unicorn beside its path (spec 18C, T8)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-07-15 21:25", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=air.spot airliner 80 6", "4.1=air"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "air-contrails-timelapse"
+description = "Video, the clock ten times faster: airliners crossing the Black Forest on a cold, humid morning draw persistent contrails that widen and drift with the wind aloft (spec 18C, T8)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-11-27 10:30", "0.5=weather clear clouds=0.2 type=cirrus temp=1 humidity=0.9 wind=8 dir=250", "0.5=hud off", "0.5=hud.profile off", "1=character --hair long --hair-colour #3B2A20", "2=god.flight hover", "3=god on", "4=god.pose here here 900 160 28", "4.5=time speed 10"]
+video = 12
+warmup = 6
+pick = false

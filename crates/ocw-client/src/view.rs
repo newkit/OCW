@@ -37,6 +37,8 @@ pub fn fill(
     view.game_s = client.server_time_s(now);
     // Interpolate between the last two 50 Hz prediction steps.
     view.riders = client.view(now, overstep);
+    // The road vehicles near the rider (spec 18E T5).
+    view.vehicles = client.vehicles_view(now);
     // Riders off the road ride the terrain's track (spec §14 Phase 13A).
     view.off_road = client.off_road_tracks(now);
     view.position = view

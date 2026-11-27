@@ -113,7 +113,8 @@ for a in s.get("attribution", []):
     lines.append(f"- **{a['source']}** – {a['licence']}{url}: {a['notice']}")
 lines += ["",
           "- **OpenStreetMap / ODbL:** the road graph (section `GRPH`, with the routes `ROUT`,",
-          "  land use `LUSE`, buildings `BLDG` and region `REGN`) and the route files are a",
+          "  land use `LUSE`, buildings `BLDG`, region `REGN` and, where the package has",
+          "  them, the traffic rules `TRFC` and aerodromes `AERO`) and the route files are a",
           "  Derivative Database under the Open Database License 1.0",
           "  (https://opendatacommons.org/licenses/odbl/1-0/) and are made available under it.",
           "  The OSM extract(s) they were built from are offered in this release",

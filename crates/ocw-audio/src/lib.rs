@@ -12,6 +12,8 @@
 //!   voices and the group layer, and their synthesis;
 //! - [`weather`]: rain, hail, drizzle, gusts, wet tyres and thunder (spec
 //!   §14 Phase 9, S4);
+//! - [`aircraft`]: the simulated aircraft – jets, propellers, rotors, a
+//!   glider's whistle, a balloon's burner (spec 14 Phase 18, T8);
 //! - [`cues`]: one-shot sounds (UI, countdown, finish, workout steps, gear
 //!   shift, crashes and bumps, the buckled wheel's rub, test tones) and when
 //!   they play;
@@ -28,6 +30,7 @@
 //! cpal on its own thread on the desktop, Web Audio buffers scheduled from
 //! the frame loop in the browser.
 
+pub mod aircraft;
 pub mod cues;
 #[cfg(test)]
 mod demo;

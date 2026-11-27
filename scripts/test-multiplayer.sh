@@ -26,6 +26,10 @@
 #                    too old to draw anyway), 1, 0
 #   OCW_MP_VIDEO_S   length of the kiosk's and the camera's real-time 25 fps
 #                    videos (app recorder, FPS counter on; default 15)
+#   OCW_MP_TRAFFIC   the session's road traffic (spec 18E T5): off (default),
+#                    light, normal, busy, lunatic; on: every bot must get road
+#                    vehicles (verdict --traffic) and the camera client draws
+#                    them as debug boxes (OCW_TRAFFIC_BOXES=1)
 #
 # The server address is read from config/machines.toml here and passed to the
 # remote commands only; it is never printed, and the logs kept in test-output/
@@ -52,6 +56,10 @@ kiosk_dir=/var/tmp/ocw
 t1=${OCW_MP_T1:-50}
 # Length of the kiosk's and the camera's videos (s).
 video_s=${OCW_MP_VIDEO_S:-15}
+# The session's road traffic (spec 18E T5).
+traffic=${OCW_MP_TRAFFIC:-off}
+traffic_opt=()
+[ "$traffic" != off ] && traffic_opt=(--traffic)
 remote_mp=target/mp
 
 stamp=$(date +%Y%m%d-%H%M%S)
@@ -203,7 +211,7 @@ cleanup_remote() {
   done
 }
 say "starting the server for $run_s s"
-(OCW_REMOTE_SLOTS=0 R "$server_m" run "mkdir -p $remote_mp && rm -f $remote_mp/stats.json && target/release/ocw-server --listen 0.0.0.0:$port --bots 0 --seconds $run_s ${route_args[*]} --tls-dir $remote_mp/tls --stats-file $remote_mp/stats.json" 2>&1 | redact_stream >"$out/server.log") &
+(OCW_REMOTE_SLOTS=0 R "$server_m" run "mkdir -p $remote_mp && rm -f $remote_mp/stats.json && target/release/ocw-server --listen 0.0.0.0:$port --bots 0 --seconds $run_s --traffic $traffic ${route_args[*]} --tls-dir $remote_mp/tls --stats-file $remote_mp/stats.json" 2>&1 | redact_stream >"$out/server.log") &
 server_pid=$!
 fp=""
 for _ in $(seq 120); do
@@ -316,7 +324,7 @@ if [ "$use_camera" = 1 ]; then
     echo "--at \"$((32 + video_s))=video stop\""
   } >"$out/camera.args"
   R "$server_m" ssh "rm -rf $cam && mkdir -p $cam && cat > $cam/camera.args" <"$out/camera.args" 2>&1 | redact_stream
-  (OCW_REMOTE_SLOTS=0 R "$server_m" run "OCW_PROFILE=release OCW_ARGS_FILE=$cam/camera.args OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot-wayland $cam/final.jpg $run_s" 2>&1 | redact_stream >"$out/camera.log") &
+  (OCW_REMOTE_SLOTS=0 R "$server_m" run "OCW_TRAFFIC_BOXES=$([ "$traffic" != off ] && echo 1 || echo 0) OCW_PROFILE=release OCW_ARGS_FILE=$cam/camera.args OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot-wayland $cam/final.jpg $run_s" 2>&1 | redact_stream >"$out/camera.log") &
   cam_pid=$!
   say "camera:       headless client \"$camera_name\" on $server_m (weston) rides along and takes the pictures"
 fi
@@ -371,7 +379,7 @@ kiosk_opt=()
 [ "$kiosk" = 1 ] && kiosk_opt+=(--client "$kiosk_name")
 [ "$use_camera" = 1 ] && kiosk_opt+=(--client "$camera_name")
 remote_logs=$(for l in "${logs[@]}"; do printf '%s/bots/%s ' "$remote_mp" "$(basename "$l")"; done)
-OCW_REMOTE_SLOTS=0 R "$server_m" run "target/release/ocw-bot verdict --server-stats $remote_mp/stats.json --processes ${#logs[@]} --riders-per-process $riders ${kiosk_opt[*]} $remote_logs" 2>&1 |
+OCW_REMOTE_SLOTS=0 R "$server_m" run "target/release/ocw-bot verdict --server-stats $remote_mp/stats.json --processes ${#logs[@]} --riders-per-process $riders ${kiosk_opt[*]} ${traffic_opt[*]} $remote_logs" 2>&1 |
   redact_stream | tee "$out/verdict.txt"
 result=$(grep -oE 'RESULT: (PASS|FAIL)' "$out/verdict.txt" | tail -n 1)
 [ -n "$result" ] || result="RESULT: FAIL"

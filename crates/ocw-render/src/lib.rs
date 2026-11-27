@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod aids_hud;
+pub mod aircraft;
 pub mod autoshot;
 pub mod bridges;
 pub mod building_material;
@@ -68,6 +69,8 @@ pub mod switches;
 pub mod terrain;
 pub mod thumbs;
 pub mod touch_hud;
+// Road vehicles: the view type and the debug boxes (spec 18E T5).
+pub mod traffic;
 pub mod tunnel;
 pub mod tunnel_cut;
 pub mod unicorn;
@@ -190,6 +193,12 @@ pub struct RideView {
     /// "● Strava" badge) and its notice (started, saved, not set up).
     pub strava_s: Option<f64>,
     pub strava_message: Option<String>,
+    /// The road vehicles near the local rider (spec 14 Phase 18, 18E T5):
+    /// as the client extrapolates them from the server's plans.
+    pub vehicles: Vec<traffic::VehicleView>,
+    /// The simulated aircraft (spec 14 Phase 18, T8; `None`: none drawn –
+    /// `traffic.air off`, or no ride).
+    pub air: Option<aircraft::AirView>,
 }
 
 /// The camera's pose on a guided path (spec §14 Phase 13 G5).
@@ -347,6 +356,8 @@ impl RideView {
             photographers: Vec::new(),
             strava_s: None,
             strava_message: None,
+            vehicles: Vec::new(),
+            air: None,
         }
     }
 
@@ -565,7 +576,12 @@ impl Plugin for OcwRenderPlugins {
             far_terrain::FarMaterialPlugin,
             // The bisect switches and the pipeline budget (10G).
             switches::SwitchesPlugin,
-        ));
+            // The simulated aircraft and their contrails (Phase 18, T8).
+            aircraft::AircraftPlugin,
+        ))
+        // Road vehicles as debug boxes behind a dev switch (18E T5; the
+        // models are T7).
+        .add_plugins(traffic::TrafficDebugPlugin);
     }
 }
 

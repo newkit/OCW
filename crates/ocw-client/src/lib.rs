@@ -38,6 +38,7 @@
 pub mod account;
 pub mod activities;
 pub mod aids;
+pub mod air;
 pub mod arrival;
 pub mod audio;
 pub mod bindings;
@@ -70,6 +71,8 @@ pub mod sky;
 pub mod strava;
 pub mod traffic;
 pub mod trainer;
+// The road vehicles near the rider (spec 18E T5).
+pub mod vehicles;
 pub mod view;
 pub mod view_distance;
 pub mod voice;
