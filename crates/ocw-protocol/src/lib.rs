@@ -12,6 +12,7 @@ pub mod v1 {
 }
 
 pub mod join;
+pub mod live_air;
 pub mod photo;
 pub mod traffic;
 pub mod vehicles;

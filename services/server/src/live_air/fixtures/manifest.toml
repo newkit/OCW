@@ -1,0 +1,57 @@
+# Recorded adsb.lol answers for the live-aircraft tests (spec 14 Phase 18,
+# 18E T10; services/server/src/live_air/tests.rs): our own fetches of the
+# area query on 2026-11-27 around 17:17 UTC with a generic User-Agent,
+# three 20 s apart for each world (the world's origin, 35 nm).
+#
+# adsb.lol publishes its API and all its data under the Open Database
+# License (ODbL) 1.0 (https://opendatacommons.org/licenses/odbl/1-0/):
+# these extracts are offered under the same licence, with its attribution.
+#
+# Identities removed before committing (18D *Privacy*): every ICAO address
+# ("hex") replaced by a made-up one (f0NNNN Black Forest, f1NNNN Tenerife;
+# the same aircraft keeps its made-up address across the answers of its
+# world), every callsign ("flight") by TESTNN, every registration ("r") by
+# X-TSTNN, every squawk by 7000; the fields the game does not read left
+# out.
+
+[[file]]
+path = "blackforest-1.json"
+source = "https://api.adsb.lol/v2/point/47.92/7.96/35"
+licence = "ODbL 1.0"
+attribution = "Aircraft data: adsb.lol (ODbL)"
+changes = "identities replaced by made-up values; unread fields left out; pretty-printed"
+
+[[file]]
+path = "blackforest-2.json"
+source = "https://api.adsb.lol/v2/point/47.92/7.96/35"
+licence = "ODbL 1.0"
+attribution = "Aircraft data: adsb.lol (ODbL)"
+changes = "identities replaced by made-up values; unread fields left out; pretty-printed"
+
+[[file]]
+path = "blackforest-3.json"
+source = "https://api.adsb.lol/v2/point/47.92/7.96/35"
+licence = "ODbL 1.0"
+attribution = "Aircraft data: adsb.lol (ODbL)"
+changes = "identities replaced by made-up values; unread fields left out; pretty-printed"
+
+[[file]]
+path = "tenerife-1.json"
+source = "https://api.adsb.lol/v2/point/28.29/-16.52/35"
+licence = "ODbL 1.0"
+attribution = "Aircraft data: adsb.lol (ODbL)"
+changes = "identities replaced by made-up values; unread fields left out; pretty-printed"
+
+[[file]]
+path = "tenerife-2.json"
+source = "https://api.adsb.lol/v2/point/28.29/-16.52/35"
+licence = "ODbL 1.0"
+attribution = "Aircraft data: adsb.lol (ODbL)"
+changes = "identities replaced by made-up values; unread fields left out; pretty-printed"
+
+[[file]]
+path = "tenerife-3.json"
+source = "https://api.adsb.lol/v2/point/28.29/-16.52/35"
+licence = "ODbL 1.0"
+attribution = "Aircraft data: adsb.lol (ODbL)"
+changes = "identities replaced by made-up values; unread fields left out; pretty-printed"

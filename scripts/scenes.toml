@@ -6126,3 +6126,30 @@ warmup = 12
 video = 16
 max_video_mb = 30
 pick = false
+
+[[scene]]
+name = "air-live-tenerife"
+description = "Live aircraft over Tenerife (spec 18E T10, 18J): Aircraft: live, the real aircraft adsb.lol sees around the island right now, fetched by the local game server and drawn with the T8 models; the unicorn 70 m beside the nearest one (the clock paused for the picture); \"Aircraft data: adsb.lol (ODbL)\" in the lower left corner. Real time and weather (no time machine: live aircraft only at the real time); needs the network"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0"]
+at = ["0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #2B1B14 --skin 9", "0.8=traffic air live", "2=god.flight hover", "3=god on", "8.9=time pause", "9=air.spot live 70 0", "9.2=air"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "air-live-blackforest"
+description = "Live aircraft over the Black Forest (spec 18E T10, 18J): the real airliners on the Rhine valley airways from adsb.lol, with their lights and the weather's contrails, the credit in the lower left corner; the unicorn beside the nearest one. Real time; needs the network"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0"]
+at = ["0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #8D5524 --skin 5 --beard 2", "0.8=traffic air live", "2=god.flight hover", "3=god on", "8.9=time pause", "9=air.spot live 70 0", "9.2=air"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "air-dusk-lights-close"
+description = "The light dots up close at dusk (spec 18C, T8; fixed in v6.96): an airliner 40 m away over Tenerife – its red left and green right navigation lights, the white tail light, the red beacon and the strobes bright, no longer dark dots"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-07-15 21:40", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "3.9=time pause", "4=air.spot airliner 45 0", "4.1=air"]
+shot = 12
+pick = false

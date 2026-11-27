@@ -18,6 +18,11 @@
 //!   widening and fading with age, tinted by the low sun, without fog –
 //!   seen above the haze as in life.
 //!
+//! - **Live aircraft** (18E T10) are drawn the same way; while they are,
+//!   their source's credit ([`AirView::attribution`], "Aircraft data:
+//!   adsb.lol (ODbL)") stands small in the lower left corner, above the
+//!   place line (the lower right holds the map).
+//!
 //! Aircraft are never shadow casters and never touch anything.
 
 use std::collections::HashMap;
@@ -46,6 +51,9 @@ pub struct AirView {
     /// Where the listener is and which way it faces (x, z).
     pub listener: [f64; 3],
     pub listener_forward: [f64; 2],
+    /// The live data's credit while live aircraft are drawn (ODbL:
+    /// attribution); `None` for the simulated sky.
+    pub attribution: Option<String>,
 }
 
 /// Never smaller than this on the screen (px).
@@ -93,7 +101,59 @@ impl Plugin for AircraftPlugin {
                 (sync_aircraft, contrails)
                     .chain()
                     .before(TransformSystems::Propagate),
-            );
+            )
+            .add_systems(Startup, spawn_credit)
+            .add_systems(Update, update_credit);
+    }
+}
+
+/// The live data's credit on the screen.
+#[derive(Component)]
+struct AirCredit;
+
+fn spawn_credit(mut commands: Commands) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(40),
+            left: px(12),
+            ..default()
+        },
+        Text::new(""),
+        TextFont {
+            font_size: 14.0.into(),
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+        Visibility::Hidden,
+        AirCredit,
+    ));
+}
+
+/// The credit text of a view (`None`: hidden).
+pub fn credit(view: Option<&AirView>) -> Option<&str> {
+    view?.attribution.as_deref().filter(|a| !a.is_empty())
+}
+
+fn update_credit(
+    view: Option<Res<RideView>>,
+    mut q: Query<(&mut Text, &mut Visibility), With<AirCredit>>,
+) {
+    let want = view.as_deref().and_then(|v| credit(v.air.as_ref()));
+    for (mut text, mut vis) in &mut q {
+        let shown = if want.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != shown {
+            *vis = shown;
+        }
+        if let Some(c) = want
+            && text.0 != c
+        {
+            text.0 = c.to_owned();
+        }
     }
 }
 
@@ -417,14 +477,23 @@ fn ensure_models(
         Lamp::Strobe,
         Lamp::Burner,
     ] {
-        let h = materials.add(StandardMaterial {
-            base_color: Color::BLACK,
-            emissive: l.color(),
-            unlit: true,
-            fog_enabled: false,
-            ..default()
-        });
+        let h = materials.add(dot_material(l));
         models.dots.insert(l, h);
+    }
+}
+
+/// A light dot's material: unlit, so it draws its base colour – which
+/// must be the lamp's bright colour (HDR, for the bloom), not black (the
+/// dots were dark until v6.96: an unlit material ignores its emissive);
+/// the emissive for the lit paths.
+fn dot_material(l: Lamp) -> StandardMaterial {
+    let c = l.color();
+    StandardMaterial {
+        base_color: Color::linear_rgb(c.red / 4.0, c.green / 4.0, c.blue / 4.0),
+        emissive: c,
+        unlit: true,
+        fog_enabled: false,
+        ..default()
     }
 }
 
@@ -809,6 +878,33 @@ fn ribbon(trails: &[&ocw_sim::air::Trail], eye: Vec3, focal: f32, tint: Vec3) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The light dots are bright: an unlit material draws its base colour
+    /// only, so that must be the lamp's colour, far above 1 (HDR) in its
+    /// main channel – they were black dots until v6.96.
+    #[test]
+    fn the_light_dots_are_bright() {
+        for l in [
+            Lamp::Red,
+            Lamp::Green,
+            Lamp::White,
+            Lamp::Beacon,
+            Lamp::Strobe,
+            Lamp::Burner,
+        ] {
+            let m = dot_material(l);
+            assert!(m.unlit);
+            let b = m.base_color.to_linear();
+            let max = b.red.max(b.green).max(b.blue);
+            assert!(max >= 5.0, "{l:?}: base {b:?}");
+            assert!(m.emissive.red.max(m.emissive.green).max(m.emissive.blue) >= 20.0);
+        }
+        let red = dot_material(Lamp::Red).base_color.to_linear();
+        assert!(red.red > 10.0 * red.green, "red stays red");
+        let green = dot_material(Lamp::Green).base_color.to_linear();
+        assert!(green.green > 5.0 * green.red, "green stays green");
+    }
+
     use ocw_sim::air::Mission;
 
     fn plane(kind: AirKind, vel: [f64; 3], bank: f64) -> AircraftNow {

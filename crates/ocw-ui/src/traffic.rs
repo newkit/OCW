@@ -12,8 +12,9 @@
 use bevy::prelude::*;
 use clap::{Arg, Command};
 use ocw_client::client::ClientCore;
+use ocw_client::live_air::LiveState;
 use ocw_client::menu::model::Platform;
-use ocw_client::menu::traffic::{AIR_LIVE_SOON, LIVE_ROAD_NONE, TrafficMenuInfo};
+use ocw_client::menu::traffic::{LIVE_ROAD_NONE, TrafficMenuInfo};
 use ocw_core::traffic::{AirTraffic, DriverManners, RoadRules, RoadTraffic, Ufos, ViewChoice};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 
@@ -55,16 +56,40 @@ impl TrafficSettings {
     }
 }
 
+/// With *Aircraft: live*: whether the live aircraft are drawn now, or
+/// why not (spec 18E T10; `None`: live is not chosen).
+pub fn live_air_state(world: &World) -> Option<LiveState> {
+    let s = world
+        .get_resource::<TrafficSettings>()
+        .copied()
+        .unwrap_or_default();
+    if !ocw_client::air::AirClient::wants_live(&s.view) {
+        return None;
+    }
+    let clock = world
+        .get_resource::<ocw_render::RideView>()
+        .and_then(|v| v.sky.as_ref().map(|s| s.sky.instant));
+    Some(match (crate::client(world), clock) {
+        (Some(c), Some(ms)) if c.rider_id().is_some() => c.live_air().state(ms),
+        _ => LiveState::Waiting,
+    })
+}
+
 /// What the Settings → Traffic page shows of the session.
 pub fn menu_info(world: &World, platform: Platform) -> TrafficMenuInfo {
+    let live_air = live_air_state(world);
     match crate::client(world) {
         Some(c) if c.rider_id().is_some() => TrafficMenuInfo {
             platform,
             session: c.traffic().info(),
             may_change: c.may_change_traffic(),
             decided_by: c.traffic().decided_by(c.rider_id(), c.host_rider()),
+            live_air,
         },
-        _ => TrafficMenuInfo::alone(platform),
+        _ => TrafficMenuInfo {
+            live_air,
+            ..TrafficMenuInfo::alone(platform)
+        },
     }
 }
 
@@ -117,10 +142,15 @@ pub fn summary(world: &World) -> String {
     out.push(format!(
         "aircraft: {}{}",
         air.key(),
-        if air == AirTraffic::Live {
-            format!(" ({AIR_LIVE_SOON}: simulated)")
-        } else {
-            String::new()
+        match live_air_state(world) {
+            Some(LiveState::Live) => {
+                let credit = crate::client(world)
+                    .and_then(|c| c.live_air().attribution().map(str::to_owned))
+                    .unwrap_or_default();
+                format!(" ({credit})")
+            }
+            Some(st) => format!(" ({})", st.label()),
+            None => String::new(),
         }
     ));
     let in_event = crate::client(world).is_some_and(|c| c.traffic().by_event());
@@ -225,7 +255,10 @@ pub fn run(world: &mut World, what: Option<&str>, value: Option<&str>) -> Result
         "air" => {
             s.view.air = AirTraffic::parse(value).ok_or("aircraft: off, simulated or live")?;
             Some(match s.view.air {
-                AirTraffic::Live => format!("aircraft: live ({AIR_LIVE_SOON}: simulated)"),
+                AirTraffic::Live => format!(
+                    "aircraft: live (from {}, fetched by the game server; the simulated sky while it cannot be reached)",
+                    ocw_client::menu::traffic::AIR_LIVE_SOURCE
+                ),
                 a => format!("aircraft: {}", a.key()),
             })
         }

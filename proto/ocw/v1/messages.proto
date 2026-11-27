@@ -35,7 +35,18 @@ message ClientMessage {
     VoiceAudience voice_audience = 21;
     // The session's road traffic (spec 14 Phase 18, 18A, T1).
     TrafficRequest traffic = 22;
+    // Whether this rider wants live aircraft (spec 14 Phase 18, 18E T10).
+    LiveAirWish live_air = 23;
   }
+}
+
+// The rider's *Aircraft: live* (spec 14 Phase 18, 18A, 18D, T10; Q6 (b)):
+// sent when `traffic.air` becomes or stops being live, and again after
+// every Welcome. The server fetches live aircraft for its world only while
+// at least one rider wants them, and sends those riders LiveAirUpdate.
+// Reliable.
+message LiveAirWish {
+  bool on = 1;
 }
 
 // The rider asks for the session's road traffic (spec 14 Phase 18, 18A,
@@ -785,7 +796,70 @@ message ServerMessage {
     // The road vehicles near this rider (spec 14 Phase 18, 18E T5): to
     // this rider only.
     TrafficUpdate traffic = 15;
+    // Live aircraft (spec 14 Phase 18, 18E T10): to the riders who want
+    // them only.
+    LiveAirUpdate live_air = 16;
   }
+}
+
+// Live aircraft around the session's world (spec 14 Phase 18, 18C, 18D,
+// 18E T10; Q6 (b)): the result of one fetch of the server's source
+// (adsb.lol), sent after each fetch and when a rider starts wanting them;
+// the clients extrapolate each aircraft between fetches. **No identities**
+// (18D *Privacy*): no ICAO address, callsign, registration, operator or
+// type code – a number for this session, a class, where and how it flies.
+// Reliable; to the riders who sent LiveAirWish { on } only.
+message LiveAirUpdate {
+  LiveAirStatus status = 1;
+  // Why there are no live aircraft (status other than LIVE), for Settings
+  // and the `air` command: "the feed does not answer", …
+  string note = 2;
+  // The source's credit, shown in the app while live aircraft are drawn:
+  // "Aircraft data: adsb.lol (ODbL)".
+  string attribution = 3;
+  // When the aircraft were where they are (Unix ms; the fetch's time).
+  int64 fetched_ms = 4;
+  repeated LiveAircraft aircraft = 5;
+  // When the server expects to fetch again (s after fetched_ms).
+  uint32 next_s = 6;
+}
+
+enum LiveAirStatus {
+  // The feed failed or is paused (back-off, the daily limit): draw the
+  // simulated sky meanwhile.
+  LIVE_AIR_STATUS_DOWN = 0;
+  // Live: the aircraft are the feed's.
+  LIVE_AIR_STATUS_LIVE = 1;
+  // This server cannot fetch live aircraft (the browser's local server, a
+  // test server): the simulated sky.
+  LIVE_AIR_STATUS_UNAVAILABLE = 2;
+}
+
+// One live aircraft (spec 18E T10): nothing but what the renderer needs.
+message LiveAircraft {
+  // The server's number for it in this session; it carries on from fetch
+  // to fetch while the aircraft is seen, and is never an identity.
+  uint32 id = 1;
+  LiveAirClass class = 2;
+  // Position (degrees × 10^6) and altitude (m above sea level).
+  sint32 lat_e6 = 3;
+  sint32 lon_e6 = 4;
+  sint32 alt_m = 5;
+  // Ground speed (dm/s), true track (0.01°), vertical rate (cm/s).
+  uint32 speed_dm_s = 6;
+  uint32 track_cdeg = 7;
+  sint32 climb_cm_s = 8;
+  // How much older the fix is than fetched_ms (ms).
+  uint32 age_ms = 9;
+}
+
+// The model an aircraft is drawn with (spec 18G).
+enum LiveAirClass {
+  LIVE_AIR_CLASS_AIRLINER = 0;
+  LIVE_AIR_CLASS_SMALL_PLANE = 1;
+  LIVE_AIR_CLASS_HELICOPTER = 2;
+  LIVE_AIR_CLASS_GLIDER = 3;
+  LIVE_AIR_CLASS_BALLOON = 4;
 }
 
 // The road vehicles near one rider (spec 14 Phase 18, 18A, 18E T5; Q3

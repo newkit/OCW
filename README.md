@@ -1889,9 +1889,21 @@ polite, some realism) are the ride's: solo yours, in a shared ride the
 host's (`ocw-server --traffic-control host|anyone|nobody`), in an event the
 organiser's (none unless the organiser asks, races included); a guest sees
 them dimmed with who decides. Road traffic is in the desktop app only;
-*Aircraft* (off, simulated) and *UFOs* (off, rare, often) are yours, in both
-apps; *Sound and live data* has the sounds and the dimmed *Aircraft: live*
-and *Live traffic data* rows. First start: aircraft on, road traffic and
+*Aircraft* (off, simulated, live) and *UFOs* (off, rare, often) are yours, in
+both apps; *Sound and live data* has the sounds, *Aircraft: live* and the
+dimmed *Live traffic data* row. **Aircraft: live** (spec 14 Phase 18, 18J)
+shows the real aircraft around you: the game server (the desktop's own one in
+single player, the host's or the public server in a shared ride) asks
+[adsb.lol](https://adsb.lol) for the aircraft within 65 km about once a
+minute (after 100 minutes of riding about every 5 minutes – adsb.lol allows
+500 requests a day per address), and the app draws them with the same models
+and sounds, extrapolated between fetches; only their kind and position are
+used, never a callsign or registration. "Aircraft data: adsb.lol (ODbL)"
+stands in the lower left corner while they are drawn. When the feed does not
+answer – or in the browser on its own (adsb.lol cannot be fetched from a web
+page) – the simulated sky is drawn and Settings says why. `OCW_ADSB_LOL_KEY`
+gives the server an adsb.lol key, `OCW_LIVE_AIR_OFFLINE=1` turns fetching
+off. First start: aircraft on, road traffic and
 UFOs off. `traffic` shows what the ride has; `traffic road busy`,
 `traffic manners mostly_polite`, `traffic ufo rare` change it for this
 session (`set traffic.road busy` saves it).
@@ -2752,7 +2764,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `traffic.enabled` | on / off (on): traffic – the master switch; off = empty roads and sky (a shared ride's road traffic stays: the host decides it); Settings → Traffic | at once |
 | `traffic.road` | off / light / normal / busy / lunatic (off): road traffic of the rides you decide – solo rides and the rides you host (in a shared ride the host decides, in events the organiser, races have none; `ocw-server --traffic`); desktop app only; nothing drives yet (spec 14 Phase 18, T1) | at once |
 | `traffic.manners` | polite / mostly_polite / some_realism (polite): how drivers behave around riders – legal distance and no horns, an occasional honk, now and then a close pass that never touches (`ocw-server --driver-manners`); desktop app only | at once |
-| `traffic.air` | off / simulated / live (simulated): aircraft in your sky, for you only (the same flights for every rider of a ride, from the server's air seed); live is simulated until the live feed is built | at once |
+| `traffic.air` | off / simulated / live (simulated): aircraft in your sky, for you only (the same flights for every rider of a ride, from the server's air seed); live: the real aircraft from adsb.lol through the game server, the simulated sky while they cannot be had | at once |
 | `traffic.ufo` | off / rare / often (off): UFOs, for you only; never in events | at once |
 | `traffic.sound` | on / off (on): the sounds of vehicles and aircraft | at once |
 | `traffic.live_road` | on / off (off): live traffic data where a world has a source (none yet: shown greyed); desktop app only | at once |
@@ -5185,6 +5197,12 @@ Third-party assets keep their own licences, listed next to them:
   (beside `ocw-desktop.exe`, for VR): Apache-2.0, © The Khronos Group Inc.;
   its licence is `openxr_loader.LICENSE.txt` next to it
   (`scripts/fetch-openxr-loader.sh`, pinned by version and SHA-256).
+- Live aircraft (*Aircraft: live*): data from [adsb.lol](https://adsb.lol)
+  under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/),
+  credited in the app while drawn ("Aircraft data: adsb.lol (ODbL)"); the
+  recorded answers the tests use are in
+  [`services/server/src/live_air/fixtures/`](services/server/src/live_air/fixtures/manifest.toml)
+  (ODbL, identities replaced).
 - UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
   into `ocw-desktop`: SIL Open Font License 1.1, see
   [`crates/ocw-render/assets/fonts/`](crates/ocw-render/assets/fonts/README.md).
