@@ -7,6 +7,7 @@
 //!
 //! No engine, OS or network dependencies; must build for `wasm32-unknown-unknown`.
 
+pub mod air;
 pub mod avoid;
 pub mod build;
 pub mod collide;
