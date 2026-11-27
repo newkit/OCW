@@ -9,13 +9,16 @@
 //! Commands: `air` (what flies now, the aerodromes, the upper air and the
 //! contrails), `air.spot [KIND|MISSION] [METRES] [SECONDS]` (unicorn mode:
 //! wait beside the path of the nearest such aircraft, where it will be in
-//! SECONDS – scenes and videos).
+//! SECONDS – scenes and videos), `air.follow …` (a camera and the unicorn
+//! flying with one aircraft for close-up flyby videos:
+//! [`ocw_client::air_follow`]).
 
 use std::sync::Arc;
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
 use ocw_client::air::{AirClient, AirFrame};
+use ocw_client::air_follow::{FollowKey, FollowPath, Formation, first_below};
 use ocw_render::RideView;
 use ocw_render::camera::FollowCamera;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
@@ -35,7 +38,11 @@ impl Plugin for AirPlugin {
     fn build(&self, app: &mut App) {
         crate::configure_sets(app);
         app.init_resource::<AirState>()
-            .add_systems(Update, update_air.after(crate::ViewExtrasSet));
+            .init_resource::<AirFollow>()
+            .add_systems(
+                Update,
+                (update_air, follow_air).chain().after(crate::ViewExtrasSet),
+            );
         register_commands(app);
     }
 }
@@ -236,7 +243,258 @@ fn summary(world: &mut World) -> Result<String, String> {
     Ok(out.join("\n"))
 }
 
+/// `air.follow`: the aircraft followed, the camera's keys and the
+/// unicorn's place beside it.
+#[derive(Resource, Default)]
+pub struct AirFollow {
+    pub flight: Option<Arc<Flight>>,
+    pub path: FollowPath,
+    /// The game time of `air.follow play`.
+    pub since: Option<f64>,
+    pub unicorn: Option<Formation>,
+    /// Whether this put the camera on its way (and clears it again).
+    guiding: bool,
+}
+
+/// The world clock now (s), as the sky is drawn.
+fn clock_s(world: &World) -> Option<f64> {
+    let v = world.get_resource::<RideView>()?;
+    v.sky.as_ref().map(|s| s.sky.instant as f64 / 1000.0)
+}
+
+/// Each frame: the camera and the unicorn with the aircraft followed, from
+/// the same world clock as the aircraft drawn.
+fn follow_air(world: &mut World) {
+    let flight = world.resource::<AirFollow>().flight.clone();
+    let clock = clock_s(world);
+    let (Some(f), Some(clock)) = (flight, clock) else {
+        if std::mem::take(&mut world.resource_mut::<AirFollow>().guiding)
+            && let Some(mut v) = world.get_resource_mut::<RideView>()
+        {
+            v.guided_camera = None;
+        }
+        return;
+    };
+    let (now, dt) = world
+        .get_resource::<Time>()
+        .map_or((0.0, 0.0), |t| (t.elapsed_secs_f64(), t.delta_secs_f64()));
+    let st = world.resource::<AirFollow>();
+    let t = st.since.map_or(0.0, |s| now - s);
+    let state = |w: f64| f.state(w.clamp(f.start_s, f.end_s()));
+    let cam = st.path.camera(t, clock, state);
+    // The unicorn is drawn from the next frame's view: where the aircraft
+    // will be then.
+    let unicorn = st.unicorn.map(|u| u.place(&state(clock + dt)));
+    if let Some((eye, look)) = cam {
+        let v = state(clock).vel;
+        world.resource_mut::<AirFollow>().guiding = true;
+        if let Some(mut view) = world.get_resource_mut::<RideView>() {
+            view.guided_camera = Some(ocw_render::GuidedCamera {
+                eye,
+                look,
+                velocity: [v[0], v[2]],
+            });
+        }
+    }
+    if let Some((pos, heading)) = unicorn
+        && let Some(mut c) = crate::client_mut(world)
+    {
+        c.god_mut()
+            .teleport(pos, Some(-heading.to_radians()), Some(0.0));
+    }
+}
+
+/// Whether a flight matches every comma-separated term of `what` (a kind
+/// or a mission, by its start: `airliner,arrival`).
+fn matches_terms(f: &Flight, what: &str) -> bool {
+    what == "any"
+        || what
+            .split(',')
+            .filter(|w| !w.is_empty())
+            .all(|w| f.kind.key().starts_with(w) || f.mission.key().starts_with(w))
+}
+
+fn follow_command() -> Command {
+    Command::new("air.follow")
+        .about("A camera and the unicorn flying with one aircraft (close-up flyby videos): pick WHAT [--below M --in S] (the nearest flight of a kind / mission, e.g. airliner,arrival; --below steps the world clock so that it is M metres above its field S seconds from now), key T RIGHT UP AHEAD [AT_RIGHT AT_UP AT_AHEAD [LAG]] (the eye T s after play in the aircraft's frame, looking at a point of it, LAG s behind it), unicorn RIGHT UP AHEAD | off, play, stop, list")
+        .arg(
+            Arg::new("action")
+                .required(true)
+                .value_parser(["pick", "key", "unicorn", "play", "stop", "list"]),
+        )
+        .arg(
+            Arg::new("args")
+                .num_args(0..)
+                .allow_negative_numbers(true),
+        )
+        .arg(
+            Arg::new("below")
+                .long("below")
+                .value_parser(value_parser!(f64)),
+        )
+        .arg(
+            Arg::new("in")
+                .long("in")
+                .value_parser(value_parser!(f64))
+                .default_value("5"),
+        )
+}
+
+fn numbers(args: &[String]) -> Result<Vec<f64>, String> {
+    args.iter()
+        .map(|a| {
+            a.parse::<f64>()
+                .map_err(|_| format!("'{a}' is not a number"))
+        })
+        .collect()
+}
+
+fn follow_action(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> {
+    let action = m.get_one::<String>("action").expect("required").as_str();
+    let args: Vec<String> = m
+        .get_many::<String>("args")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    match action {
+        "pick" => {
+            let what = args
+                .first()
+                .map_or_else(|| "any".to_string(), |w| w.to_lowercase());
+            let lead = *m.get_one::<f64>("in").expect("default");
+            let below = m.get_one::<f64>("below").copied();
+            let (flights, now, eye, _) = flights_now(world)?;
+            let cands = flights.iter().filter(|f| matches_terms(f, &what));
+            let picked = match below {
+                // The flight that comes down to M soonest from now (or was
+                // there most recently): the least step of the clock.
+                Some(h) => cands
+                    .filter_map(|f| {
+                        let t = first_below(|t| f.state(t), f.start_s, f.end_s(), f.field_m, h)?;
+                        Some((f.clone(), t - lead - now))
+                    })
+                    .min_by(|a, b| a.1.abs().total_cmp(&b.1.abs())),
+                None => cands
+                    .filter(|f| f.alive(now + lead))
+                    .min_by(|a, b| {
+                        let d = |f: &Flight| {
+                            let p = f.state(now).pos;
+                            (p[0] - eye[0]).hypot(p[2] - eye[2])
+                        };
+                        d(a).total_cmp(&d(b))
+                    })
+                    .map(|f| (f.clone(), 0.0)),
+            };
+            let (f, step_s) = picked
+                .ok_or_else(|| format!("no {what} flying now ({} flights)", flights.len()))?;
+            let ms = (step_s * 1000.0).round() as i64;
+            if ms != 0 {
+                crate::send(
+                    world,
+                    ocw_client::client::ClientCore::clock_message(ocw_sky::ClockChange::Step(ms)),
+                );
+            }
+            let line = format!(
+                "following the {} {} (flight {}){}",
+                f.kind.key(),
+                f.mission.key(),
+                f.id,
+                if ms != 0 {
+                    format!(", the clock stepped {step_s:+.0} s")
+                } else {
+                    String::new()
+                }
+            );
+            world.resource_mut::<AirFollow>().flight = Some(f);
+            Ok(line)
+        }
+        "key" => {
+            let v = numbers(&args)?;
+            let (t, eye, target, lag) = match v[..] {
+                [t, r, u, a] => (t, [r, u, a], [0.0; 3], 0.0),
+                [t, r, u, a, tr, tu, ta] => (t, [r, u, a], [tr, tu, ta], 0.0),
+                [t, r, u, a, tr, tu, ta, lag] => (t, [r, u, a], [tr, tu, ta], lag),
+                _ => {
+                    return Err(
+                        "key T RIGHT UP AHEAD [AT_RIGHT AT_UP AT_AHEAD [LAG]] (s, m)".into(),
+                    );
+                }
+            };
+            let mut st = world.resource_mut::<AirFollow>();
+            st.path.add(FollowKey {
+                t,
+                eye,
+                target,
+                lag,
+            });
+            Ok(format!("key at {t:.1} s ({} keys)", st.path.keys().len()))
+        }
+        "unicorn" => {
+            let mut st = world.resource_mut::<AirFollow>();
+            if args.first().is_some_and(|a| a == "off") {
+                st.unicorn = None;
+                return Ok("the unicorn flies on its own".into());
+            }
+            let [r, u, a] = numbers(&args)?[..] else {
+                return Err("unicorn RIGHT UP AHEAD (m) | off".into());
+            };
+            st.unicorn = Some(Formation { offset: [r, u, a] });
+            Ok(format!(
+                "the unicorn flies {r:.0} m right, {u:.0} m up, {a:.0} m ahead of the aircraft"
+            ))
+        }
+        "play" => {
+            let now = crate::now(world);
+            let mut st = world.resource_mut::<AirFollow>();
+            if st.flight.is_none() {
+                return Err("no aircraft (air.follow pick first)".into());
+            }
+            st.since = Some(now);
+            Ok(format!(
+                "playing {} keys over {:.1} s",
+                st.path.keys().len(),
+                st.path.duration_s()
+            ))
+        }
+        "stop" => {
+            let mut st = world.resource_mut::<AirFollow>();
+            st.flight = None;
+            st.since = None;
+            st.unicorn = None;
+            st.path.clear();
+            Ok("stopped following".into())
+        }
+        "list" => {
+            let st = world.resource::<AirFollow>();
+            let mut out = vec![match &st.flight {
+                Some(f) => format!(
+                    "following the {} {} (flight {})",
+                    f.kind.key(),
+                    f.mission.key(),
+                    f.id
+                ),
+                None => "following nothing".to_string(),
+            }];
+            for k in st.path.keys() {
+                out.push(format!(
+                    "  {:.1} s: eye {:?}, at {:?}, lag {:.1} s",
+                    k.t, k.eye, k.target, k.lag
+                ));
+            }
+            if let Some(u) = st.unicorn {
+                out.push(format!("  unicorn at {:?}", u.offset));
+            }
+            Ok(out.join("\n"))
+        }
+        _ => unreachable!("clap checks the actions"),
+    }
+}
+
 fn register_commands(app: &mut App) {
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        follow_command(),
+        follow_action,
+    ));
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("air").about(
@@ -315,6 +573,27 @@ fn register_commands(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn follow_parses_its_options_after_the_words() {
+        // The positional words must not swallow --below / --in, and
+        // negative offsets are numbers.
+        let m = follow_command()
+            .try_get_matches_from("air.follow pick airliner,arrival --below 340 --in 10".split(' '))
+            .unwrap();
+        assert_eq!(m.get_one::<f64>("below"), Some(&340.0));
+        assert_eq!(m.get_one::<f64>("in"), Some(&10.0));
+        let args: Vec<&String> = m.get_many::<String>("args").unwrap().collect();
+        assert_eq!(args, ["airliner,arrival"]);
+        let m = follow_command()
+            .try_get_matches_from("air.follow key 36 -38 16 -70 0 0 0 6".split(' '))
+            .unwrap();
+        let v: Vec<String> = m.get_many::<String>("args").unwrap().cloned().collect();
+        assert_eq!(
+            numbers(&v).unwrap(),
+            [36.0, -38.0, 16.0, -70.0, 0.0, 0.0, 0.0, 6.0]
+        );
+    }
 
     #[test]
     fn the_commands_need_a_ride() {

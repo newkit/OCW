@@ -259,6 +259,11 @@ fn play(time: Res<Time>, mut g: ResMut<GuidedPath>, mut view: ResMut<RideView>) 
         info!("camera path played");
         g.playing = None;
     }
+    // Not playing now nor the frame before: the camera is someone else's
+    // (`air.follow`), leave it.
+    if pose.is_none() && g.last.is_none() {
+        return;
+    }
     let guided = pose.map(|p| {
         let velocity = match g.last {
             Some((t, e)) if now > t => {
@@ -375,6 +380,18 @@ mod tests {
         }
         assert!(app.world().resource::<RideView>().guided_camera.is_none());
         assert!(app.world().resource::<GuidedPath>().playing.is_none());
+        // Not playing: another guide's camera (`air.follow`) stays.
+        let other = ocw_render::GuidedCamera {
+            eye: [1.0, 2.0, 3.0],
+            look: [0.0, 0.0, -1.0],
+            velocity: [70.0, 0.0],
+        };
+        app.world_mut().resource_mut::<RideView>().guided_camera = Some(other);
+        app.update();
+        assert_eq!(
+            app.world().resource::<RideView>().guided_camera,
+            Some(other)
+        );
         assert!(run(&mut app, "camera.path remove 3").starts_with("error"));
         assert!(run(&mut app, "camera.path remove 1").contains("1 left"));
     }
