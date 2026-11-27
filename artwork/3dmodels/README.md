@@ -25,6 +25,7 @@ share-alike, non-commercial or no-derivatives licences, never brands.
 | `flora/` | `plant` | at least three shape variants per plant species, each with `lod1` |
 | `creatures/` | `creature` | the unicorn (`unicorn-winged`): a node per joint (`body`, `neck`, `head`, `hip_fl` … `knee_hr`, `wing_l`, `wrist_l`, `primaries_l_0` … `_2`, `mane_0` … `_7`, `tail_0` … `_7`) that the game's flight animation turns; the far model under `lod1` on the same joints named `<joint>_lod1` |
 | `workshop/` | `workshop` | the workshop's pieces – stand, workbench, hooks and rail, pegboard, parts shelf, mirror, changing bench, locker, kit rail, window, lamps – and the room's slabs 1 m long (floor, walls, ceiling, skirting) that the game scales to the room; anchors `anchor_clamp`, `anchor_glass`, `anchor_hook`, `anchor_card` |
+| `vehicles/` | `vehicle` | the traffic (spec 14 Phase 18, 18E T6): `car-hatchback`, `car-saloon`, `car-suv`, `van-panel`, `lorry-rigid-box`, `lorry-articulated-box` (the semi-trailer on its node `trailer`), `bus-city`, `motorbike-touring` (with its rider), `tractor-farm`, `airliner-twinjet`, `plane-high-wing`, `glider-sailplane`, `helicopter-light`, `balloon-hot-air`, `ufo-saucer` – generic shapes, no makes or logos, each with `lod1` |
 | `sources/` | – | Blender sources (`.blend`), never loaded |
 
 ## The contract (spec §14 Phase 15, 15B)
@@ -44,6 +45,7 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   | plant | the stem base |
   | creature | under the body's centre |
   | workshop | the point where `workshop::room` places it: on the floor, its wall or the ceiling (wall and ceiling pieces hang above it; not checked) |
+  | vehicle | on the ground under the centre of the wheelbase (aircraft, balloon, UFO: under the body's centre, standing on its gear, skids, basket or legs) |
 
 - **Node names are the interface:** anchors `anchor_<name>`, workshop
   hotspots `hs_<slot>`, moving parts by role (`wheel_front`, `crank`,
@@ -104,9 +106,31 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   | prop | 1 500 | 300 |
   | plant | 2 000 | 200 |
   | workshop piece | 10 000 | – |
+  | vehicle: car, van / lorry, bus / motorbike (with its rider) / tractor | 2 000 / 3 000 / 1 500 / 2 000 | 300 / 400 / 250 / 300 |
+  | vehicle: airliner / small plane, glider / helicopter / balloon / UFO | 3 000 / 1 500 / 2 500 / 1 000 / 1 500 | 300 / 200 / 300 / 150 / 200 |
 
   Textures (later): at most 1024², power of two, embedded. The validator
   warns above 2 MB per file.
+- **Vehicles** (`kind = "vehicle"`, spec 18B *Models*): `extras.ocw.class` is
+  one of `car`, `van`, `lorry`, `bus`, `motorbike`, `tractor`, `airliner`,
+  `small_plane`, `glider`, `helicopter`, `balloon`, `ufo` – it picks the
+  budget and the required nodes. Road vehicles have the wheels `wheel_fl`,
+  `wheel_fr`, `wheel_rl`, `wheel_rr` (more axles `wheel_r2_l` …; the
+  motorbike `wheel_front`, `wheel_rear`), each node at its axle (its mesh
+  centred on it, standing on the ground), the lamps `light_head_l/r`,
+  `light_brake_l/r`, `light_indicator_fl/fr/rl/rr` (the motorbike one
+  `light_head` and `light_brake`) and the collision box `col_box`; powered
+  aircraft the navigation lights `light_nav_l` (red, left), `light_nav_r`
+  (green, right), `light_tail`, `light_beacon`, plus `prop` or `rotor_main`
+  and `rotor_tail`; the balloon `light_burner`, the UFO at least eight
+  `light_rim_<n>`; the motorbike its rider placeholder `rider` (the rider's
+  kit slots). Every `light_*` node is a lens drawn only in the lamp slots
+  `light_head`, `light_brake`, `light_indicator`, `light_nav_red`,
+  `light_nav_green`, `light_white`, `light_glow` (the game lights them).
+  The paint slot `body` (a bus: `livery`) is the colour the game varies per
+  vehicle; `glass`, `chrome`, `trim`, `plate`, `reflector`, `tyre`, `rim`
+  are the others. The front is +Z in the file like every model; no
+  physics or driving numbers (`mass`, `speed`, `power`, …) in any extras.
 - **Names: function first, then shape:**
   `<folder>/<function>-<shape>[-<detail>][-<variant>].glb`, lower-case ASCII
   letters and digits with hyphens, no colours, no versions. The id of a file

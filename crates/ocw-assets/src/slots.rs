@@ -63,7 +63,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 87] = [
+pub const ALL: [Slot; 101] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -176,6 +176,38 @@ pub const ALL: [Slot; 87] = [
     slot("computer_body", Tint::Fixed, 0x2B2E34, 0.05, 0.55),
     slot("computer_screen", Tint::Fixed, 0x14201C, 0.0, 0.2),
     slot("computer_led", Tint::Fixed, 0x3AD0FF, 0.0, 0.3),
+    // Traffic (spec 14 Phase 18, 18B *Models*, `vehicles/*.glb`): `body` is
+    // varied per vehicle by its look seed (a palette of real-world car
+    // colours), a bus wears its made-up operator's `livery`; the `light_*`
+    // lenses are the emitters the game lights (head lamps and tail lamps
+    // at night, brake lamps and indicators when used, navigation lights,
+    // the balloon's burner, the UFO's rim).
+    slot("body", Tint::Fixed, 0x8C9298, 0.35, 0.35),
+    slot("glass", Tint::Fixed, 0x1C2630, 0.2, 0.08),
+    slot("chrome", Tint::Fixed, 0xC9CDD2, 0.95, 0.15),
+    slot("trim", Tint::Fixed, 0x1F2124, 0.0, 0.7),
+    slot("plate", Tint::Fixed, 0xEDEDE6, 0.0, 0.5),
+    slot("livery", Tint::Fixed, 0x2F8F83, 0.1, 0.45),
+    slot("reflector", Tint::Fixed, 0xE07A10, 0.0, 0.3),
+    slot("light_head", Tint::Fixed, 0xF4F1E6, 0.1, 0.1),
+    slot("light_brake", Tint::Fixed, 0xB3141B, 0.0, 0.2),
+    slot("light_indicator", Tint::Fixed, 0xF0900F, 0.0, 0.2),
+    slot("light_nav_red", Tint::Fixed, 0xE01A1A, 0.0, 0.2),
+    slot("light_nav_green", Tint::Fixed, 0x14C850, 0.0, 0.2),
+    slot("light_white", Tint::Fixed, 0xF8F8F4, 0.0, 0.2),
+    slot("light_glow", Tint::Fixed, 0xFFB347, 0.0, 0.3),
+];
+
+/// The vehicle slots that are lamps (18B): every `light_*` node of a
+/// vehicle file is drawn in them, so the game can light it.
+pub const LIGHTS: [&str; 7] = [
+    "light_head",
+    "light_brake",
+    "light_indicator",
+    "light_nav_red",
+    "light_nav_green",
+    "light_white",
+    "light_glow",
 ];
 
 /// The slot called `name`.

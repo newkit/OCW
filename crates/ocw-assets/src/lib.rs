@@ -58,6 +58,7 @@ pub mod rider;
 pub mod rider_split;
 pub mod slots;
 pub mod unicorn;
+pub mod vehicles;
 pub mod workshop;
 
 use ocw_core::ProfileId;

@@ -141,7 +141,7 @@ impl TryOn {
                     .unwrap_or(ProfileId::Road),
             )),
             Kind::Plant | Kind::Prop => Some(TryOn::Scene(Season::Summer)),
-            Kind::Creature | Kind::Workshop => None,
+            Kind::Creature | Kind::Workshop | Kind::Vehicle => None,
         }
     }
 }
