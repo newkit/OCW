@@ -3535,8 +3535,12 @@ mod tests {
     }
 
     /// Updates until `done` (the builds run on the task pool's threads).
+    /// Bounded by wall time, not frames: on a loaded build machine the
+    /// task pool's builds took longer than 3000 short frames (a flaky
+    /// failure in a merge check, 2026-11-27).
     fn until(app: &mut App, what: &str, mut done: impl FnMut(&mut App) -> bool) {
-        for _ in 0..3000 {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(120) {
             if done(app) {
                 return;
             }
