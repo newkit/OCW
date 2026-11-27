@@ -788,8 +788,14 @@
     try { config = JSON.parse(window.ocwConfig || "{}") || {}; } catch (e) { console.warn("ocw-web: config.json: " + e); }
     const preview = config.channel === "preview";
     let query = new URLSearchParams(location.search);
-    // The public server's join info (spec 11.5): config.server names it.
-    const joinInfo = typeof config.server === "string" && /^https:\/\/[^ ]+\.json$/.test(config.server) ? config.server : "";
+    // The public server's join info (spec 11.5): config.server names it;
+    // a page whose config names no server (no `server` key, e.g. without
+    // config.json) takes the built-in public server – for now the one on
+    // Fly.io, ocw_client::public::PUBLIC_JOIN_INFO (a test keeps the two
+    // equal); `"server": ""` means none.
+    const OCW_PUBLIC_JOIN_INFO = "https://ocw-server.fly.dev/join.json";
+    const joinInfo = config.server === undefined || config.server === null ? OCW_PUBLIC_JOIN_INFO
+      : typeof config.server === "string" && /^https:\/\/[^ ]+\.json$/.test(config.server) ? config.server : "";
     const together = !!joinInfo && query.has("together");
     const riding = ["route", "world", "server", "together"].some((k) => query.has(k));
     const loadScript = (src) => new Promise((ok) => {

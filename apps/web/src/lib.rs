@@ -480,6 +480,28 @@ pub fn join_query(query: &str, link: &str) -> Result<String, String> {
     Ok(format!("?{}", out.join("&")))
 }
 
+/// The page's query for riding together on the public server (`join
+/// public`, spec 11.5): `together=1`, which makes the page fetch the
+/// join info (config.json's `server`, else the built-in
+/// `ocw_client::public::PUBLIC_JOIN_INFO`) before the app starts; the
+/// rider's own options (name, GPU, …) stay.
+pub fn public_query(query: &str) -> String {
+    let mut out = kept_pairs(
+        query,
+        &[
+            "server",
+            "cert-hash",
+            "join",
+            "together",
+            "world",
+            "route",
+            "free",
+        ],
+    );
+    out.push("together=1".into());
+    format!("?{}", out.join("&"))
+}
+
 /// The page's query for leaving the shared ride: without the server.
 pub fn leave_query(query: &str) -> String {
     let out = kept_pairs(query, &["server", "cert-hash", "join"]);
@@ -1568,6 +1590,12 @@ mod tests {
             "?bots=3&world=fiction/valley@2&route=Lake%20Loop"
         );
         assert_eq!(leave_query("?server=x&cert-hash=y"), "");
+        // `join public`: the page rides together, the rider's options kept.
+        assert_eq!(
+            public_query(&format!("{q}&name=Ada&gpu=webgl2")),
+            "?bots=3&name=Ada&gpu=webgl2&together=1"
+        );
+        assert_eq!(public_query(""), "?together=1");
         // join= at the start.
         let (c, w) = parse_query(
             &format!("join=https://10.0.0.5:47801?cert-hash={fp}%26route=loop"),

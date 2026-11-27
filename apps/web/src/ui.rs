@@ -418,6 +418,11 @@ impl Plugin for WebUiPlugin {
                 cancel: |_| {},
                 leave: web_leave,
                 paste: |_| crate::PASTED.lock().expect("not poisoned").take(),
+                // `join public`: the page rides together (?together=1).
+                public: |_, _| {
+                    open_page(&crate::public_query(&page_query()))?;
+                    Ok("riding together on the public server: the page starts again".into())
+                },
             })
             .add_systems(Update, ride_mode);
         register_commands(app);

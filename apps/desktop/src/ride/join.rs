@@ -66,6 +66,7 @@ pub fn build(app: &mut App) {
             cancel,
             leave,
             paste: |_| clipboard_text(),
+            public: super::public::start,
         })
         .add_systems(Update, pump);
     app.console_command(ConsoleCommand::new(

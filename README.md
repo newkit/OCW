@@ -1732,9 +1732,14 @@ a headset session (`--screenshot`) is the left eye; `--vr-look-down 45` (or
 
 **At the start: a server or local** (spec 3.2.4). When the desktop app starts
 without an option that already decides (`--server`, `--world`, a screenshot,
-the kiosk, …), the menu asks **Connect to a server** or **Ride locally**, every
-start, with your last choice marked and focused – Enter takes it.
+the kiosk, …), the menu asks **Ride on the public server
+(ocw-server.fly.dev)**, **Connect to a server** or **Ride locally**, every
+start, with your last choice marked and focused – Enter takes it. Before you
+have chosen anything, *Ride locally* is marked: a solo ride stays on your
+computer.
 
+- *Ride on the public server* joins the public server on Fly.io (for now the
+  default server of every app, spec 11.5): see [The public server](#the-public-server-the-default-for-now).
 - *Connect to a server* opens Ride → Join: type or paste the server's address
   (`ocw://HOST:PORT?cert=…`, or `HOST` on this machine) or pick one of the
   recent servers (kept in `ocw.toml [servers]`).
@@ -1745,8 +1750,8 @@ start, with your last choice marked and focused – Enter takes it.
   mode** – one old rusty city bike at the start, the rest earned – is planned
   for later.
 - The browser app has its own start page instead. `--start-choice
-  ask|local|server` decides on the command line; the console has
-  `start.choose server|local` and `start.ask`.
+  ask|local|server|public` decides on the command line; the console has
+  `start.choose public|server|local` and `start.ask`.
 
 **Steering** (spec §5.2.1; HUD shows the mode and the surface)
 
@@ -2422,7 +2427,7 @@ event status | event cancel | event dismiss
 | `--name NAME` | Display name of your rider for this session (default: the rider profile's name) |
 | `--rider NAME` | Ride as this rider profile for this session (default: the one chosen in the Workshop) |
 | `--settings-file PATH` | The local config file (default `ocw.toml` in the config folder, e.g. `~/.config/ocw/ocw.toml`; `secrets.toml` next to it; an old `settings.toml` given here is converted in place, kept as `.bak`) |
-| `--start-choice ask\|local\|server` | The start choice (spec 3.2.4): `ask` shows *Connect to a server* / *Ride locally* with the last choice preselected (Enter takes it), `local` rides locally, `server` opens *Connect to a server*. Default: ask, unless an option already decides (`--server`, `--join`, `--world`, `--route*`, `--free-ride`, `--workout`, `--screenshot`, `--capture`, `--cmd`, `--exec`, `--at`, the kiosk's `--no-hearts`) |
+| `--start-choice ask\|local\|server\|public` | The start choice (spec 3.2.4): `ask` shows *Ride on the public server* / *Connect to a server* / *Ride locally* with the last choice preselected (Enter takes it), `local` rides locally, `server` opens *Connect to a server*, `public` joins the public server (spec 11.5). Default: ask, unless an option already decides (`--server`, `--join`, `--world`, `--route*`, `--free-ride`, `--workout`, `--screenshot`, `--capture`, `--cmd`, `--exec`, `--at`, the kiosk's `--no-hearts`) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
 | `--no-hearts` | Earn no hearts in this session (the kiosk's show mode) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
@@ -3432,6 +3437,39 @@ ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine o
 - The server runs until Ctrl+C (or SIGTERM), then closes all connections
   ("server shutting down"); `--seconds S` stops it earlier.
 
+### The public server: the default, for now
+
+Every app offers the public server on Fly.io first (spec 11.5 *The public
+server as the default*; [Hosting the server on Fly.io](#hosting-the-server-on-flyio)).
+Its address is one constant, `ocw_client::public::PUBLIC_JOIN_INFO` =
+`https://ocw-server.fly.dev/join.json` (voice: `PUBLIC_VOICE` =
+`wss://ocw-server.fly.dev`); it will change when the server moves or a list of
+public servers comes.
+
+| App | Where the public server is the default |
+|---|---|
+| Desktop | Ride → Join's first row **Public server (ocw-server.fly.dev)**, the start choice's first row, `ocw-desktop --join public`, `join public` / `join.public` in the console. *Ride locally* stays the start's default. |
+| Browser | `?together=1` (the preview's *Ride together*) fetches `config.json`'s `server`; a page whose `config.json` names no `server` (or has none) takes the public server. `"server": ""` turns it off. |
+| Kiosks | `OCW_KIOSK_REMOTE` (Linux and Windows) defaults to it. |
+| `ocw-bot` | No default: `--server` is required. Bots are test riders for your own servers, and the public server rides a world's road graph, which bots cannot ride. |
+
+**Joining from the desktop.** *Public server* fetches the join info (10 s),
+looks for the server's world among your installed packages (by its SHA-256,
+else its id and version, like the kiosk), and then joins its link. If the world
+is missing, the page says which one (e.g. `liechtenstein@10`) and how to
+install it: from the release zips or the browser preview's worlds, World →
+Change world, or `--fetch-world MANIFEST-URL`. If the join info names a
+download (`world_manifest`), the page offers *Download the world and join*.
+
+**Changing or clearing it** without a rebuild, with the setting
+`net.public_server` (desktop, `ocw.toml [settings.net]`):
+
+```bash
+set net.public_server off                                   # no public server rows, no `join public`
+set net.public_server https://ride.example.org/join.json   # another server's join info
+set net.public_server default                               # back to ocw-server.fly.dev
+```
+
 ### Join links: Ride → Join
 
 A **join link** names a server in one line to share (spec §6.2 *Join links*):
@@ -3442,7 +3480,7 @@ ocw://HOST[:PORT]?cert=SHA256HEX[&world=ID[@VERSION]][&route=NAME][&name=TEXT]
 
 - `ocw-server --listen` prints it at start (one per address of the machine, with its world and route), above the `Clients connect with` line; the kiosk writes it to `~/.local/state/ocw/server-connect.txt` (`ocw-kiosk.sh status` shows it).
 - **In the app:** menu → **Ride → Join a ride**: paste the link (Ctrl+V / ⌘V, or the *Paste link* row) or type it (Enter on *Link* starts typing, Enter or Esc ends; on a gamepad ↑ / ↓ turn the character at the cursor, ← / → move, B deletes, A ends), then *Join*. The last five servers are listed below; Enter joins one again.
-- **On the command line:** `ocw-desktop --join 'ocw://ride.example.org?cert=3f9a…c2'`; in the console `join LINK`, `join` (the recent servers), `join 2` (the second of them), `leave`.
+- **On the command line:** `ocw-desktop --join 'ocw://ride.example.org?cert=3f9a…c2'`; in the console `join LINK`, `join` (the recent servers), `join 2` (the second of them), `leave`. `--join public` / `join public` join [the public server](#the-public-server-the-default-for-now).
 - Also accepted: the WebTransport form `https://HOST:PORT?cert-hash=HEX` (the desktop joins it too), a bare `HOST[:PORT]` with the fingerprint in its own field, and a pasted `ocw-desktop --server HOST:PORT --server-cert HEX` line.
 - **What happens:** the app connects in the background (your ride goes on), learns the server's world and route, loads them from the installed worlds and then switches to the shared ride. If the world is not installed, it says so (with `world=MANIFEST-URL` in the link: `--fetch-world URL`). A timeout (10 s), a certificate that is not the link's, a refusal (sign in first: Settings → Account) or another version of the world keep your ride and show the reason on the Join page.
 - **Security:** a link without `cert=` works only for this machine (`localhost`, `127.0.0.1`, `::1`); for anything else the fingerprint is required, so nobody in between can pretend to be the server.
@@ -3982,6 +4020,8 @@ ocw-desktop --server IPV4:47800 --server-cert FINGERPRINT --world data/pilot/lie
 ```
 
 The WebTransport certificate's hash changes every 11 days (browsers take only short-lived self-signed certificates). The desktop's fingerprint stays the same.
+
+The apps use this server as their default ([The public server](#the-public-server-the-default-for-now)).
 
 **Join info for pages** (spec 11.5 *Join info*): pages never have the hash baked in; they fetch it. `ocw-server --join-http 0.0.0.0:8080` (set by `start.sh`) answers `GET /join.json` with the public WebTransport URL, the certificate hashes, the voice URL and the world (no secret; CORS for every origin, not cached), and passes every other request on to LiveKit's signalling port (`--join-upstream`), so Fly's TLS port 443 serves both:
 

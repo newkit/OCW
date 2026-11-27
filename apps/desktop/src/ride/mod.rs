@@ -32,6 +32,7 @@ pub mod choice;
 pub mod host;
 pub mod join;
 pub mod pages;
+pub mod public;
 pub mod setup;
 pub mod world;
 
@@ -292,6 +293,7 @@ impl Plugin for RidePlugin {
         register_commands(app);
         world::register_commands(app);
         join::build(app);
+        public::build(app);
         host::build(app);
     }
 }
@@ -1149,6 +1151,80 @@ mod tests {
         thread.join().unwrap();
         // Not in a shared ride: nothing to leave.
         assert!(run(&mut app, "leave").contains("not in a shared ride"));
+    }
+
+    /// `join public` (spec 11.5): the Join page offers the public server
+    /// first, its join info (a fake fetcher here – no test touches the
+    /// network) leads to its link and the ride switches to it; a server
+    /// whose world is not installed is said before any connection.
+    #[test]
+    fn joins_the_public_server_by_its_join_info() {
+        use ocw_client::join::JoinState;
+        use ocw_client::menu::join::PublicState;
+        let (mut app, _) = app("join-public");
+        assert!(update_until(&mut app, |w| client(w).rider_id().is_some()));
+        let public_of = |w: &World| w.resource::<ocw_ui::join::JoinUi>().info.public.clone();
+        // The default: the built-in public server.
+        assert_eq!(
+            public_of(app.world()).map(|p| p.url),
+            Some(ocw_client::public::PUBLIC_JOIN_INFO.to_owned())
+        );
+        // A server riding a world that is not here: no connection.
+        let fetched = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let f = fetched.clone();
+        app.insert_resource(public::PublicFetcher(std::sync::Arc::new(move |url: &str| {
+            f.lock().unwrap().push(url.to_owned());
+            Ok(format!(
+                r#"{{"join": "ocw://127.0.0.1:9?cert={}&world=fictional-valley@3", "world": "fictional-valley", "world_version": 3}}"#,
+                "ab".repeat(32)
+            ))
+        })));
+        let log = run(&mut app, "join public");
+        assert!(
+            log.contains("finding the public server (ocw-server.fly.dev)"),
+            "{log}"
+        );
+        assert!(update_until(&mut app, |w| matches!(
+            public_of(w).map(|p| p.state),
+            Some(PublicState::Missing { .. })
+        )));
+        assert_eq!(
+            join_state(app.world()),
+            JoinState::Idle,
+            "nothing connected"
+        );
+        let log = app.world().resource::<ConsoleState>().log().join("\n");
+        assert!(
+            log.contains("fictional-valley@3, which is not installed here"),
+            "{log}"
+        );
+        assert_eq!(
+            fetched.lock().unwrap()[0],
+            ocw_client::public::PUBLIC_JOIN_INFO
+        );
+        // A server on a test route: joined through its link.
+        let (addr, fp, stop, thread) = crate::connection::tests::remote_server(1);
+        let port = addr.port();
+        app.insert_resource(public::PublicFetcher(std::sync::Arc::new(move |_: &str| {
+            Ok(format!(
+                r#"{{"join": "ocw://127.0.0.1:{port}?cert={fp}", "voice": "wss://voice.example.org"}}"#
+            ))
+        })));
+        run(&mut app, "join public");
+        assert!(update_until(&mut app, |w| matches!(
+            join_state(w),
+            JoinState::Joined { .. }
+        )));
+        assert_eq!(
+            app.world().resource::<Args>().server.as_deref(),
+            Some(format!("127.0.0.1:{port}").as_str())
+        );
+        assert_eq!(
+            public_of(app.world()).map(|p| p.state),
+            Some(PublicState::Idle)
+        );
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        thread.join().unwrap();
     }
 
     /// The server's world is not installed here: said plainly, the ride

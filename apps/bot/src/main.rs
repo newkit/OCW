@@ -50,6 +50,7 @@ struct RideArgs {
     /// The game server (`ocw-server --listen`): HOST[:PORT], default port
     /// 47800; or `https://HOST[:PORT]` for its WebTransport endpoint
     /// (`--webtransport`, default port 47801), as the browser app joins.
+    /// Required: no default (not the public server either, spec 11.5).
     #[arg(long, value_name = "ADDR")]
     server: Option<String>,
     /// SHA-256 fingerprint of the server's certificate (ocw-server prints
@@ -173,9 +174,7 @@ struct Link {
 }
 
 fn ride(args: &RideArgs) -> i32 {
-    let Some(spec) = &args.server else {
-        fail("--server HOST[:PORT] is required (or use `ocw-bot verdict`)");
-    };
+    let spec = ocw_bot::server_or_why(args.server.as_deref()).unwrap_or_else(|why| fail(why));
     // https://…: the WebTransport endpoint (spec §14 Phase 10 B3).
     let web = spec.starts_with("https://");
     let (addr, server_name) = if web {
