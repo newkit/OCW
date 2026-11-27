@@ -24,7 +24,8 @@
 # OCW_KIOSK_ROUTE, OCW_KIOSK_ARGS (replaces world and show mode; --vr
 # --fullscreen and kiosk-local.args stay), OCW_DEPLOY_WORLD=0 (send no world
 # files), OCW_WORLD_SOURCE / OCW_WORLD_SOURCE_DIR (where the world files
-# come from), OCW_DEPLOY_FEATURES (default "vr").
+# come from), OCW_DEPLOY_FEATURES (default "vr,voice": the VR kiosk talks
+# with riders who join it, decided 2026-11-26, Phase 11 Q15 (a)).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 machine=${1:?usage: deploy-test-windows.sh MACHINE}
@@ -41,7 +42,7 @@ kiosk_world=${OCW_KIOSK_WORLD:-keep}
 case "$kiosk_world" in liechtenstein|blackforest|tenerife|keep) ;; *) echo "OCW_KIOSK_WORLD: liechtenstein, blackforest or tenerife" >&2; exit 2 ;; esac
 src=${OCW_WORLD_SOURCE:-marge}
 src_dir=${OCW_WORLD_SOURCE_DIR:-/var/tmp/ocw}
-features=${OCW_DEPLOY_FEATURES:-vr}
+features=${OCW_DEPLOY_FEATURES:-vr,voice}
 local_stage=target/kiosk-windows
 remote() { OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" "$@"; }
 b64() { printf '%s' "$1" | base64 -w0; }
