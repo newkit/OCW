@@ -88,6 +88,8 @@ fn hilly(road: bool) -> WorldPackage {
         obstacles: None,
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     }
 }
 

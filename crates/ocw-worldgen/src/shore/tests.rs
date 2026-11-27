@@ -49,6 +49,8 @@ fn package() -> WorldPackage {
         obstacles: None,
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     }
 }
 

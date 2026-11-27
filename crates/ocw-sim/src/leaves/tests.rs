@@ -73,6 +73,8 @@ fn package_at(class: LandClass, origin: (f64, f64)) -> WorldPackage {
         obstacles: None,
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     };
     pkg.look.forest = Some(forest);
     pkg

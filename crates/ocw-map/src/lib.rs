@@ -156,6 +156,8 @@ pub mod fixture {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         }
     }
 }

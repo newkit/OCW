@@ -499,6 +499,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         pkg.look.vegetation = Some(Vegetation {
             cells: cells as u32,

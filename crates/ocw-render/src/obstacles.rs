@@ -906,6 +906,8 @@ mod tests {
             obstacles: Some(o),
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         }
     }
 

@@ -936,6 +936,8 @@ mod tests {
             obstacles: Some(o),
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         let world =
             ocw_world::obstacles::WorldObstacles::from_package(&pkg).map(std::sync::Arc::new);

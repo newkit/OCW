@@ -31,6 +31,7 @@
 //! - [`spatial`]: bucket index over road segments
 //! - [`stages`]: stage profile of a world build (time, CPU, peak memory)
 //! - [`water`]: river and lake levels (spec §4.8)
+//! - [`traffic`]: traffic rules, signals, bus lines, car parks and aerodromes (sections `TRFC`, `AERO`; spec 14 Phase 18)
 
 pub mod areas;
 pub mod bridges;
@@ -66,5 +67,6 @@ pub mod spatial;
 pub mod stages;
 pub mod svg;
 pub mod terrain_smooth;
+pub mod traffic;
 pub mod vegetation;
 pub mod water;

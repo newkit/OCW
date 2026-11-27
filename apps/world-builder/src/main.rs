@@ -353,6 +353,27 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// Road traffic and aerodromes (spec 14 Phase 18, 18B / 18C, 18E T2):
+    /// the traffic rules of every road graph edge (access, one-way,
+    /// lanes, speed limits with the country's implied ones, parking,
+    /// roundabouts), the signals and signs, bus stops and lines and car
+    /// parks into the section TRFC, the aerodromes, runways, helipads and
+    /// nearby airports into AERO, of an existing package (the manifest is
+    /// renewed); `package` writes them too.
+    Traffic {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from.
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Place names (spec §4.7, §14 Phase 16 16A): the OSM place=* nodes
     /// and areas (cities, towns, villages, hamlets, suburbs,
     /// neighbourhoods, localities, isolated dwellings) on the tiles into
@@ -2036,6 +2057,16 @@ fn package(args: PackageArgs) {
         area_report.push(format!("places (PLCE): {}", st.summary));
         area_report.push(format!("landmarks (LMRK): {}", st.landmark_summary));
     }
+    {
+        // Road traffic and aerodromes (sections TRFC, AERO, spec 14 Phase
+        // 18, 18B / 18C): after the places (in town) and the land use.
+        let data = read_traffic_osm(&src.pbf, &pkg);
+        let st = stage("traffic (TRFC, AERO)", || {
+            ocw_worldgen::traffic::add_traffic(&mut pkg, &osm, &data, &proj)
+        });
+        area_report.push(format!("traffic (TRFC): {}", st.summary()));
+        area_report.push(format!("aerodromes (AERO): {}", st.aero_summary()));
+    }
     // The junction rules and outlines and the strips' edges (sections
     // JNCT, RDGE, spec §4.8.8 J2), settled when cleaned.
     if let Some(j) = stage("junction sections (JNCT, RDGE)", || {
@@ -2678,6 +2709,134 @@ fn read_places(pbf: &[PathBuf], pkg: &ocw_world::WorldPackage) -> ocw_worldgen::
     });
     stage("retain near", || d.retain_near(package_box(pkg, 100.0)));
     d
+}
+
+fn read_traffic_osm(
+    pbf: &[PathBuf],
+    pkg: &ocw_world::WorldPackage,
+) -> ocw_worldgen::traffic::TrafficOsm {
+    let mut d = stage("read PBF traffic", || {
+        ocw_worldgen::traffic::TrafficOsm::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    stage("retain near", || d.retain_near(package_box(pkg, 2000.0)));
+    d
+}
+
+/// `world-builder traffic` (spec 14 Phase 18, 18E T2): the sections TRFC
+/// and AERO into a built package; every other section stays as it is.
+fn traffic(
+    world: &std::path::Path,
+    pbf: &[PathBuf],
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let mut osm = stage("read PBF roads", || {
+        OsmData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    stage("retain near", || osm.retain_near(package_box(&pkg, 2000.0)));
+    let data = read_traffic_osm(pbf, &pkg);
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let st = stage("traffic (TRFC, AERO)", || {
+        ocw_worldgen::traffic::add_traffic(&mut pkg, &osm, &data, &proj)
+    });
+    println!("traffic (TRFC): {}", st.summary());
+    println!("aerodromes (AERO): {}", st.aero_summary());
+    if let Some(a) = &pkg.aero {
+        for d in &a.aerodromes {
+            println!(
+                "  {} {} ({:?}{}) at {:.0},{:.0}",
+                if d.icao.is_empty() { "----" } else { &d.icao },
+                if d.name.is_empty() {
+                    "(no name)"
+                } else {
+                    &d.name
+                },
+                d.kind,
+                if d.outside { ", outside" } else { "" },
+                d.pos[0],
+                d.pos[1]
+            );
+        }
+    }
+    if let (Some(t), Some(g)) = (&pkg.traffic, &pkg.graph) {
+        print!("{}", speed_report(&t.speed_coverage(g)));
+    }
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.3} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        dist::carry_manifest(world, &path);
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+                patches: None,
+            },
+            key,
+        )
+    });
+}
+
+/// The roads without speed data (spec 18E T2: `world-builder lint`).
+fn speed_report(c: &ocw_world::traffic::SpeedCoverage) -> String {
+    let total = c.total();
+    let pct = |a: f64, b: f64| if b > 0.0 { 100.0 * a / b } else { 0.0 };
+    let mut s = format!(
+        "traffic.speed: {} of {} motor road edges without speed data ({:.0} of {:.0} km, {:.1} %): the implied limit is used\n",
+        total.unmapped_edges,
+        total.edges,
+        total.unmapped_km,
+        total.km,
+        pct(total.unmapped_km, total.km)
+    );
+    for (class, r) in &c.by_class {
+        s.push_str(&format!(
+            "  {class:?}: {} of {} edges, {:.1} of {:.1} km ({:.0} %) without speed data\n",
+            r.unmapped_edges,
+            r.edges,
+            r.unmapped_km,
+            r.km,
+            pct(r.unmapped_km, r.km)
+        ));
+    }
+    if c.missing_edges > 0 {
+        s.push_str(&format!(
+            "  {} graph edges have no TRFC record (the implied rules by class)\n",
+            c.missing_edges
+        ));
+    }
+    s
 }
 
 /// `world-builder places` (spec 4.7, 14 Phase 16 16A): the sections
@@ -3719,6 +3878,13 @@ fn lint(world: &std::path::Path, pbf: &[PathBuf]) {
     });
     let report = ocw_worldgen::lint::lint(&pkg, water.as_ref());
     print!("{}", ocw_worldgen::lint::format_report(&report, pkg.origin));
+    // Roads without speed data (spec 14 Phase 18, 18E T2).
+    match (&pkg.traffic, &pkg.graph) {
+        (Some(t), Some(g)) => print!("{}", speed_report(&t.speed_coverage(g))),
+        _ => println!(
+            "traffic.speed: no TRFC section (an older package): every road gets the implied limit of its class"
+        ),
+    }
     println!("lint: {:.1} s", t.elapsed().as_secs_f64());
 }
 
@@ -3848,6 +4014,21 @@ fn main() {
                 })
             });
             vegetation(&world, &pbf, crops.as_deref(), out, key.as_ref());
+            print_stage_profile(None);
+        }
+        Cmd::Traffic {
+            world,
+            pbf,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            traffic(&world, &pbf, out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Places {

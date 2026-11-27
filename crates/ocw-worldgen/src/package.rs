@@ -703,6 +703,8 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
         obstacles: None,
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     }
 }
 

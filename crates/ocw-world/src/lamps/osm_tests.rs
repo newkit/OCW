@@ -89,6 +89,8 @@ fn world(osm: Vec<PointObstacle>) -> WorldPackage {
         obstacles,
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     }
 }
 

@@ -938,6 +938,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         let cells = 100usize;
         pkg.landuse = Some(LandUse {

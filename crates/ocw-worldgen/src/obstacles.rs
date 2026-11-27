@@ -821,6 +821,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         }
     }
 

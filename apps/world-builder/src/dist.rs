@@ -717,6 +717,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         // No manifest yet: nothing to refresh.
@@ -774,6 +776,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         let out = dir.path().join("worlds");
@@ -816,6 +820,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         path
@@ -1097,6 +1103,8 @@ mod tests {
                 }),
                 ..Default::default()
             },
+            traffic: None,
+            aero: None,
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         let args = ManifestArgs {

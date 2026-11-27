@@ -537,6 +537,8 @@ mod tests {
             obstacles: Some(o),
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         let pj = PackageJunctions::new(&pkg);
         let drawn = placed_lamps(&pkg, key, pj.as_ref());

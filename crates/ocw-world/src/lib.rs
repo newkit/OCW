@@ -6,6 +6,7 @@
 //! [`RidePath`] through the [`RoadNetwork`] (spec §5.2).
 //! This crate must build for `wasm32-unknown-unknown` (spec §3.5).
 
+pub mod aero;
 pub mod bike_signs;
 pub mod border;
 pub mod bridges;
@@ -55,6 +56,7 @@ pub mod summary;
 pub mod surface;
 mod terrain;
 pub mod track;
+pub mod traffic;
 pub mod trees;
 pub mod vegetation;
 pub mod water_lines;

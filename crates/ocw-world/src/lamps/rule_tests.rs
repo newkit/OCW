@@ -64,6 +64,8 @@ fn world(g: RoadGraph) -> WorldPackage {
         obstacles: None,
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     }
 }
 

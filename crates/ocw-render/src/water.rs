@@ -259,6 +259,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         p.look.water_lines = Some(WaterLines::from_lines(&lines, 100.0));
         p

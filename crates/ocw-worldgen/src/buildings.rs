@@ -1313,6 +1313,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         let stats = add_buildings(
             &mut p,
@@ -1479,6 +1481,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         let (church, mut parts) = church_parts();
         // A stray part far from any building.
