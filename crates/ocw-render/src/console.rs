@@ -36,6 +36,17 @@ pub struct ConsolePlugin;
 
 impl Plugin for ConsolePlugin {
     fn build(&self, app: &mut App) {
+        // `noegui=1` (spec 14 Phase 10, 10G): no overlay, the commands
+        // still run (queued, the page's `window.ocw.console`).
+        if app
+            .world()
+            .get_resource::<crate::switches::RenderSwitches>()
+            .is_some_and(|s| s.no_egui)
+        {
+            app.add_plugins(ConsoleCorePlugin)
+                .add_systems(Update, toggle_console.before(run_pending_commands));
+            return;
+        }
         if !app.is_plugin_added::<EguiPlugin>() {
             app.add_plugins(EguiPlugin::default());
         }

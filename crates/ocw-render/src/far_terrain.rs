@@ -61,8 +61,12 @@ pub struct FarExtension {
 
 impl MaterialExtension for FarExtension {
     fn fragment_shader() -> ShaderRef {
-        ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("far.wesl")).with_source("embedded"),
+        // The bisect switch (10G): Bevy's standard shader.
+        crate::switches::shader_or_default(
+            crate::switches::plain_other(),
+            ShaderRef::Path(
+                AssetPath::from_path_buf(embedded_path!("far.wesl")).with_source("embedded"),
+            ),
         )
     }
 }

@@ -24,6 +24,26 @@
 (function () {
   "use strict";
   const LK = () => window.LivekitClient;
+  // LiveKit's SDK is loaded when a room is joined, not with the page
+  // (spec 14 Phase 10, 10G: a solo ride never fetches it):
+  // window.ocwVoiceSdk is its file (index.html; "" or unset: none).
+  let sdkLoading = null;
+  function loadSdk() {
+    if (LK()) return Promise.resolve(true);
+    const src = window.ocwVoiceSdk;
+    if (!src) return Promise.resolve(false);
+    if (!sdkLoading) {
+      sdkLoading = new Promise((ok) => {
+        const el = document.createElement("script");
+        el.crossOrigin = "anonymous";
+        el.src = src;
+        el.onload = () => { console.log("ocw-voice: LiveKit's SDK loaded (" + src + ")"); ok(!!LK()); };
+        el.onerror = () => { console.warn("ocw-voice: " + src + " not loaded"); sdkLoading = null; ok(false); };
+        document.head.appendChild(el);
+      });
+    }
+    return sdkLoading;
+  }
   const events = [];
   const push = (e) => { events.push(e); if (events.length > 1000) events.shift(); };
   const msg = (e) => String((e && (e.message || e.name)) || e);
@@ -56,7 +76,7 @@
   }
 
   function available() {
-    if (!LK()) return "livekit-client is not loaded (the build could not fetch it)";
+    if (!LK() && !window.ocwVoiceSdk) return "livekit-client is not loaded (the build could not fetch it, or voice is off for this visit)";
     if (!window.RTCPeerConnection) return "this browser has no WebRTC";
     if (!window.isSecureContext) return "voice needs a secure page (https or localhost)";
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return "no microphone access on this page";
@@ -166,6 +186,11 @@
   async function connect(url, token) {
     const gen = ++st.gen;
     if (st.room) { const old = st.room; st.room = null; await old.disconnect(); }
+    if (!(await loadSdk())) {
+      if (gen === st.gen) push({ type: "connect_failed", error: "livekit-client could not be loaded" });
+      return;
+    }
+    if (gen !== st.gen) return;
     const c = ctx();
     const opts = {
       adaptiveStream: false, dynacast: false,
@@ -358,6 +383,7 @@
 
   window.ocwVoice = {
     available,
+    loadSdk,
     command,
     poll: () => JSON.stringify(events.splice(0)),
     devices: () => JSON.stringify({ inputs: st.inputs, outputs: st.outputs }),

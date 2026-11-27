@@ -61,6 +61,7 @@ pub mod sky;
 pub mod stamp;
 pub mod status_signs;
 pub mod street_lamps;
+pub mod switches;
 pub mod terrain;
 pub mod thumbs;
 pub mod touch_hud;
@@ -559,6 +560,8 @@ impl Plugin for OcwRenderPlugins {
             water::WaterPlugin,
             // The far terrain's crowns and stones (spec 4.5, v6.58).
             far_terrain::FarMaterialPlugin,
+            // The bisect switches and the pipeline budget (10G).
+            switches::SwitchesPlugin,
         ));
     }
 }

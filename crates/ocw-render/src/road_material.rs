@@ -346,8 +346,12 @@ impl RoadExtension {
 
 impl MaterialExtension for RoadExtension {
     fn fragment_shader() -> ShaderRef {
-        ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("road.wesl")).with_source("embedded"),
+        // The bisect switch (10G): Bevy's standard shader.
+        crate::switches::shader_or_default(
+            crate::switches::plain_arrays(),
+            ShaderRef::Path(
+                AssetPath::from_path_buf(embedded_path!("road.wesl")).with_source("embedded"),
+            ),
         )
     }
 }
