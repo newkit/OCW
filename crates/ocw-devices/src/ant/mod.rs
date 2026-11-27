@@ -1,6 +1,6 @@
 //! ANT+ sensors through an ANT USB stick (spec 3.4.1, 14 Phase 17):
-//! heart-rate straps first, bike power meters on the same base; FE-C
-//! trainers plug in later as one more profile.
+//! heart-rate straps first, bike power meters and FE-C trainers on the
+//! same base.
 //!
 //! Layers (as [`crate::ble`]):
 //! - [`codec`] (pure): the ANT serial messages (sync, length, id, data,
@@ -15,6 +15,9 @@
 //!   [`spdcad`] (pure): speed and cadence sensors (types 121 – 123);
 //!   [`common`] (pure): the common pages 0x50 – 0x52 (manufacturer,
 //!   product, battery: the FIT file's `device_info`);
+//!   [`fec`] (pure): the FE-C trainer pages – data pages 16 / 25 and the
+//!   control pages 49 / 50 / 51 / 55, sent as acknowledged messages one
+//!   at a time;
 //! - [`stick`] (pure): the stick core – reset, capabilities, network key,
 //!   extended data once; channels handed out to sensors and the scan,
 //!   messages routed by channel number, reconnects. Driven by bytes and a
@@ -41,6 +44,7 @@
 pub mod channel;
 pub mod codec;
 pub mod common;
+pub mod fec;
 pub mod hr;
 pub mod power;
 pub mod sim;
@@ -168,15 +172,19 @@ pub enum AntProfile {
     Cadence,
     /// Speed sensor (device type 123, period 8118).
     Speed,
+    /// Fitness equipment, FE-C (device type 17, period 8192): a smart
+    /// trainer, data pages 16 / 25 and control (SIM / ERG).
+    FitnessEquipment,
 }
 
 impl AntProfile {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::HeartRate,
         Self::BikePower,
         Self::SpeedCadence,
         Self::Cadence,
         Self::Speed,
+        Self::FitnessEquipment,
     ];
 
     /// The ANT+ device type.
@@ -187,6 +195,7 @@ impl AntProfile {
             Self::SpeedCadence => 121,
             Self::Cadence => 122,
             Self::Speed => 123,
+            Self::FitnessEquipment => 17,
         }
     }
 
@@ -201,7 +210,7 @@ impl AntProfile {
     }
 
     /// The channel period (1/32768 s): 8070 ≈ 4.06 Hz, 8182 ≈ 4.00 Hz,
-    /// speed / cadence 8086, 8102, 8118 (≈ 4 Hz each).
+    /// speed / cadence 8086, 8102, 8118 (≈ 4 Hz each), FE-C 8192 = 4 Hz.
     pub fn period(self) -> u16 {
         match self {
             Self::HeartRate => 8070,
@@ -209,6 +218,7 @@ impl AntProfile {
             Self::SpeedCadence => 8086,
             Self::Cadence => 8102,
             Self::Speed => 8118,
+            Self::FitnessEquipment => 8192,
         }
     }
 
@@ -220,6 +230,7 @@ impl AntProfile {
             Self::SpeedCadence => "speed/cadence sensor (ANT+)",
             Self::Cadence => "cadence sensor (ANT+)",
             Self::Speed => "speed sensor (ANT+)",
+            Self::FitnessEquipment => "smart trainer (ANT+ FE-C)",
         }
     }
 
@@ -231,6 +242,7 @@ impl AntProfile {
             Self::SpeedCadence => "ANT+ speed/cadence",
             Self::Cadence => "ANT+ cadence",
             Self::Speed => "ANT+ speed",
+            Self::FitnessEquipment => "ANT+ trainer",
         }
     }
 
@@ -241,6 +253,9 @@ impl AntProfile {
             Self::HeartRate => Profile::HeartRate,
             Self::BikePower => Profile::CyclingPower,
             Self::SpeedCadence | Self::Cadence | Self::Speed => Profile::SpeedCadence,
+            // A trainer, as a BLE FTMS one (it replaces the virtual
+            // trainer and takes SIM / ERG).
+            Self::FitnessEquipment => Profile::FitnessMachine,
         }
     }
 }
@@ -462,7 +477,6 @@ mod tests {
         let p = AntDeviceId::parse("ant:11:777:5").unwrap();
         assert_eq!(p.profile, AntProfile::BikePower);
         assert_eq!(AntDeviceId::parse("ant:120:0:1"), None);
-        assert_eq!(AntDeviceId::parse("ant:17:5:1"), None, "FE-C: later");
         let c = AntDeviceId::parse("ant:121:2222:1").unwrap();
         assert_eq!(c.profile, AntProfile::SpeedCadence);
         assert_eq!(c.name(), "ANT+ speed/cadence 2222");
@@ -476,6 +490,12 @@ mod tests {
             AntProfile::Speed
         );
         assert_eq!(AntProfile::Speed.period(), 8118);
+        let t = AntDeviceId::parse("ant:17:5:5").unwrap();
+        assert_eq!(t.profile, AntProfile::FitnessEquipment);
+        assert_eq!(t.name(), "ANT+ trainer 5");
+        assert_eq!(t.found(None).profiles, [Profile::FitnessMachine]);
+        assert_eq!(t.profile.period(), 8192);
+        assert_eq!(AntDeviceId::parse("ant:18:5:1"), None);
         assert_eq!(AntDeviceId::parse("hci0/dev_AA"), None);
         assert!(AntDeviceId::is_ant("ant:120:1:1"));
         let f = id.found(Some(-55));

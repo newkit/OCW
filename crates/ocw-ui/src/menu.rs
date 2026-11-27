@@ -1021,6 +1021,7 @@ mod tests {
                 cadence: None,
                 reading: None,
                 calibration: None,
+                trainer: None,
             }],
             ..Default::default()
         };

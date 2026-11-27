@@ -441,6 +441,7 @@ impl WebDevices {
                 cadence: None,
                 reading: None,
                 calibration: None,
+                trainer: None,
             })
             .collect();
         for r in &self.remembered.devices {
@@ -456,6 +457,7 @@ impl WebDevices {
                     cadence: None,
                     reading: None,
                     calibration: None,
+                    trainer: None,
                 });
             }
         }

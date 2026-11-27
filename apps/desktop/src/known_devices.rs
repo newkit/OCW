@@ -37,6 +37,12 @@ pub struct KnownDevices {
     /// 17E).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cadence: Option<String>,
+    /// The trainer chosen with *Use as trainer* (spec 14 Phase 17, 17E:
+    /// the Q6 (c) rule for trainers): with two trainers – a BLE one and
+    /// an ANT+ FE-C one – only its power counts and only it gets SIM /
+    /// ERG.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trainer: Option<String>,
     #[serde(default, rename = "device")]
     pub devices: Vec<KnownDevice>,
 }
@@ -98,6 +104,9 @@ impl KnownDevices {
         }
         if self.cadence.as_deref() == Some(id) {
             self.cadence = None;
+        }
+        if self.trainer.as_deref() == Some(id) {
+            self.trainer = None;
         }
         self.devices.len() != before
     }

@@ -2,13 +2,18 @@
 //! hardware): it reads the host's messages, answers like a stick (channel
 //! responses, start-up, capabilities, channel IDs) and broadcasts the pages
 //! of simulated heart-rate straps, power meters (power-only, or torque
-//! pages only), and speed / cadence sensors on the open channels that
-//! match them, at the channel period – with the toggle bit, background and
-//! common pages, R-R timing, extended data (channel ID, signal), missed
-//! messages, lost sensors and search timeouts. Acknowledged messages from
-//! the host reach the tracked sensor (`EVENT_TRANSFER_TX_COMPLETED`, or
-//! `_FAILED` while it is told to fail them): a power meter answers a
-//! calibration request with its calibration page.
+//! pages only), speed / cadence sensors and FE-C trainers on the open
+//! channels that match them, at the channel period – with the toggle bit,
+//! background and common pages, R-R timing, extended data (channel ID,
+//! signal), missed messages, lost sensors and search timeouts. An
+//! acknowledged message from the host goes out in the channel's next slot
+//! and reaches the tracked sensor: `EVENT_TRANSFER_TX_COMPLETED` (or
+//! `_FAILED` when told to fail some, or when the sensor is gone), a second
+//! one while one is under way is refused (`TRANSFER_IN_PROGRESS`). A
+//! simulated FE-C trainer ([`SimTrainer`]) takes the control pages (49
+//! ERG, 50 wind, 51 track, 55 user) and its power follows them with a
+//! simple model; a power meter answers a calibration request with its
+//! calibration page.
 //!
 //! Pure (the time is given), so the stick core's tests step it by hand;
 //! the native `SimTransport` runs it on the wall clock for the app
@@ -23,6 +28,7 @@ use std::time::Duration;
 
 use super::codec::{Decoder, Extended, Message, code, id, lib_config};
 use super::common;
+use super::fec::{self, Control, FeState, TrainerStatus};
 use super::hr;
 use super::power::{self, Torque};
 use super::spdcad::{self, SpdCadKind};
@@ -65,6 +71,164 @@ pub enum SimKind {
         rpm: f64,
         kmh: f64,
     },
+    /// An FE-C trainer; `watts`: what the simulated rider rides on the
+    /// flat (the pace they hold), `cadence` in rpm.
+    Trainer {
+        watts: f64,
+        cadence: f64,
+    },
+}
+
+/// What a simulated FE-C trainer was last told.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SimLoad {
+    /// Nothing yet: the rider's own pace.
+    Free,
+    /// ERG (page 49): this power.
+    Erg(f64),
+    /// SIM (page 51): this grade (%) and rolling resistance.
+    Sim { grade_pct: f64, crr: f64 },
+}
+
+/// The power follows a new load with this time constant (s).
+pub const TRAINER_TAU_S: f64 = 1.0;
+/// The most a simulated trainer gives (W).
+pub const TRAINER_MAX_W: f64 = 2000.0;
+
+/// A simulated FE-C trainer's state. The model: the simulated rider
+/// holds the speed they ride on a flat road with their own power
+/// ([`SimKind::Trainer`]'s `watts`, at the profile's default Crr 0.004
+/// and wind coefficient 0.51 kg/m); in SIM the power is what the grade,
+/// the rolling resistance and the wind cost at that speed, in ERG the
+/// target; the power moves to it with [`TRAINER_TAU_S`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimTrainer {
+    pub load: SimLoad,
+    /// Page 50 (rho * CdA, kg/m; km/h, positive: headwind; 0 – 1).
+    pub wind_coefficient: f64,
+    pub wind_kmh: f64,
+    pub drafting: f64,
+    /// Page 55 (`None`: not told yet – page 25 asks for it).
+    pub user_kg: Option<f64>,
+    pub bike_kg: Option<f64>,
+    pub wheel_diameter_m: Option<f64>,
+    /// The power and speed it reports now.
+    pub power_w: f64,
+    pub speed_mps: f64,
+    /// Every control page it took, in order.
+    pub received: Vec<[u8; 8]>,
+    /// Transfers to fail before the next one goes through (tests).
+    pub fail_acks: u32,
+    last_t: Option<f64>,
+    elapsed_s: f64,
+    distance_m: f64,
+}
+
+impl Default for SimTrainer {
+    fn default() -> Self {
+        Self {
+            load: SimLoad::Free,
+            wind_coefficient: fec::DEFAULT_WIND_COEFFICIENT,
+            wind_kmh: 0.0,
+            drafting: 1.0,
+            user_kg: None,
+            bike_kg: None,
+            wheel_diameter_m: None,
+            power_w: 0.0,
+            speed_mps: 0.0,
+            received: Vec::new(),
+            fail_acks: 0,
+            last_t: None,
+            elapsed_s: 0.0,
+            distance_m: 0.0,
+        }
+    }
+}
+
+impl SimTrainer {
+    /// Rider + bike (the profile's defaults until page 55).
+    pub fn mass_kg(&self) -> f64 {
+        self.user_kg.unwrap_or(fec::DEFAULT_USER_KG) + self.bike_kg.unwrap_or(fec::DEFAULT_BIKE_KG)
+    }
+
+    /// A control page.
+    pub fn apply(&mut self, page: [u8; 8]) {
+        self.received.push(page);
+        match Control::parse(&page) {
+            Some(Control::TargetPower { watts }) => self.load = SimLoad::Erg(watts),
+            Some(Control::Track { grade_pct, crr }) => self.load = SimLoad::Sim { grade_pct, crr },
+            Some(Control::Wind {
+                coefficient_kg_per_m,
+                wind_kmh,
+                drafting,
+            }) => {
+                self.wind_coefficient = coefficient_kg_per_m;
+                self.wind_kmh = wind_kmh;
+                self.drafting = drafting;
+            }
+            Some(Control::User {
+                user_kg,
+                bike_kg,
+                wheel_diameter_m,
+            }) => {
+                self.user_kg = user_kg.or(Some(fec::DEFAULT_USER_KG));
+                self.bike_kg = bike_kg.or(Some(fec::DEFAULT_BIKE_KG));
+                self.wheel_diameter_m = wheel_diameter_m;
+            }
+            None => {}
+        }
+    }
+
+    /// The speed a rider of this mass holds on the flat with `watts`.
+    pub fn pace(&self, watts: f64) -> f64 {
+        let m = self.mass_kg();
+        let p = |v: f64| {
+            (m * 9.81 * fec::DEFAULT_CRR + 0.5 * fec::DEFAULT_WIND_COEFFICIENT * v * v) * v
+        };
+        let (mut lo, mut hi) = (0.0, 40.0);
+        for _ in 0..50 {
+            let mid = 0.5 * (lo + hi);
+            if p(mid) < watts.max(0.0) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    }
+
+    /// The power the load asks for at speed `v`.
+    pub fn load_power(&self, base_watts: f64, v: f64) -> f64 {
+        let p = match self.load {
+            SimLoad::Free => base_watts,
+            SimLoad::Erg(w) => w,
+            SimLoad::Sim { grade_pct, crr } => {
+                let m = self.mass_kg();
+                let air = v + self.wind_kmh / 3.6;
+                let f = m * 9.81 * (grade_pct / 100.0 + crr)
+                    + 0.5 * self.wind_coefficient * self.drafting * air * air.abs();
+                f * v
+            }
+        };
+        p.clamp(0.0, TRAINER_MAX_W)
+    }
+
+    /// Time passes (s since start).
+    fn step(&mut self, t: f64, base_watts: f64) {
+        let v = self.pace(base_watts);
+        let target = self.load_power(base_watts, v);
+        match self.last_t {
+            None => self.power_w = target,
+            Some(last) => {
+                let dt = (t - last).max(0.0);
+                self.power_w += (target - self.power_w) * (1.0 - (-dt / TRAINER_TAU_S).exp());
+                self.elapsed_s += dt;
+                self.distance_m += v * dt;
+            }
+        }
+        self.speed_mps = v;
+        self.last_t = Some(t);
+    }
 }
 
 /// One simulated sensor.
@@ -111,6 +275,8 @@ pub struct SimSensor {
     torque_sum: f64,
     /// A calibration answer to send (after this many messages).
     answer: Option<(u32, [u8; 8])>,
+    /// An FE-C trainer's state ([`SimKind::Trainer`]).
+    pub trainer: Option<SimTrainer>,
 }
 
 impl SimSensor {
@@ -143,7 +309,17 @@ impl SimSensor {
             period_sum: 0.0,
             torque_sum: 0.0,
             answer: None,
+            trainer: matches!(kind, SimKind::Trainer { .. }).then(SimTrainer::default),
         }
+    }
+
+    /// An FE-C trainer with device number `n` (transmission type 5) whose
+    /// rider rides `watts` on the flat at `cadence` rpm.
+    pub fn fe_c_trainer(n: u16, watts: f64, cadence: f64) -> Self {
+        Self::new(
+            ChannelId::new(n, AntProfile::FitnessEquipment.device_type(), 5),
+            SimKind::Trainer { watts, cadence },
+        )
     }
 
     /// A heart-rate strap with device number `n` (transmission type 1).
@@ -414,6 +590,31 @@ impl SimSensor {
                 };
                 spdcad::page(number, toggle, b, time, revs)
             }
+            SimKind::Trainer { watts, cadence } => {
+                let tr = self.trainer.get_or_insert_with(SimTrainer::default);
+                tr.step(t, watts);
+                let cad = (cadence > 0.0).then(|| cadence.round().clamp(0.0, 254.0) as u8);
+                // Pages 16 and 25 in turn: 16, 25, 25, 16, ...
+                if n.is_multiple_of(3) {
+                    let elapsed = ((tr.elapsed_s * 4.0) as u64 % 256) as u8;
+                    let distance = (tr.distance_m as u64 % 256) as u8;
+                    return fec::general_page(
+                        elapsed,
+                        distance,
+                        Some(tr.speed_mps),
+                        FeState::InUse,
+                    );
+                }
+                let w = tr.power_w.round().clamp(0.0, 4094.0) as u16;
+                self.events = self.events.wrapping_add(1);
+                self.accumulated = self.accumulated.wrapping_add(w);
+                let status = TrainerStatus {
+                    user_config_required: tr.user_kg.is_none(),
+                    state: FeState::InUse,
+                    ..Default::default()
+                };
+                fec::trainer_page(self.events, cad, self.accumulated, Some(w), status)
+            }
         }
     }
 }
@@ -435,6 +636,8 @@ struct SimChannel {
     misses: u32,
     search_since: Duration,
     next_at: Duration,
+    /// An acknowledged message waiting for the next slot.
+    ack: Option<[u8; 8]>,
 }
 
 impl SimChannel {
@@ -488,6 +691,9 @@ pub struct SimRadio {
     sensors: Vec<SimSensor>,
     decoder: Decoder,
     out: Vec<u8>,
+    /// Acknowledged messages refused because one was under way (a host
+    /// that sends one at a time has none).
+    pub busy_refusals: u32,
 }
 
 impl SimRadio {
@@ -502,6 +708,32 @@ impl SimRadio {
             sensors: Vec::new(),
             decoder: Decoder::new(),
             out: Vec::new(),
+            busy_refusals: 0,
+        }
+    }
+
+    /// The simulated FE-C trainer with device number `n`.
+    pub fn trainer(&self, n: u16) -> Option<&SimTrainer> {
+        self.sensors
+            .iter()
+            .find(|s| s.id.device_number == n)
+            .and_then(|s| s.trainer.as_ref())
+    }
+
+    pub fn trainer_mut(&mut self, n: u16) -> Option<&mut SimTrainer> {
+        self.sensor_mut(n).and_then(|s| s.trainer.as_mut())
+    }
+
+    /// The rider's own power on the flat (an FE-C trainer's pace) or a
+    /// power meter's power.
+    pub fn set_watts(&mut self, n: u16, w: f64) {
+        if let Some(s) = self.sensor_mut(n) {
+            match &mut s.kind {
+                SimKind::Trainer { watts, .. }
+                | SimKind::Power { watts, .. }
+                | SimKind::Torque { watts, .. } => *watts = w,
+                SimKind::HeartRate { .. } | SimKind::SpeedCadence { .. } => {}
+            }
         }
     }
 
@@ -549,21 +781,14 @@ impl SimRadio {
         self.sensor_mut(n)
     }
 
-    /// A power meter's power, a cadence sensor's cadence (rpm) and a speed
-    /// sensor's speed (km/h).
-    pub fn set_power(&mut self, n: u16, w: f64) {
-        if let Some(s) = self.sensor_mut(n) {
-            match &mut s.kind {
-                SimKind::Power { watts, .. } | SimKind::Torque { watts, .. } => *watts = w,
-                _ => {}
-            }
-        }
-    }
-
+    /// A meter's or a cadence sensor's cadence (rpm), a speed sensor's
+    /// speed (km/h).
     pub fn set_cadence(&mut self, n: u16, c: f64) {
         if let Some(s) = self.sensor_mut(n) {
             match &mut s.kind {
-                SimKind::Power { cadence, .. } | SimKind::Torque { cadence, .. } => *cadence = c,
+                SimKind::Power { cadence, .. }
+                | SimKind::Torque { cadence, .. }
+                | SimKind::Trainer { cadence, .. } => *cadence = c,
                 SimKind::SpeedCadence { rpm, .. } => *rpm = c,
                 _ => {}
             }
@@ -720,35 +945,6 @@ impl SimRadio {
                 c.next_at = now + c.period();
                 self.respond(m, code::RESPONSE_NO_ERROR);
             }
-            id::ACKNOWLEDGED_DATA if valid && m.data.len() >= 9 => {
-                let c = &self.channels[ch];
-                let target = c
-                    .tracking
-                    .then_some(c.paired)
-                    .flatten()
-                    .map(|p| p.device_number);
-                let mut payload = [0u8; 8];
-                payload.copy_from_slice(&m.data[1..9]);
-                let delivered = match target.and_then(|n| self.sensor_mut(n)) {
-                    Some(s) if s.present && s.ack_failures > 0 => {
-                        s.ack_failures -= 1;
-                        false
-                    }
-                    Some(s) if s.present => {
-                        s.on_host_page(payload);
-                        true
-                    }
-                    _ => false,
-                };
-                self.event(
-                    ch as u8,
-                    if delivered {
-                        code::EVENT_TRANSFER_TX_COMPLETED
-                    } else {
-                        code::EVENT_TRANSFER_TX_FAILED
-                    },
-                );
-            }
             id::CLOSE_CHANNEL if valid => {
                 if !self.channels[ch].open {
                     self.respond(m, wrong);
@@ -759,6 +955,19 @@ impl SimRadio {
                 c.open = false;
                 c.tracking = false;
                 self.event(ch as u8, code::EVENT_CHANNEL_CLOSED);
+            }
+            id::ACKNOWLEDGED_DATA if valid && m.data.len() >= 9 => {
+                let c = &mut self.channels[ch];
+                if !c.open {
+                    self.respond(m, wrong);
+                } else if c.ack.is_some() {
+                    self.busy_refusals += 1;
+                    self.respond(m, code::TRANSFER_IN_PROGRESS);
+                } else {
+                    let mut p = [0u8; 8];
+                    p.copy_from_slice(&m.data[1..9]);
+                    c.ack = Some(p);
+                }
             }
             _ => self.respond(m, code::INVALID_MESSAGE),
         }
@@ -822,8 +1031,40 @@ impl SimRadio {
                 }
                 .encode(&mut d);
                 self.emit(Message::new(id::BROADCAST_DATA, d));
+                // An acknowledged message goes back in this slot.
+                if let Some(p) = self.channels[ch].ack.take() {
+                    let s = &mut self.sensors[i];
+                    let ok = match s.trainer.as_mut() {
+                        Some(tr) if tr.fail_acks > 0 => {
+                            tr.fail_acks -= 1;
+                            false
+                        }
+                        Some(tr) => {
+                            tr.apply(p);
+                            true
+                        }
+                        // Another sensor (a power meter's calibration).
+                        None if s.ack_failures > 0 => {
+                            s.ack_failures -= 1;
+                            false
+                        }
+                        None => {
+                            s.on_host_page(p);
+                            true
+                        }
+                    };
+                    let c = if ok {
+                        code::EVENT_TRANSFER_TX_COMPLETED
+                    } else {
+                        code::EVENT_TRANSFER_TX_FAILED
+                    };
+                    self.event(ch as u8, c);
+                }
             }
             None if c.tracking => {
+                if self.channels[ch].ack.take().is_some() {
+                    self.event(ch as u8, code::EVENT_TRANSFER_TX_FAILED);
+                }
                 let c = &mut self.channels[ch];
                 c.misses += 1;
                 if c.misses < MISSES_TO_SEARCH {
@@ -846,11 +1087,13 @@ impl SimRadio {
     }
 }
 
-/// Reads a `--ant-sim` list: `hr:12345:142,hr:23456:128,power:4004:230`
-/// (kind, device number, bpm or watts; `power:N:W:RPM` with a cadence);
-/// `torque:N:W[:RPM]` a crank torque meter without the power-only page,
-/// `wheeltorque:N:W[:KMH]` a power hub, `spdcad:N:RPM:KMH` a combined
-/// speed / cadence sensor, `cadence:N:RPM`, `speed:N:KMH`.
+/// Reads a `--ant-sim` list: `hr:12345:142,hr:23456:128,power:4004:230,
+/// fec:5005:200` (kind, device number, bpm or watts; `power:N:W:RPM` and
+/// `fec:N:W:RPM` with a cadence; an FE-C trainer's watts are what its
+/// rider rides on the flat); `torque:N:W[:RPM]` a crank torque meter
+/// without the power-only page, `wheeltorque:N:W[:KMH]` a power hub,
+/// `spdcad:N:RPM:KMH` a combined speed / cadence sensor, `cadence:N:RPM`,
+/// `speed:N:KMH`.
 pub fn parse_sensors(spec: &str) -> Result<Vec<SimSensor>, String> {
     let mut out = Vec::new();
     for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -894,9 +1137,13 @@ pub fn parse_sensors(spec: &str) -> Result<Vec<SimSensor>, String> {
                 0.0,
             )),
             "speed" => out.push(SimSensor::speed_cadence(n, AntProfile::Speed, 0.0, num(2)?)),
+            "fec" | "trainer" => {
+                let cadence = if parts.len() > 3 { num(3)? } else { 90.0 };
+                out.push(SimSensor::fe_c_trainer(n, num(2)?, cadence));
+            }
             k => {
                 return Err(format!(
-                    "{item}: kind {k} is not hr, power, torque, wheeltorque, spdcad, cadence or speed"
+                    "{item}: kind {k} is not hr, power, torque, wheeltorque, spdcad, cadence, speed or fec"
                 ));
             }
         }
@@ -1039,7 +1286,17 @@ mod tests {
         );
         assert!(parse_sensors("spdcad:21:90").is_err());
         assert!(parse_sensors("").is_err());
-        assert!(parse_sensors("fec:1:2").is_err());
+        let t = parse_sensors("fec:5005:180:85").unwrap();
+        assert_eq!(t[0].id, ChannelId::new(5005, 17, 5));
+        assert_eq!(
+            t[0].kind,
+            SimKind::Trainer {
+                watts: 180.0,
+                cadence: 85.0
+            }
+        );
+        assert!(t[0].trainer.is_some());
+        assert!(parse_sensors("rower:1:2").is_err());
         assert!(parse_sensors("hr:0:100").is_err());
         assert!(parse_sensors("hr:12").is_err());
     }

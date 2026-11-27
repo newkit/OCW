@@ -33,7 +33,11 @@
 //! sensor's speed is shown on its page (the wheel from
 //! `trainer.wheel_mm`, else the bike's); an ANT+ power meter's page has
 //! *Calibrate* (`devices.calibrate <id>`, the zero offset) and *Auto zero*
-//! (`devices.autozero <id> on|off`) – spec 14 Phase 17, 17E.
+//! (`devices.autozero <id> on|off`) – spec 14 Phase 17, 17E;
+//! for two trainers (a BLE FTMS one and an ANT+ FE-C one, 17E) only one
+//! trainer's power counts and only it gets SIM / ERG – the one chosen with
+//! *Use as trainer* (`devices.trainer <id>`), else the first that sent
+//! power.
 //!
 //! The Bluetooth stack is behind [`DeviceIo`] (connect, scan), so the
 //! tests run the whole flow with a mock (and ANT+ with the simulated
@@ -326,6 +330,11 @@ impl Running {
             .is_some_and(|d| d.profile == ant::AntProfile::BikePower)
     }
 
+    /// A trainer of the rider's (not the virtual one).
+    fn is_trainer(&self) -> bool {
+        self.id.is_some() && self.role == Some(Role::Trainer)
+    }
+
     fn delivers_power(&self) -> bool {
         // A device of unknown role (connected by id) may be a trainer.
         self.id.is_some() && self.role.is_none_or(Role::delivers_power)
@@ -362,6 +371,11 @@ pub struct Devices {
     /// The heart-rate source when none is chosen: the first device that
     /// sent a heart rate (spec 14 Phase 17 Q6 (c): no switching).
     hr_active: Option<String>,
+    /// The trainer when none is chosen: the first trainer that sent power
+    /// (17E, the Q6 (c) rule for trainers).
+    trainer_active: Option<String>,
+    /// The last SIM / ERG command (a newly chosen trainer gets it at once).
+    last_control: Mutex<Option<DeviceCommand>>,
     /// The cadence source when none is chosen: the first device that sent
     /// a cadence (the same rule).
     cad_active: Option<String>,
@@ -408,6 +422,8 @@ impl Devices {
             hr_active: None,
             cad_active: None,
             wheel_m: 2.105,
+            trainer_active: None,
+            last_control: Mutex::new(None),
         }
     }
 
@@ -499,11 +515,86 @@ impl Devices {
     }
 
     /// Sends a command to every running backend (each ignores what it does
-    /// not support).
+    /// not support); SIM / ERG go only to the trainer in use when there
+    /// are two (17E, the Q6 (c) rule for trainers).
     pub fn command_all(&self, cmd: DeviceCommand) {
+        let control = matches!(
+            cmd,
+            DeviceCommand::SetSimulation(_) | DeviceCommand::SetTargetPower(_)
+        );
+        if control {
+            *self.last_control.lock().expect("not poisoned") = Some(cmd);
+        }
+        let source = self.trainer_source();
         for r in self.running.lock().expect("not poisoned").iter() {
+            if control
+                && r.is_trainer()
+                && source
+                    .as_deref()
+                    .is_some_and(|s| r.id.as_deref() != Some(s))
+            {
+                continue;
+            }
             let _ = r.handle.commands.send(cmd);
         }
+    }
+
+    /// The trainer whose power counts and which gets SIM / ERG: the one
+    /// chosen with *Use as trainer* while it runs, else the first that
+    /// sent power (`None`: none yet – every trainer gets the commands).
+    fn trainer_source(&self) -> Option<String> {
+        let running = self.running.lock().expect("not poisoned");
+        let runs = |id: &str| running.iter().any(|r| r.id.as_deref() == Some(id));
+        match &self.known.trainer {
+            Some(c) if runs(c) => Some(c.clone()),
+            _ => self.trainer_active.clone().filter(|a| runs(a)),
+        }
+    }
+
+    /// Whether power from the trainer `id` is used (the Q6 (c) rule for
+    /// trainers: no mixing, no switching by itself).
+    fn accept_trainer_power(&mut self, id: &str) -> bool {
+        match self.trainer_source() {
+            Some(src) => src == id,
+            None => {
+                self.trainer_active = Some(id.to_owned());
+                true
+            }
+        }
+    }
+
+    /// `devices.trainer <id|name|auto>`: *Use as trainer*.
+    fn use_as_trainer(&mut self, which: &str) -> Result<String, String> {
+        let line = if which == "auto" {
+            self.known.trainer = None;
+            self.trainer_active = None;
+            "trainer: the first one that sends power".to_owned()
+        } else {
+            let l = self
+                .listed
+                .iter()
+                .find(|l| l.id == which || l.name.eq_ignore_ascii_case(which))
+                .ok_or_else(|| format!("{which} is not in the list"))?;
+            if l.role != Role::Trainer {
+                return Err(format!("{} is not a trainer", l.name));
+            }
+            let (id, name) = (l.id.clone(), l.name.clone());
+            self.known.trainer = Some(id.clone());
+            self.trainer_active = Some(id.clone());
+            // It takes over the current SIM / ERG target at once.
+            let last = *self.last_control.lock().expect("not poisoned");
+            if let Some(cmd) = last
+                && let Some(r) = self.running().iter().find(|r| r.id.as_deref() == Some(&id))
+            {
+                let _ = r.handle.commands.send(cmd);
+            }
+            format!("{name} is the trainer")
+        };
+        if let Err(e) = self.save_known() {
+            warn!("the trainer choice is not saved: {e}");
+        }
+        self.info.push_message(line.clone());
+        Ok(line)
     }
 
     /// The HUD's names: "Virtual trainer", "KICKR (connecting)".
@@ -602,6 +693,13 @@ impl Devices {
             .is_some_and(|a| ids.iter().any(|i| i == a) || all)
         {
             self.cad_active = None;
+        }
+        if self
+            .trainer_active
+            .as_deref()
+            .is_some_and(|a| ids.iter().any(|i| i == a) || all)
+        {
+            self.trainer_active = None;
         }
         if stopped == 0 && forgotten == 0 {
             return Err(format!("{which} is not connected or remembered"));
@@ -823,6 +921,12 @@ impl Devices {
             .iter()
             .filter(|l| l.role == Role::Cadence && gives_cadence(&l.id, l.role))
             .count();
+        let trainer_source = self.trainer_source();
+        let trainers_listed = self
+            .listed
+            .iter()
+            .filter(|l| l.role == Role::Trainer)
+            .count();
         let running = self.running.lock().expect("not poisoned");
         let entries = self
             .listed
@@ -850,6 +954,8 @@ impl Devices {
                             state: r.calibration.clone().unwrap_or_else(|| "not yet".into()),
                             auto_zero: r.auto_zero,
                         }),
+                    trainer: (l.role == Role::Trainer && trainers_listed >= 2)
+                        .then(|| trainer_source.as_deref() == Some(l.id.as_str())),
                 }
             })
             .collect();
@@ -943,6 +1049,13 @@ fn poll_devices(
             }
             _ => true,
         }
+    });
+    // One trainer (17E, the Q6 (c) rule for trainers): a second trainer's
+    // power is not mixed in.
+    let trainers: Vec<bool> = devices.running().iter().map(Running::is_trainer).collect();
+    events.retain(|(i, _, e)| match (&ids[*i], e) {
+        (Some(id), DeviceEvent::Power { .. }) if trainers[*i] => devices.accept_trainer_power(id),
+        _ => true,
     });
     // The sensor bridge passes every reading on as it comes (spec 14
     // Phase 10, 10D.2).
@@ -1537,6 +1650,16 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("devices.trainer")
+            .about("Use this trainer (Use as trainer; with two trainers only one counts and gets SIM / ERG); auto: the first that sends")
+            .arg(Arg::new("device").required(true)),
+        |world, m| {
+            let which = m.get_one::<String>("device").expect("required").clone();
+            world.resource_mut::<Devices>().use_as_trainer(&which)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("ant.key.edit")
             .about("Type the ANT+ network key (Devices -> ANT+; Enter saves it in secrets.toml, Esc cancels)"),
         |world, _| {
@@ -1848,6 +1971,15 @@ mod tests {
             let c = self.connected.lock().unwrap();
             let d = c.iter().rev().find(|d| d.id == id).expect("connected");
             d.events.send(e).unwrap();
+        }
+
+        /// The commands the app sent to the device `id` since the last call.
+        fn commands(&self, id: &str) -> Vec<DeviceCommand> {
+            let c = self.connected.lock().unwrap();
+            c.iter()
+                .filter(|d| d.id == id)
+                .flat_map(|d| d.commands.try_iter().collect::<Vec<_>>())
+                .collect()
         }
 
         fn ids(&self) -> Vec<String> {
@@ -2476,6 +2608,139 @@ mod tests {
         // Back on: its heart rate again.
         sim.radio(|r| r.set_present(23456, true));
         until_app(&mut app, "back", 5, |a| hr_now(a) == Some(128.0));
+        let _ = std::fs::remove_dir_all(files.dir());
+    }
+
+    const ANT_TRAINER: &str = "ant:17:5005:5";
+
+    fn power_now(app: &App) -> f64 {
+        app.world().resource::<ClientState>().0.power_w()
+    }
+
+    /// A BLE trainer and an ANT+ FE-C trainer (spec 14 Phase 17, 17E, the
+    /// Q6 (c) rule for trainers): only one trainer's power counts and only
+    /// it gets SIM / ERG – the first that sent, until the rider picks the
+    /// other with *Use as trainer*; it takes the current target at once,
+    /// and the choice is saved.
+    #[test]
+    fn two_trainers_one_is_used_chosen_by_hand() {
+        use ocw_devices::ant::sim::SimLoad;
+        let files = temp_config("two-trainers");
+        let devices_file = files.dir().join("devices.toml");
+        let mut known = KnownDevices::default();
+        known.remember(KnownDevice {
+            id: KICKR.into(),
+            name: "Wahoo KICKR 0001".into(),
+            kind: Some("trainer".into()),
+            transport: None,
+        });
+        known.remember(KnownDevice {
+            id: ANT_TRAINER.into(),
+            name: "ANT+ trainer 5005".into(),
+            kind: Some("trainer".into()),
+            transport: Some("ant".into()),
+        });
+        known.save(&devices_file).unwrap();
+        files
+            .secret("ant")
+            .write("network_key = \"0A1B2C3D4E5F6071\"\n")
+            .unwrap();
+        let sim = SimTransport::new(
+            Some(NetworkKey::TEST),
+            vec![SimSensor::fe_c_trainer(5005, 150.0, 90.0)],
+        );
+        let mock = Mock::default();
+        let io = ant_io(&mock, &sim, None);
+        let path = devices_file.to_str().unwrap().to_owned();
+        let mut app = app_in(&["--devices-file", &path], Some(io), Some(files.clone()));
+        app.update();
+        // The test sends the targets itself.
+        assert_eq!(run(&mut app, "trainer.mode off"), "trainer mode off");
+        // The BLE trainer connects and sends first.
+        mock.send(
+            KICKR,
+            DeviceEvent::Connected {
+                kind: "smart trainer (FTMS)",
+            },
+        );
+        let ble = |watts| DeviceEvent::Power {
+            watts,
+            cadence_rpm: Some(85.0),
+            timestamp: Duration::ZERO,
+        };
+        mock.send(KICKR, ble(200.0));
+        app.update();
+        assert_eq!(power_now(&app), 200.0);
+        // The FE-C trainer connects through the simulated stick …
+        until(&mut app, "the FE-C trainer", |m| {
+            m.entries
+                .iter()
+                .any(|e| e.id == ANT_TRAINER && matches!(e.link, Link::Connected(_)))
+        });
+        // … but its 150 W are not mixed in, and ERG goes to the KICKR only.
+        for _ in 0..40 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(power_now(&app), 200.0);
+        let m = menu(&app);
+        let flag =
+            |m: &DevicesInfo, id: &str| m.entries.iter().find(|e| e.id == id).unwrap().trainer;
+        assert_eq!(flag(&m, KICKR), Some(true));
+        assert_eq!(flag(&m, ANT_TRAINER), Some(false));
+        mock.commands(KICKR);
+        app.world()
+            .resource::<Devices>()
+            .command_all(DeviceCommand::SetTargetPower(230.0));
+        assert!(
+            mock.commands(KICKR)
+                .contains(&DeviceCommand::SetTargetPower(230.0))
+        );
+        std::thread::sleep(Duration::from_millis(600));
+        // (It may have had the first SIM target, sent before any trainer
+        // had sent power.)
+        assert_ne!(
+            sim.radio(|r| r.trainer(5005).unwrap().load),
+            SimLoad::Erg(230.0),
+            "the FE-C trainer is not told"
+        );
+        // The FE-C trainer's page: Use as trainer.
+        let i = m.entries.iter().position(|e| e.id == ANT_TRAINER).unwrap();
+        let rows = ocw_client::menu::devices::rows(Page::Device(i), &m);
+        let use_it = rows.iter().find(|r| r.label == "Use as trainer").unwrap();
+        let Some(ocw_client::menu::pages::Activate::Command(line)) = &use_it.confirm else {
+            panic!("{use_it:?}")
+        };
+        assert_eq!(run(&mut app, line), "ANT+ trainer 5005 is the trainer");
+        // It takes the current target at once, and its power counts.
+        until_app(&mut app, "ERG on the FE-C trainer", 5, |_| {
+            sim.radio(|r| r.trainer(5005).unwrap().load) == SimLoad::Erg(230.0)
+        });
+        until_app(&mut app, "230 W", 8, |a| (power_now(a) - 230.0).abs() < 3.0);
+        mock.send(KICKR, ble(200.0));
+        app.update();
+        assert!(
+            (power_now(&app) - 230.0).abs() < 3.0,
+            "the KICKR's power is not used"
+        );
+        // The next target: the FE-C trainer only.
+        mock.commands(KICKR);
+        app.world()
+            .resource::<Devices>()
+            .command_all(DeviceCommand::SetTargetPower(260.0));
+        assert!(mock.commands(KICKR).is_empty());
+        until_app(&mut app, "260 W asked", 5, |_| {
+            sim.radio(|r| r.trainer(5005).unwrap().load) == SimLoad::Erg(260.0)
+        });
+        assert_eq!(
+            KnownDevices::load(&devices_file)
+                .unwrap()
+                .trainer
+                .as_deref(),
+            Some(ANT_TRAINER)
+        );
+        assert_eq!(flag(&menu(&app), ANT_TRAINER), Some(true));
+        assert_eq!(sim.radio(|r| r.busy_refusals), 0);
         let _ = std::fs::remove_dir_all(files.dir());
     }
 
