@@ -34,6 +34,8 @@ pub const JUNCTION_LOOKAHEAD_S: f64 = 10.0;
 /// The ghost rides this far right of the centre line (m), beside the
 /// rider (who starts a time trial in the middle of the road).
 pub const GHOST_LATERAL_M: f64 = 1.0;
+/// Parked cars are drawn up to this far from the rider (m; spec 18B).
+pub const PARKED_VIEW_M: f64 = 400.0;
 /// Dead-end warnings start this far before the end (spec §2.2.2).
 pub const DEAD_END_WARNING_M: f64 = 1000.0;
 /// The arrow for a vehicle closing in from behind shows at most this long
@@ -231,6 +233,10 @@ pub struct ClientCore {
     traffic: crate::traffic::TrafficClient,
     /// The road vehicles near the rider (spec 14 Phase 18, 18E T5).
     vehicles: crate::vehicles::ClientVehicles,
+    /// The parked cars of the free ride's world while the road traffic is
+    /// on (spec 18B: from the package, no network; the server has the
+    /// same).
+    parked: Option<Arc<ocw_sim::traffic::parked::ParkedCars>>,
     avoid: ocw_sim::avoid::AvoidState,
     was_down: bool,
     proximity_cue: bool,
@@ -347,6 +353,7 @@ impl ClientCore {
             collisions: Default::default(),
             traffic: Default::default(),
             vehicles: Default::default(),
+            parked: None,
             avoid: Default::default(),
             was_down: false,
             proximity_cue: false,
@@ -1132,6 +1139,7 @@ impl ClientCore {
         }
         self.collisions.on_snapshot(s, now_s, self.rider_id);
         self.traffic.on_snapshot(s);
+        self.sync_parked();
         self.damage.on_snapshot(s, now_s, self.rider_id);
         // The damage's effects: the prediction rides as the server does.
         self.predictor
@@ -2197,6 +2205,71 @@ impl ClientCore {
             return Vec::new();
         }
         self.vehicles.view(self.server_tick_now(now_s), now_s)
+    }
+
+    /// The parked cars follow the road traffic (spec 18B): on while the
+    /// session's road traffic is on in a free ride on a world with
+    /// traffic data, and this client shows road vehicles; the prediction
+    /// collides with them as the server does.
+    fn sync_parked(&mut self) {
+        let net = self
+            .free
+            .as_ref()
+            .map(|f| f.net.clone())
+            .filter(|_| self.vehicles.shown() && self.traffic.road().level.is_on());
+        match net {
+            Some(net) => {
+                if self
+                    .parked
+                    .as_ref()
+                    .is_none_or(|p| !Arc::ptr_eq(p.network(), &net))
+                {
+                    self.parked = ocw_sim::traffic::parked::ParkedCars::new(net).map(Arc::new);
+                    self.predictor.set_parked_cars(self.parked.clone());
+                }
+            }
+            None => {
+                if self.parked.take().is_some() {
+                    self.predictor.set_parked_cars(None);
+                }
+            }
+        }
+    }
+
+    /// The parked cars within [`PARKED_VIEW_M`] of `centre` (x, z) for the
+    /// renderer (spec 18B).
+    pub fn parked_view(&self, centre: [f64; 2]) -> Vec<ocw_render::traffic::VehicleView> {
+        let Some(p) = &self.parked else {
+            return Vec::new();
+        };
+        p.near(centre, PARKED_VIEW_M)
+            .into_iter()
+            .map(|c| ocw_render::traffic::VehicleView {
+                id: c.id,
+                class: c.class,
+                look: c.look,
+                pos: c.pos,
+                heading: c.heading,
+                lateral: c.lateral,
+                lane: 0,
+                speed: 0.0,
+                braking: false,
+                indicator: ocw_render::traffic::Indicator::Off,
+                line: 0,
+                doors: false,
+                parked: true,
+            })
+            .collect()
+    }
+
+    /// The free ride's road network (`None` on a route).
+    pub fn free_network(&self) -> Option<&Arc<RoadNetwork>> {
+        self.free.as_ref().map(|f| &f.net)
+    }
+
+    /// The parked cars in force (tests: the server's are the same).
+    pub fn parked_cars(&self) -> Option<&Arc<ocw_sim::traffic::parked::ParkedCars>> {
+        self.parked.as_ref()
     }
 
     /// What the vehicles did to the rider lately (spec 18E T7): honks only

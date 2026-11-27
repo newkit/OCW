@@ -678,6 +678,27 @@ impl RoadNetwork {
         best.map(|(_, i, s)| (i, s))
     }
 
+    /// The edges whose polylines pass the 100 m cells within `radius` of
+    /// `p` (candidates, sorted; the parked cars of spec 18B).
+    pub fn edges_near(&self, p: [f64; 2], radius: f64) -> Vec<usize> {
+        if !(p[0].is_finite() && p[1].is_finite()) {
+            return Vec::new();
+        }
+        let grid = self.edge_grid.get_or_init(|| EdgeGrid::of(&self.graph));
+        let cell = |v: f64| (v / EDGE_CELL_M).floor() as i32;
+        let mut cand: Vec<usize> = Vec::new();
+        for cx in cell(p[0] - radius)..=cell(p[0] + radius) {
+            for cz in cell(p[1] - radius)..=cell(p[1] + radius) {
+                if let Some(list) = grid.cells.get(&(cx, cz)) {
+                    cand.extend(list.iter().map(|&i| i as usize));
+                }
+            }
+        }
+        cand.sort_unstable();
+        cand.dedup();
+        cand
+    }
+
     /// The point of the road graph nearest to `p` within `radius` m (an
     /// index of 100 m cells: cheap enough for every physics tick, spec
     /// §14 Phase 13A): (edge, metres from its `from` vertex, the distance

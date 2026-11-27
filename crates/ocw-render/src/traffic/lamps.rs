@@ -52,6 +52,10 @@ pub struct LampState {
 /// The lamps of `v` at time `t` (s) in `scene`; `in_tunnel`: under the
 /// ground (a tunnel or a gallery).
 pub fn lamps(scene: &LampScene, v: &VehicleView, in_tunnel: bool, t: f64) -> LampState {
+    // A parked car is dark (spec 18B).
+    if v.parked {
+        return LampState::default();
+    }
     let head = scene.dark
         || in_tunnel
         || scene.precip_mm_h >= RAIN_LIGHTS_MM_H
@@ -236,6 +240,9 @@ mod tests {
             speed: 12.0,
             braking,
             indicator,
+            line: 0,
+            doors: false,
+            parked: false,
         }
     }
 
@@ -283,6 +290,11 @@ mod tests {
         };
         assert!(lamps(&LampScene { dark: true, ..day }, &bus, false, 0.0).interior);
         assert!(!lamps(&day, &bus, false, 0.0).interior);
+        // A parked car has no lamps lit, day or night.
+        let parked = VehicleView { parked: true, ..v };
+        for scene in [day, LampScene { dark: true, ..day }] {
+            assert_eq!(lamps(&scene, &parked, true, 0.0), LampState::default());
+        }
     }
 
     #[test]

@@ -82,9 +82,83 @@ struct Ride {
     traffic_msgs: Vec<u64>,
 }
 
+/// The town with `TRFC` (spec 18B): every road's implied rules, parallel
+/// parking on both sides of the tertiary roads, and a bus line each way
+/// along the secondary road of row 4 (z = 1000 m, the riders' road) with
+/// stops every 500 m.
+fn town_with_buses() -> Arc<RoadNetwork> {
+    use ocw_world::traffic::{
+        BusRoute, BusStop, Country, EdgeRules as WorldEdge, Parking, ParkingOrientation,
+        ParkingPlace, Side, TrafficData,
+    };
+    let base = town();
+    let g = base.graph().clone();
+    let mut data = TrafficData {
+        country: Country::Li,
+        ..Default::default()
+    };
+    for e in &g.edges {
+        let mut r = WorldEdge::implied(e.class, Country::Li, true);
+        if e.class == RoadClass::Tertiary {
+            r.parking = [Parking {
+                place: ParkingPlace::Lane,
+                orientation: ParkingOrientation::Parallel,
+            }; 2];
+        }
+        data.edges.insert(e.id, r);
+    }
+    let row: Vec<usize> = (0..12)
+        .map(|col| {
+            g.edges
+                .iter()
+                .position(|e| {
+                    e.points[0] == [f64::from(col) * 250.0, 1000.0]
+                        && e.points[1] == [f64::from(col + 1) * 250.0, 1000.0]
+                })
+                .expect("row 4")
+        })
+        .collect();
+    for (k, &e) in row.iter().enumerate().filter(|(k, _)| k % 2 == 1) {
+        for (side, along) in [(Side::Right, 125.0), (Side::Left, 125.0)] {
+            data.stops.push(BusStop {
+                osm_node: 9000 + data.stops.len() as i64,
+                pos: [k as f32 * 250.0 + along, 1000.0],
+                name: format!("Ada Square {k}"),
+                edge: Some(g.edges[e].id),
+                along_m: along,
+                side,
+            });
+        }
+    }
+    let n = data.stops.len() as u32;
+    data.bus_routes.push(BusRoute {
+        osm_relation: 501,
+        reference: "7".into(),
+        name: "Bus 7: West => East".into(),
+        legs: row.iter().map(|&e| (g.edges[e].id, true)).collect(),
+        stops: (0..n).step_by(2).collect(),
+    });
+    data.bus_routes.push(BusRoute {
+        osm_relation: 502,
+        reference: "7".into(),
+        name: "Bus 7: East => West".into(),
+        legs: row.iter().rev().map(|&e| (g.edges[e].id, false)).collect(),
+        stops: (1..n).step_by(2).rev().collect(),
+    });
+    data.sort();
+    Arc::new(
+        RoadNetwork::new(g)
+            .with_package_name("Ada Town")
+            .with_traffic(Some(Arc::new(data)), Country::Li),
+    )
+}
+
 impl Ride {
     fn new(level: RoadTraffic) -> Self {
-        let net = town();
+        Self::on(town(), level)
+    }
+
+    fn on(net: Arc<RoadNetwork>, level: RoadTraffic) -> Self {
         // The middle of the town, on a secondary road eastwards.
         let start = net
             .graph()
@@ -489,4 +563,64 @@ fn passes_and_vehicles_behind_reach_the_client_and_turns_indicate() {
             .iter()
             .all(|c| c.kind != ocw_render::traffic::VehicleCueKind::Honk)
     );
+}
+
+/// Buses on their lines and parked cars (spec 18B): the client's buses
+/// are the server's (their line, their doors at the stops), the parked
+/// cars the client draws are the server's solids, and both go with the
+/// road traffic.
+#[test]
+fn buses_and_parked_cars_are_the_same_on_the_client_and_the_server() {
+    let mut r = Ride::on(town_with_buses(), RoadTraffic::Normal);
+    let ada = r.join("Ada Rider");
+    let mut doors_both = 0;
+    let mut buses_seen = std::collections::BTreeSet::new();
+    for _ in 0..240 {
+        r.run(0.5, 150.0);
+        r.until_broadcast(150.0);
+        let sim = r.server.traffic_sim().expect("running");
+        assert_eq!(sim.bus_lines().len(), 2);
+        let view = r.clients[ada].1.vehicles_view(r.t);
+        for b in sim.buses() {
+            let Some(v) = view.iter().find(|v| v.id == b.id) else {
+                continue;
+            };
+            buses_seen.insert(b.id);
+            assert_eq!(v.class, ocw_sim::traffic::VehicleClass::Bus);
+            assert_eq!(v.line, sim.bus_lines()[b.line].id);
+            if v.doors && b.doors {
+                doors_both += 1;
+            }
+        }
+        // No bus off its line.
+        assert!(
+            view.iter()
+                .filter(|v| v.class == ocw_sim::traffic::VehicleClass::Bus)
+                .all(|v| v.line != 0)
+        );
+    }
+    assert!(!buses_seen.is_empty(), "no bus came by in two minutes");
+    assert!(doors_both > 0, "no bus seen at a stop with its doors open");
+    // The parked cars: the same on both sides, drawn near the rider.
+    let at = r.rider_xz(ada);
+    let server = r.server.parked_cars().expect("the server's");
+    let client = r.clients[ada].1.parked_cars().expect("the client's");
+    assert_eq!(server.near(at, 400.0), client.near(at, 400.0));
+    let shown = r.clients[ada].1.parked_view(at);
+    assert!(
+        shown.len() > 20,
+        "{} parked cars near the rider",
+        shown.len()
+    );
+    assert!(shown.iter().all(|v| v.parked && v.speed == 0.0));
+    // Road traffic off: no parked cars either.
+    let off = ClientCore::traffic_message(Some(RoadTraffic::Off), None);
+    let conn = r.clients[ada].0;
+    for reply in r.server.handle(conn, &off) {
+        r.clients[ada].1.on_server_message(&reply, r.t);
+    }
+    r.run(1.0, 150.0);
+    assert!(r.server.parked_cars().is_none());
+    assert!(r.clients[ada].1.parked_cars().is_none());
+    assert!(r.clients[ada].1.parked_view(at).is_empty());
 }

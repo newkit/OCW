@@ -132,11 +132,15 @@ pub enum ObstacleKind {
     Railing = 48,
     TunnelWall = 49,
     Building = 50,
+    /// A parked car at the kerb or in a car park (spec 14 Phase 18, 18B;
+    /// `ocw_sim::traffic::parked`): placed from the traffic data while
+    /// the road traffic is on, never stored.
+    ParkedCar = 51,
     Tree = 64,
 }
 
 impl ObstacleKind {
-    pub const ALL: [ObstacleKind; 21] = [
+    pub const ALL: [ObstacleKind; 22] = [
         Self::Bollard,
         Self::Post,
         Self::Gate,
@@ -157,6 +161,7 @@ impl ObstacleKind {
         Self::Railing,
         Self::TunnelWall,
         Self::Building,
+        Self::ParkedCar,
         Self::Tree,
     ];
 
@@ -259,7 +264,7 @@ impl ObstacleKind {
             Self::CycleBarrier => "props/barrier-cycle-staggered",
             Self::StreetLamp => "props/lamp-street-arm-road",
             // Drawn from the world data (`ocw-render::obstacles`), not a file.
-            Self::PlantedTree | Self::Tree | Self::NoBikeSign => return None,
+            Self::PlantedTree | Self::Tree | Self::NoBikeSign | Self::ParkedCar => return None,
             _ => "props/barrier-post-hexagonal",
         })
     }
@@ -296,6 +301,7 @@ impl ObstacleKind {
             Self::GuardRail => 0.75,
             Self::Kerb => 0.12,
             Self::StreetLamp => 6.0,
+            Self::ParkedCar => 1.5,
             Self::NoBikeSign => crate::bike_signs::HEIGHT_M as f64,
             _ => 1.0,
         }
@@ -320,6 +326,7 @@ impl ObstacleKind {
             Self::Railing => "bridge railing",
             Self::TunnelWall => "tunnel wall",
             Self::Building => "building",
+            Self::ParkedCar => "parked car",
             Self::Tree | Self::PlantedTree => "tree",
             Self::StreetLamp => "street lamp",
             Self::NoBikeSign => "no-bicycles sign",

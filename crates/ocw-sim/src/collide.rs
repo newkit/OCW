@@ -1174,6 +1174,9 @@ pub struct WorldCache {
     pub world: Option<Arc<WorldObstacles>>,
     /// The drawn trees off the road (`None`: no trunks there).
     pub woods: Option<Arc<Woods>>,
+    /// The parked cars while the road traffic is on (spec 18B; `None`:
+    /// none).
+    pub parked: Option<Arc<crate::traffic::parked::ParkedCars>>,
     /// Per tile its index (`None`: nothing solid), the tick it was last
     /// used and the tile's version it was built of (streamed street lamps
     /// came or went: built again, [`WorldObstacles::tile_version`]).
@@ -1417,6 +1420,9 @@ impl WorldCache {
             [body.pos[0] + reach, body.pos[1] + reach],
         );
         self.solids_near(lo, hi, tick, scratch);
+        if let Some(p) = &self.parked {
+            p.solids(lo, hi, scratch);
+        }
         if deep {
             self.trunks_near(lo, hi, tick, scratch);
         }

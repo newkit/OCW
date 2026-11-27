@@ -192,7 +192,19 @@ impl Session {
     /// road network for free rides and route rides; a fixed route (no
     /// package) has none unless given here.
     pub fn set_obstacles(&mut self, world: Option<Arc<WorldObstacles>>) {
+        let parked = self.world.parked.take();
         self.world = WorldCache::new(world);
+        self.world.parked = parked;
+    }
+
+    /// The parked cars riders collide with (spec 18B: while the road
+    /// traffic is on; `None` takes them away).
+    pub fn set_parked_cars(&mut self, parked: Option<Arc<crate::traffic::parked::ParkedCars>>) {
+        self.world.parked = parked;
+    }
+
+    pub fn parked_cars(&self) -> Option<&Arc<crate::traffic::parked::ParkedCars>> {
+        self.world.parked.as_ref()
     }
 
     pub fn obstacles(&self) -> Option<&Arc<WorldObstacles>> {

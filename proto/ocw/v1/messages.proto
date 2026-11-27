@@ -890,6 +890,11 @@ message TrafficSpawn {
   float shift_at = 14;
   float shift_to = 15;
   float shift_rate = 16;
+  // A bus on its line (spec 18B): the line's number (ocw_sim::traffic::bus
+  // LineId: the package's bus route × 16 + the piece, plus 1); 0 = none.
+  uint32 line = 17;
+  // A bus standing at a stop with its doors open.
+  bool doors = 18;
 }
 
 // What changed in a vehicle's plan (ocw_sim::traffic::PlanChange): its
@@ -912,6 +917,8 @@ message TrafficChange {
   float shift_at = 11;
   float shift_to = 12;
   float shift_rate = 13;
+  // A bus's doors are open (the stop's dwell, spec 18B).
+  bool doors = 14;
 }
 
 // A rider's bike build (spec §14 Phase 4, 4G): reliable, sent to everyone

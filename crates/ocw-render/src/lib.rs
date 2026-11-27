@@ -197,6 +197,9 @@ pub struct RideView {
     /// The road vehicles near the local rider (spec 14 Phase 18, 18E T5):
     /// as the client extrapolates them from the server's plans.
     pub vehicles: Vec<traffic::VehicleView>,
+    /// The parked cars near the local rider (spec 18B): static, from the
+    /// package; drawn with the vehicles' models within their own budget.
+    pub parked: Vec<traffic::VehicleView>,
     /// What the vehicles did to the local rider lately (spec 18E T7: honks,
     /// passes, one closing in from behind), for the sounds and the HUD.
     pub vehicle_cues: Vec<traffic::VehicleCue>,
@@ -363,6 +366,7 @@ impl RideView {
             strava_s: None,
             strava_message: None,
             vehicles: Vec::new(),
+            parked: Vec::new(),
             vehicle_cues: Vec::new(),
             vehicle_sound: false,
             air: None,

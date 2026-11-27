@@ -40,6 +40,14 @@ pub fn fill(
     // The road vehicles near the rider (spec 18E T5).
     view.vehicles = client.vehicles_view(now);
     view.vehicle_cues = client.vehicle_cues(now);
+    // The parked cars near the rider (18B; static, from the package).
+    view.parked = view
+        .local()
+        .map(|l| {
+            let p = client.track().sample(l.state.distance).position;
+            client.parked_view([p[0], p[2]])
+        })
+        .unwrap_or_default();
     // Riders off the road ride the terrain's track (spec §14 Phase 13A).
     view.off_road = client.off_road_tracks(now);
     view.position = view

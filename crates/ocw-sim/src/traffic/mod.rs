@@ -46,14 +46,18 @@
 //!   from (seed, tick, edge, …), never drawn in iteration order.
 
 pub mod around;
+pub mod bus;
 pub mod demand;
 pub mod kin;
+pub mod parked;
 pub mod plan;
 pub mod routing;
 pub mod rules;
 pub mod signals;
 pub mod world;
 
+#[cfg(test)]
+mod bus_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -281,6 +285,40 @@ struct Vehicle {
     /// Seconds waited behind a rider (for the honk), and the next honk.
     rider_wait_s: f64,
     honk_at_s: f64,
+    /// A bus on its line (18B): the line, its stops, the dwell.
+    bus: Option<Box<BusRun>>,
+}
+
+/// A bus on its line (see [`bus`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BusRun {
+    /// Index into the sim's lines.
+    line: u32,
+    /// Its departure (second of the day at the line's start).
+    dep: u32,
+    /// The line's step of the route's first step.
+    base: usize,
+    /// The next stop (index into the line's stops).
+    next_stop: usize,
+    /// Standing at the stop until this tick; the doors close before.
+    dwell_end: Option<Tick>,
+    doors: bool,
+}
+
+/// What a bus on its line is doing (tests, tools).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BusState {
+    pub id: u32,
+    /// Index into [`TrafficSim::bus_lines`].
+    pub line: usize,
+    pub departure: u32,
+    /// Metres along the line (the front).
+    pub at: f64,
+    /// The next stop (index into the line's stops; the one it stands at).
+    pub next_stop: usize,
+    pub dwelling: bool,
+    pub doors: bool,
+    pub speed: f64,
 }
 
 /// The phase of a pass (T4).
@@ -435,6 +473,19 @@ pub struct TrafficSim {
     gusts: Vec<Gust>,
     /// Each vehicle's lane centre in kerb coordinates at this tick.
     lane_k: Vec<f64>,
+    /// Buses on their lines (18B): the package's lines, the parts of each
+    /// inside the bubbles (line metres), the departures spawned (line,
+    /// departure) → (the start of the part it came in at, its id), the
+    /// second the buses were last looked at, a fill due, spawns waiting
+    /// for room (line, departure, at, part start, tries).
+    lines: Vec<bus::BusLine>,
+    line_counts: bus::LineCounts,
+    bus_spans: Vec<Vec<(f64, f64)>>,
+    bus_seen: std::collections::BTreeMap<(u32, u32), (f64, u32)>,
+    bus_clock: Option<(u8, u32)>,
+    bus_fill: bool,
+    bus_filled: bool,
+    bus_pending: Vec<(u32, u32, f64, f64, u8)>,
 }
 
 /// Lane key of (edge, direction, lane).
@@ -456,6 +507,7 @@ impl TrafficSim {
         let n = net.graph().edges.len();
         let rules: Vec<EdgeRule> = (0..n).map(|e| source.edge_rule(net, e)).collect();
         let passing: Vec<PassRule> = (0..n).map(|e| source.passing(net, e)).collect();
+        let (lines, line_counts) = bus::lines_of(net, &rules, cfg.seed);
         let bounds = net
             .graph()
             .edges
@@ -511,7 +563,45 @@ impl TrafficSim {
             rider_events: Vec::new(),
             gusts: Vec::new(),
             lane_k: Vec::new(),
+            bus_spans: vec![Vec::new(); lines.len()],
+            lines,
+            line_counts,
+            bus_seen: Default::default(),
+            bus_clock: None,
+            bus_fill: false,
+            bus_filled: false,
+            bus_pending: Vec::new(),
         }
+    }
+
+    /// The bus lines of the package (18B), and what was made of them.
+    pub fn bus_lines(&self) -> &[bus::BusLine] {
+        &self.lines
+    }
+
+    pub fn bus_line_counts(&self) -> bus::LineCounts {
+        self.line_counts
+    }
+
+    /// The buses on their lines now.
+    pub fn buses(&self) -> Vec<BusState> {
+        self.vehicles
+            .iter()
+            .filter_map(|v| {
+                let b = v.bus.as_ref()?;
+                let line = &self.lines[b.line as usize];
+                Some(BusState {
+                    id: v.f.id,
+                    line: b.line as usize,
+                    departure: b.dep,
+                    at: line.start[b.base + v.pos.step] + v.pos.s,
+                    next_stop: b.next_stop,
+                    dwelling: b.dwell_end.is_some(),
+                    doors: b.doors,
+                    speed: v.v,
+                })
+            })
+            .collect()
     }
 
     pub fn config(&self) -> &TrafficConfig {
@@ -694,6 +784,8 @@ impl TrafficSim {
                     to: v.f.shift_to as f32,
                     rate: v.f.shift_rate as f32,
                 },
+                line: v.f.line,
+                doors: v.f.doors,
             })
             .collect()
     }
@@ -721,6 +813,10 @@ impl TrafficSim {
             b.push(v.lane);
             b.extend_from_slice(&v.shift.to_bits().to_le_bytes());
             b.extend_from_slice(&(v.f.route.len() as u32).to_le_bytes());
+            if let Some(r) = &v.bus {
+                b.extend_from_slice(&(r.next_stop as u32).to_le_bytes());
+                b.push(u8::from(r.doors));
+            }
         }
         ocw_world::graph::fnv1a(&b)
     }
@@ -788,7 +884,7 @@ impl TrafficSim {
             routing::link_turn(net, &mut steps, &st);
             steps.push(st);
         }
-        self.push_vehicle(net, class, steps, s, v, lane, driver, lunatic);
+        self.push_vehicle(net, class, steps, s, v, lane, driver, lunatic, 0);
         Some(id)
     }
 
@@ -836,6 +932,7 @@ impl TrafficSim {
         lane: u8,
         driver: DriverParams,
         lunatic: bool,
+        line: u32,
     ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
@@ -859,6 +956,8 @@ impl TrafficSim {
             lane,
             motion: Motion::Free,
             shift: Shift::default(),
+            line,
+            doors: false,
         };
         let f = PlanFollower::new(&plan);
         let manner = Manner::of(self.cfg.manners, lunatic, |salt| {
@@ -890,6 +989,7 @@ impl TrafficSim {
             pass: None,
             rider_wait_s: 0.0,
             honk_at_s: manner.patience_s,
+            bus: None,
             f,
         };
         self.refresh_control(net, &mut veh);
@@ -992,6 +1092,9 @@ impl TrafficSim {
                     }
                 }
             }
+            if veh.bus.is_some() && veh.pass.is_none() {
+                self.bus_shift(net, veh);
+            }
             veh.shift = plan::shift_step(veh.shift, veh.shift_to, veh.shift_rate, dt);
             let before = veh.pos.step;
             let (v1, ok) = kin::advance(net, &veh.f.route, &mut veh.pos, veh.v, a, dt);
@@ -1029,6 +1132,9 @@ impl TrafficSim {
             if veh.ctrl == Control::Stop && v1 < 0.3 && stop_line && len - veh.pos.s < 8.0 {
                 veh.stop_done = true;
             }
+            if veh.bus.is_some() {
+                self.bus_at_stop(veh);
+            }
             let extend = self.extend_route(net, veh, bubbles);
             self.refresh_control(net, veh);
             self.track_plan(net, veh, extend, dt);
@@ -1058,6 +1164,7 @@ impl TrafficSim {
         }
         self.update_bubbles(net, bubbles);
         self.spawn(net, bubbles, time);
+        self.spawn_buses(net, bubbles, time);
     }
 
     /// Sorts the vehicles into the lane order (riders are seen through
@@ -1388,6 +1495,12 @@ impl TrafficSim {
         if stop {
             consider((dist - 1.0).max(0.0), 0.0);
         }
+        // A bus brakes to its stop's platform and stands there.
+        if let Some(d) = self.bus_stop_ahead(v)
+            && d < bus::PULL_IN_M * 3.0
+        {
+            consider((d + p.gap).max(0.3), 0.0);
+        }
         (a, interacting, lead_v, stop)
     }
 
@@ -1484,6 +1597,22 @@ impl TrafficSim {
                 .speed
                 .min(v.f.class.traits().top_speed)
                 .max(1.0);
+        if let Some(b) = v.bus.as_deref().copied() {
+            // A bus goes on along its line.
+            let line = &self.lines[b.line as usize];
+            let from = b.base + v.f.route.len();
+            let more = self.line_steps(net, line, from, factor);
+            if more.is_empty() {
+                v.final_route = true;
+                return more;
+            }
+            let n = v.f.route.len();
+            routing::link_turn(net, &mut v.f.route, &more[0]);
+            let mut ext = vec![v.f.route[n - 1]];
+            ext.extend_from_slice(&more);
+            v.f.route.extend_from_slice(&more);
+            return ext;
+        }
         let lim = routing::WalkLimits {
             bubbles,
             margin: self.cfg.margin_m,
@@ -1524,7 +1653,9 @@ impl TrafficSim {
     fn track_plan(&mut self, net: &RoadNetwork, v: &mut Vehicle, extend: Vec<Step>, dt: f64) {
         v.f.step(net, &self.curves, dt);
         let off = kin::route_gap(net, &v.f.route, v.f.pos, v.pos);
+        let doors = v.bus.as_ref().is_some_and(|b| b.doors);
         let changed = !extend.is_empty()
+            || doors != v.f.doors
             || v.lane != v.f.lane
             || (v.shift - v.f.shift).abs() > plan::SHIFT_TOLERANCE_M
             || v.shift_to != v.f.shift_to
@@ -1573,6 +1704,7 @@ impl TrafficSim {
                 to: v.shift_to as f32,
                 rate: v.shift_rate as f32,
             },
+            doors,
             extend,
         };
         // The follower shares the vehicle's route, which already has the
@@ -1650,6 +1782,12 @@ impl TrafficSim {
         }
         self.rates_at = None;
         self.need_fill = true;
+        self.bus_spans = self
+            .lines
+            .iter()
+            .map(|l| bus::spans(net, l, bubbles))
+            .collect();
+        self.bus_fill = true;
     }
 
     /// Spawns vehicles at the entries (by the demand of the hour) and
@@ -1798,6 +1936,10 @@ impl TrafficSim {
         v: Option<f64>,
     ) {
         let mut mix = demand::class_mix(road, time);
+        // Where the package has bus lines, every bus runs on one (18B).
+        if !self.lines.is_empty() {
+            mix[VehicleClass::Bus.index()] = 0.0;
+        }
         for (i, m) in mix.iter_mut().enumerate() {
             if !VehicleClass::from_index(i).is_some_and(|c| self.rules[edge].allows(c, forward)) {
                 *m = 0.0;
@@ -1839,7 +1981,7 @@ impl TrafficSim {
         let v = v
             .unwrap_or(f64::from(first.speed) * 0.8)
             .min(f64::from(first.speed));
-        self.push_vehicle(net, class, route, s, v, 0, driver, lunatic);
+        self.push_vehicle(net, class, route, s, v, 0, driver, lunatic, 0);
     }
 
     // --- T4: around riders -------------------------------------------

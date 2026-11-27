@@ -95,6 +95,12 @@ pub struct Plan {
     pub motion: Motion,
     /// Its lateral shift (T4; zero at a spawn).
     pub shift: Shift,
+    /// A bus on its line (spec 18B *Buses on their lines*): the line's
+    /// number in the session ([`super::bus::LineId`]: the package's bus
+    /// route and the piece of it), 0 for every other vehicle.
+    pub line: u32,
+    /// A bus standing at a stop with its doors open.
+    pub doors: bool,
 }
 
 /// What changed in a vehicle's plan at `tick` (after that tick's step).
@@ -111,6 +117,8 @@ pub struct PlanChange {
     pub motion: Motion,
     /// The lateral shift (T4).
     pub shift: Shift,
+    /// A bus's doors are open (at a stop; the dwell is sent as changes).
+    pub doors: bool,
     /// A longer route (it neared the end of its plan): these steps
     /// replace the route's last step (whose turn now leads into the new
     /// ones) and follow it. Empty: the route is unchanged.
@@ -162,6 +170,9 @@ pub struct PlanFollower {
     pub tick: Tick,
     /// The route ended (the vehicle stands at its end).
     pub ended: bool,
+    /// The bus line (0: none) and whether its doors are open.
+    pub line: u32,
+    pub doors: bool,
 }
 
 impl PlanFollower {
@@ -185,6 +196,8 @@ impl PlanFollower {
             shift_rate: f64::from(plan.shift.rate),
             tick: plan.tick,
             ended: false,
+            line: plan.line,
+            doors: plan.doors,
         }
     }
 
@@ -206,6 +219,7 @@ impl PlanFollower {
         self.shift_rate = f64::from(c.shift.rate);
         self.tick = c.tick;
         self.ended = false;
+        self.doors = c.doors;
     }
 
     /// The acceleration the motion gives now.

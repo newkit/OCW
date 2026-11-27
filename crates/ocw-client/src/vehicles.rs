@@ -451,6 +451,7 @@ impl ClientVehicles {
             };
             let b = inner.blends.get(&id).map_or([0.0; 2], |x| x.at(now_s));
             let indicator = inner.indicator(i);
+            let (line, doors) = (inner.followers[i].line, inner.followers[i].doors);
             out.push(VehicleView {
                 id,
                 class,
@@ -462,6 +463,9 @@ impl ClientVehicles {
                 speed: v,
                 braking,
                 indicator,
+                line,
+                doors,
+                parked: false,
             });
         }
         out

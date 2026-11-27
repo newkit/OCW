@@ -284,7 +284,184 @@ pub fn run(world: &mut World, what: Option<&str>, value: Option<&str>) -> Result
     Ok(said.unwrap_or_default())
 }
 
+/// Where a camera stands to see a bus at (or coming to) a stop: beside
+/// the kerb side, `ahead` metres ahead of `at` (x, z) along `heading`,
+/// looking back at `at`; (x, z, compass yaw in degrees: 0 north, 90 east).
+pub fn bus_camera(at: [f64; 2], heading: [f64; 2], keep_left: bool, ahead: f64) -> [f64; 3] {
+    let side = if keep_left { -1.0 } else { 1.0 };
+    let right = [-heading[1] * side, heading[0] * side];
+    let cam = [
+        at[0] + right[0] * 7.0 + heading[0] * ahead,
+        at[1] + right[1] * 7.0 + heading[1] * ahead,
+    ];
+    let (dx, dz) = (at[0] - cam[0], at[1] - cam[1]);
+    let yaw = dx.atan2(-dz).to_degrees().rem_euclid(360.0);
+    [cam[0], cam[1], yaw]
+}
+
+/// Whether the line of sight from `a` to `b` (x, z) crosses no wall,
+/// fence or building of the world's obstacles.
+fn clear_view(cache: &mut ocw_sim::collide::WorldCache, a: [f64; 2], b: [f64; 2]) -> bool {
+    use ocw_world::obstacles::{ObstacleKind, Shape};
+    let lo = [a[0].min(b[0]) - 1.0, a[1].min(b[1]) - 1.0];
+    let hi = [a[0].max(b[0]) + 1.0, a[1].max(b[1]) + 1.0];
+    let mut solids = Vec::new();
+    cache.solids_near(lo, hi, 0, &mut solids);
+    let cross = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    };
+    !solids.iter().any(|s| match s.shape {
+        Shape::Segment { a: c, b: d, .. }
+            if matches!(
+                s.kind,
+                ObstacleKind::Building | ObstacleKind::Wall | ObstacleKind::Hedge
+            ) =>
+        {
+            cross(a, b, c) * cross(a, b, d) < 0.0 && cross(c, d, a) * cross(c, d, b) < 0.0
+        }
+        _ => false,
+    })
+}
+
+/// `traffic.bus`: the buses on their lines near the rider, or (`watch`)
+/// the unicorn's camera beside one at a stop.
+fn bus_command(world: &mut World, mode: Option<&str>) -> Result<String, String> {
+    if mode == Some("off") {
+        let mut view = world.resource_mut::<ocw_render::RideView>();
+        view.guided_camera = None;
+        return Ok("camera: chase".into());
+    }
+    let watch = mode.is_some();
+    let coming = mode == Some("coming");
+    use ocw_sim::traffic::{VehicleClass, bus, world::WorldRules};
+    let client = crate::client(world).ok_or("not riding")?;
+    let net = client
+        .free_network()
+        .cloned()
+        .ok_or("buses run in free rides on worlds with bus lines")?;
+    let view = world
+        .get_resource::<ocw_render::RideView>()
+        .ok_or("no view")?;
+    let me = view
+        .local()
+        .map(|l| {
+            let p = client.track().sample(l.state.distance).position;
+            [p[0], p[2]]
+        })
+        .unwrap_or([0.0, 0.0]);
+    let mut buses: Vec<_> = view
+        .vehicles
+        .iter()
+        .filter(|v| v.class == VehicleClass::Bus && v.line != 0)
+        .copied()
+        .collect();
+    if buses.is_empty() {
+        return Err("no bus on its line near the rider".into());
+    }
+    let d = |v: &ocw_render::traffic::VehicleView| (v.pos[0] - me[0]).hypot(v.pos[2] - me[1]);
+    buses.sort_by(|a, b| d(a).total_cmp(&d(b)));
+    let rules = WorldRules::new(&net);
+    let core: Vec<_> = (0..net.graph().edges.len())
+        .map(|e| ocw_sim::traffic::EdgeRules::edge_rule(&rules, &net, e))
+        .collect();
+    let (lines, _) = bus::lines_of(&net, &core, 0);
+    let line_of = |id: u32| lines.iter().find(|l| l.id == id);
+    if !watch {
+        let rows: Vec<String> = buses
+            .iter()
+            .take(8)
+            .map(|v| {
+                let sign = line_of(v.line).map_or_else(|| "?".to_owned(), |l| l.sign());
+                format!(
+                    "bus {} \"{sign}\" {:.0} m away, {:.0} km/h{}",
+                    v.id,
+                    d(v),
+                    v.speed * 3.6,
+                    if v.doors { ", doors open" } else { "" }
+                )
+            })
+            .collect();
+        return Ok(rows.join("; "));
+    }
+    // A bus at its stop with the doors open, else the nearest coming to one.
+    let dwelling = if coming {
+        None
+    } else {
+        buses.iter().find(|v| v.doors)
+    };
+    let (at, heading, what) = if let Some(v) = dwelling {
+        let sign = line_of(v.line).map_or_else(String::new, |l| l.sign());
+        (
+            [v.pos[0], v.pos[2]],
+            v.heading,
+            format!("bus {} \"{sign}\" at its stop", v.id),
+        )
+    } else {
+        let (v, line, k) = buses
+            .iter()
+            .find_map(|v| {
+                let line = line_of(v.line)?;
+                let (k, ahead) = bus::next_stop(&net, line, [v.pos[0], v.pos[2]])?;
+                // Coming: far enough to be seen arriving.
+                if coming && !(60.0..400.0).contains(&ahead) {
+                    return None;
+                }
+                Some((v, line, k))
+            })
+            .ok_or("no bus coming to a stop")?;
+        // The bus will stand with its middle 6 m behind the stop's front.
+        let (p, h) = bus::place(&net, line, line.stops[k].at - 6.0);
+        // In its lane at the kerb, not on the centreline.
+        let side = if net.keep_left { -2.5 } else { 2.5 };
+        let p = [p[0] - h[1] * side, p[1] + h[0] * side];
+        (
+            p,
+            h,
+            format!("stop {k} of \"{}\", bus {} coming", line.sign(), v.id),
+        )
+    };
+    // The first place with a clear view of the bus (no wall or building
+    // between), the farther ones first.
+    let aheads: &[f64] = if dwelling.is_some() {
+        &[14.0, 11.0, -12.0, 8.0]
+    } else {
+        &[22.0, 17.0, -18.0, 12.0]
+    };
+    let mut cache = ocw_sim::collide::WorldCache::new(net.obstacles().cloned());
+    let [x, z, _] = aheads
+        .iter()
+        .map(|&a| bus_camera(at, heading, net.keep_left, a))
+        .find(|c| clear_view(&mut cache, [c[0], c[1]], at))
+        .unwrap_or_else(|| bus_camera(at, heading, net.keep_left, aheads[0]));
+    let ground = |x: f64, z: f64| {
+        world
+            .get_resource::<ocw_render::Ground>()
+            .and_then(|g| (g.0)(x, z))
+    };
+    let base = ground(at[0], at[1]).unwrap_or(0.0);
+    let eye = [x, ground(x, z).unwrap_or(base).max(base) + 2.6, z];
+    // At the bus's middle, a little above its floor.
+    let to = [at[0] - eye[0], base + 1.2 - eye[1], at[1] - eye[2]];
+    let n = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2])
+        .sqrt()
+        .max(1e-6);
+    let mut view = world.resource_mut::<ocw_render::RideView>();
+    view.guided_camera = Some(ocw_render::GuidedCamera {
+        eye,
+        look: [to[0] / n, to[1] / n, to[2] / n],
+        velocity: [0.0, 0.0],
+    });
+    Ok(format!("camera by {what} (x {x:.0} z {z:.0})"))
+}
+
 pub fn register_commands(app: &mut App) {
+    app.console_command(ConsoleCommand::new(
+        Permission::Dev,
+        Command::new("traffic.bus")
+            .about("Road traffic (spec 18B): the buses on their lines near the rider (line, destination, doors); 'traffic.bus watch' puts the camera beside the nearest bus at its stop with the doors open, else at the next stop of the nearest bus coming to one, 'traffic.bus coming' at the stop of a bus 60 – 400 m before it, 'traffic.bus off' back to the chase camera")
+            .arg(Arg::new("watch").value_parser(["watch", "coming", "off"])),
+        |world, m| bus_command(world, m.get_one::<String>("watch").map(String::as_str)),
+    ));
     app.init_resource::<TrafficSettings>()
         .console_command(ConsoleCommand::new(
             Permission::User,
@@ -333,6 +510,18 @@ impl Plugin for TrafficPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bus_camera_stands_on_the_kerb_side_looking_back() {
+        // A bus northwards at the origin: the camera 7 m east (its right,
+        // the doors) and 9 m ahead, looking south-west at it.
+        let [x, z, yaw] = bus_camera([0.0, 0.0], [0.0, -1.0], false, 9.0);
+        assert!((x - 7.0).abs() < 1e-9 && (z + 9.0).abs() < 1e-9);
+        assert!((yaw - 217.87).abs() < 0.05, "{yaw}");
+        // Where traffic keeps left the doors are on the left.
+        let [x, _, _] = bus_camera([0.0, 0.0], [0.0, -1.0], true, 9.0);
+        assert!((x + 7.0).abs() < 1e-9);
+    }
 
     fn app(platform: Platform) -> App {
         let mut app = App::new();
