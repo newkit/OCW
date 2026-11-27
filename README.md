@@ -732,6 +732,19 @@ change the virtual power: + adds 25 W (hold it to keep adding, as ↑ does),
 − takes 10 W away, stop brakes (as ↓ does), + rides on again. A
 larger HUD: *Settings → Display → Accessibility → HUD size*.
 
+#### A slow or broken download on the phone
+
+The app itself is one large file (the WebGL 2 build about 47 MB, 15 MB as
+the server sends it compressed). While it downloads, the loading screen
+counts it: **"Downloading the app: 6.2 / 14.8 MB …"**. If the connection
+drops in the middle (Safari's "Load failed", "NetworkError", "Failed to
+fetch"), the page says **"The download broke off – trying again (2/3)"**
+and downloads it again by itself, twice (after 1 and 4 seconds, fresh from
+the server, never a half copy from the browser's cache); only then does it
+show **Start failed** with **Try again** (a new load of the page) and
+*Rides*. Every try is in the page log (below). On a weak mobile
+connection, Wi-Fi or waiting for a better signal helps.
+
 #### Something doesn't work on my phone – the log
 
 A phone has no developer console without a computer (an iPhone's Safari
