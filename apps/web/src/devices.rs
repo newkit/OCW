@@ -576,6 +576,7 @@ impl WebDevices {
                     link: Link::Idle,
                     remembered: false,
                     heart_rate: None,
+                    trainer: None,
                 });
             }
         }
