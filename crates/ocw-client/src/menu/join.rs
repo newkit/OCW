@@ -160,9 +160,85 @@ impl TextField {
     }
 }
 
+/// The public server on the Join page (spec 11.5 *The public server as
+/// the default*; the desktop's – the browser joins it from its page).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PublicJoin {
+    /// Its join info URL (`net.public_server`).
+    pub url: String,
+    pub state: PublicState,
+}
+
+/// Where joining the public server is before its join link is used.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum PublicState {
+    /// Nothing (or the join went on with its link: the flow shows it).
+    #[default]
+    Idle,
+    /// Fetching its join info and checking the world since `since_s` (s,
+    /// whole: the page's clock).
+    Fetching { since_s: u64 },
+    /// Its world is not here: why, and the manifest URL to download it
+    /// from (when the server names one), else what to do.
+    Missing {
+        why: String,
+        download: Option<String>,
+        hint: String,
+    },
+    /// Downloading the world (then joining).
+    Downloading { world: String, since_s: u64 },
+    /// The join info could not be had (or the download failed).
+    Failed(String),
+}
+
+impl PublicJoin {
+    pub fn new(url: &str) -> Self {
+        Self {
+            url: url.to_owned(),
+            state: PublicState::Idle,
+        }
+    }
+
+    /// The status line (`None`: idle).
+    pub fn status_line(&self, now_s: f64) -> Option<String> {
+        let host = crate::public::host_of(&self.url);
+        let since = |s: u64| (now_s - s as f64).max(0.0);
+        match &self.state {
+            PublicState::Idle => None,
+            PublicState::Fetching { since_s } => Some(format!(
+                "Finding the public server ({host}) … {:.0} s",
+                since(*since_s)
+            )),
+            PublicState::Missing {
+                why,
+                download: Some(_),
+                ..
+            } => Some(format!("Not joined: {why}. Download it to join (below).")),
+            PublicState::Missing { why, hint, .. } => Some(format!(
+                "Not joined: {why}. The server names no download for it: {hint}."
+            )),
+            PublicState::Downloading { world, since_s } => Some(format!(
+                "Downloading {world} for the public server … {:.0} s",
+                since(*since_s)
+            )),
+            PublicState::Failed(e) => Some(format!("Not joined: {e}")),
+        }
+    }
+
+    pub fn busy(&self) -> bool {
+        matches!(
+            self.state,
+            PublicState::Fetching { .. } | PublicState::Downloading { .. }
+        )
+    }
+}
+
 /// What the Join page shows.
 #[derive(Debug, Clone, Default)]
 pub struct JoinPageInfo {
+    /// The public server, offered first (`None`: `net.public_server off`,
+    /// or the browser).
+    pub public: Option<PublicJoin>,
     pub link: TextField,
     pub fingerprint: TextField,
     /// The field being typed into.
@@ -193,13 +269,37 @@ pub fn rows(page: Page, info: &JoinPageInfo) -> Vec<Row> {
         right: None,
         confirm: Some(Activate::Command(format!("join.edit {edit}"))),
     };
-    let mut out = vec![field(
+    let mut out = Vec::new();
+    if let Some(p) = &info.public {
+        let busy = p.busy() || info.flow.busy();
+        out.push(Row {
+            label: crate::public::label(&p.url),
+            value: None,
+            left: None,
+            right: None,
+            confirm: Some(if busy {
+                Activate::Disabled
+            } else {
+                Activate::Command("join.public".into())
+            }),
+        });
+        if let PublicState::Missing {
+            download: Some(_), ..
+        } = &p.state
+        {
+            out.push(Row::action(
+                "Download the world and join",
+                "join.public --download",
+            ));
+        }
+    }
+    out.push(field(
         "Link",
         &info.link,
         Field::Link,
         "(Enter to type, or paste)",
         "link",
-    )];
+    ));
     if info.needs_fingerprint() || !info.fingerprint.text.is_empty() {
         out.push(field(
             "Fingerprint",
@@ -235,7 +335,9 @@ pub fn rows(page: Page, info: &JoinPageInfo) -> Vec<Row> {
 /// fingerprint.
 pub fn text(info: &JoinPageInfo, now_s: f64) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(s) = info.flow.status_line(now_s) {
+    if let Some(s) = info.public.as_ref().and_then(|p| p.status_line(now_s)) {
+        out.push(s);
+    } else if let Some(s) = info.flow.status_line(now_s) {
         out.push(s);
     } else if info.needs_fingerprint() {
         out.push(
@@ -377,5 +479,53 @@ mod tests {
         i.typing = Some(Field::Link);
         assert_eq!(rows(Page::Join, &i)[0].value.as_deref(), Some("ab|"));
         assert!(rows(Page::Routes, &i).is_empty());
+    }
+
+    /// The public server comes first (spec 11.5); cleared, its row goes.
+    #[test]
+    fn the_public_server_is_offered_first() {
+        let mut i = info("");
+        i.public = Some(PublicJoin::new(crate::public::PUBLIC_JOIN_INFO));
+        let r = rows(Page::Join, &i);
+        assert_eq!(r[0].label, "Public server (ocw-server.fly.dev)");
+        assert_eq!(r[0].confirm, Some(Activate::Command("join.public".into())));
+        assert_eq!(r[1].label, "Link");
+        assert!(text(&i, 0.0).is_empty());
+        // Fetching: dimmed, the status says so.
+        i.public.as_mut().unwrap().state = PublicState::Fetching { since_s: 1 };
+        assert_eq!(rows(Page::Join, &i)[0].confirm, Some(Activate::Disabled));
+        assert_eq!(
+            text(&i, 3.2)[0],
+            "Finding the public server (ocw-server.fly.dev) … 2 s"
+        );
+        // The world missing, no download source: what to do.
+        i.public.as_mut().unwrap().state = PublicState::Missing {
+            why: "the public server rides the world liechtenstein@10, which is not installed here"
+                .into(),
+            download: None,
+            hint: crate::public::install_hint("liechtenstein@10"),
+        };
+        let r = rows(Page::Join, &i);
+        assert_eq!(r[1].label, "Link");
+        let t = &text(&i, 0.0)[0];
+        assert!(
+            t.contains("not installed here") && t.contains("install the package"),
+            "{t}"
+        );
+        // With a download source: offered.
+        i.public.as_mut().unwrap().state = PublicState::Missing {
+            why: "w".into(),
+            download: Some("https://worlds.example.org/w/1/manifest.json".into()),
+            hint: String::new(),
+        };
+        let r = rows(Page::Join, &i);
+        assert_eq!(r[1].label, "Download the world and join");
+        assert_eq!(
+            r[1].confirm,
+            Some(Activate::Command("join.public --download".into()))
+        );
+        // `net.public_server off`: no row.
+        i.public = None;
+        assert_eq!(rows(Page::Join, &i)[0].label, "Link");
     }
 }

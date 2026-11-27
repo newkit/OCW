@@ -38,6 +38,9 @@ pub struct JoinHooks {
     /// The clipboard's text (the desktop's clipboard, the browser's last
     /// paste event).
     pub paste: fn(&mut World) -> Option<String>,
+    /// Joins the public server (spec 11.5: its join info, the world
+    /// check); `true`: download its world first.
+    pub public: fn(&mut World, bool) -> Result<String, String>,
 }
 
 impl Default for JoinHooks {
@@ -47,6 +50,7 @@ impl Default for JoinHooks {
             cancel: |_| {},
             leave: |_| Err("not in a shared ride".into()),
             paste: |_| None,
+            public: |_, _| Err("this app joins the public server from its page".into()),
         }
     }
 }
@@ -130,6 +134,21 @@ impl Plugin for JoinPlugin {
         }
         app.console_command(ConsoleCommand::new(
             Permission::User,
+            Command::new("join.public")
+                .about("Join the public server (net.public_server; for now ocw-server.fly.dev): fetch its join info, check its world, join")
+                .arg(
+                    Arg::new("download")
+                        .long("download")
+                        .action(clap::ArgAction::SetTrue)
+                        .help("Download its world first (when the server names a download)"),
+                ),
+            |world, m| {
+                let hooks = *world.resource::<JoinHooks>();
+                (hooks.public)(world, m.get_flag("download"))
+            },
+        ));
+        app.console_command(ConsoleCommand::new(
+            Permission::User,
             Command::new("join.edit")
                 .about("Type into a field of Ride -> Join (Enter or Esc ends)")
                 .arg(
@@ -211,6 +230,11 @@ pub fn join_line(world: &mut World, line: &str, cert: &str) -> Result<String, St
     let line = line.trim();
     if line.is_empty() {
         return Ok(world.resource::<JoinUi>().info.recent.listing());
+    }
+    // `join public` (`--join public`): the public server (spec 11.5).
+    if line.eq_ignore_ascii_case("public") {
+        let hooks = *world.resource::<JoinHooks>();
+        return (hooks.public)(world, false);
     }
     let line = match line.parse::<usize>() {
         Ok(n) => world
@@ -416,6 +440,12 @@ mod tests {
                 cancel: |_| {},
                 leave: |_| Ok("riding alone".into()),
                 paste: |_| Some("  ocw://localhost:5000\n".into()),
+                public: |w, download| {
+                    w.resource_mut::<Connected>()
+                        .0
+                        .push(format!("public download={download}"));
+                    Ok("finding the public server".into())
+                },
             });
         app.update();
         app
@@ -525,5 +555,26 @@ mod tests {
         assert!(log.contains("no recent server 2"), "{log}");
         let log = run(&mut app, "leave");
         assert!(log.contains("riding alone"), "{log}");
+    }
+
+    /// `join public` (`--join public`) and the page's `join.public` go to
+    /// the app's public-server hook (spec 11.5); no link is parsed.
+    #[test]
+    fn join_public_goes_to_the_hook() {
+        let mut app = app();
+        let log = run(&mut app, "join public");
+        assert!(log.contains("finding the public server"), "{log}");
+        run(&mut app, "join.public --download");
+        assert_eq!(
+            app.world().resource::<Connected>().0,
+            ["public download=false", "public download=true"]
+        );
+        assert!(!app.world().resource::<JoinUi>().info.flow.busy());
+        // An app without one says so.
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin, JoinPlugin));
+        app.update();
+        let log = run(&mut app, "join public");
+        assert!(log.contains("from its page"), "{log}");
     }
 }

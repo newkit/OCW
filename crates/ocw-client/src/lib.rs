@@ -58,6 +58,7 @@ pub mod motion;
 /// The bike stand's part tiles (spec §14 Phase 4, 4G *Tiles*).
 pub mod part_tiles;
 pub mod photographer;
+pub mod public;
 pub mod quality;
 pub mod recording;
 pub mod ride_summary;

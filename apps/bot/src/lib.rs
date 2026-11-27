@@ -24,6 +24,21 @@ pub fn rider_name(prefix: &str, i: u32) -> String {
     format!("{prefix}-{}", i + 1)
 }
 
+/// Why `ocw-bot` has no default server (spec 11.5 *The public server as
+/// the default*): every other app offers the public server first, but the
+/// bots are test riders – the multiplayer test and the scripts start their
+/// own local server and must never load the server on Fly.io (bursts of
+/// new UDP flows get dropped there for minutes), and the public server
+/// rides a world's road graph, which bots cannot ride.
+pub const NO_DEFAULT_SERVER: &str = "--server HOST[:PORT] is required (or use `ocw-bot verdict`): \
+ocw-bot has no default server – its riders are for tests against your own server, and the public \
+server rides a world's road graph, which bots cannot ride";
+
+/// The server to ride on: `--server`, never a default.
+pub fn server_or_why(server: Option<&str>) -> Result<&str, &'static str> {
+    server.ok_or(NO_DEFAULT_SERVER)
+}
+
 /// A hint for a connection that never came up.
 pub fn connect_hint(reason: &str, port: u16) -> Option<String> {
     reason.contains("no answer").then(|| {
@@ -37,6 +52,19 @@ pub fn connect_hint(reason: &str, port: u16) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No default server: tests never reach the public server by leaving
+    /// `--server` out.
+    #[test]
+    fn there_is_no_default_server() {
+        let why = server_or_why(None).unwrap_err();
+        assert!(why.contains("--server HOST[:PORT] is required"), "{why}");
+        assert!(why.contains("no default server"), "{why}");
+        assert_eq!(
+            server_or_why(Some("127.0.0.1:47800")),
+            Ok("127.0.0.1:47800")
+        );
+    }
 
     #[test]
     fn names_and_powers_per_rider() {

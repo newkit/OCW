@@ -521,6 +521,14 @@ pub const SETTINGS: &[SettingDef] = &[
     // Options page (`host.plan upnp`). The headless server has `--upnp`
     // (off by default).
     SettingDef {
+        key: "net.public_server",
+        kind: Kind::Text,
+        default: "default",
+        description: "The public server Ride -> Join and the start offer first (spec 11.5): default = ocw-server.fly.dev (for now), off = none, or another join info URL (https://.../join.json)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
         key: "host.upnp",
         kind: Kind::Bool,
         default: "on",
@@ -1158,6 +1166,8 @@ pub const SETTINGS: &[SettingDef] = &[
 /// providers yet). God mode's settings apply in both apps since Phase 13
 /// G5 (v3.37); the browser has no video, fullscreen or restart key.
 const NOT_IN_BROWSER: &[&str] = &[
+    // The page names its server (config.json, spec 11.5 *Join info*).
+    "net.public_server",
     "display.fullscreen",
     "ride.random_start",
     "weather.real",
@@ -1236,6 +1246,9 @@ impl SettingDef {
                         "{}: at most {MAX_TEXT_LEN} characters on one line, without quotes",
                         self.key
                     ))
+                } else if self.key == crate::public::SETTING {
+                    // default, off or a join info URL.
+                    crate::public::resolve(text).map(|_| Value::Text(text.to_string()))
                 } else {
                     Ok(Value::Text(text.to_string()))
                 }

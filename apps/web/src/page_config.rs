@@ -23,13 +23,17 @@
 //!   index.html fetches it for `?together=1` before the module starts and
 //!   puts the server's current WebTransport URL, certificate hashes and
 //!   world into the query (`server=`, `cert-hash=`, `world=`), which the
-//!   app reads as from a join link ([`PageConfig::join_info`]).
+//!   app reads as from a join link ([`PageConfig::join_info`]). A page
+//!   whose configuration has no `server` key takes the built-in public
+//!   server, [`ocw_client::public::PUBLIC_JOIN_INFO`] (for now the one on
+//!   Fly.io, spec 11.5 *The public server as the default*); `""` is none.
 //! - `channel` (`dev`, `preview`) and `start` (the start page's rides) are
 //!   the page's own (index.html); the app ignores them and unknown keys.
 //!
 //! Development pages (localhost, `crate::is_dev_host`) keep every option:
 //! the page configuration only ever turns things off on public pages.
 
+use ocw_client::public::PUBLIC_JOIN_INFO;
 use serde_json::Value;
 
 /// What a public page without a hosted server says about multiplayer,
@@ -100,12 +104,14 @@ impl PageConfig {
         self.channel == "preview"
     }
 
-    /// The public server's join info URL (`server` ending in `.json`),
-    /// which index.html reads for `?together=1`.
+    /// The public server's join info URL, which index.html reads for
+    /// `?together=1`: `server` ending in `.json`; without a `server` key the
+    /// built-in [`PUBLIC_JOIN_INFO`]; none for `""` or a plain server URL.
     pub fn join_info(&self) -> Option<&str> {
-        self.server
-            .as_deref()
-            .filter(|s| s.starts_with("https://") && s.ends_with(".json"))
+        match self.server.as_deref() {
+            None => Some(PUBLIC_JOIN_INFO),
+            Some(s) => Some(s).filter(|s| s.starts_with("https://") && s.ends_with(".json")),
+        }
     }
 
     /// Why multiplayer is off on this page (`None`: it is not): a public
@@ -222,7 +228,11 @@ mod tests {
             assert!(!c.is_preview());
             assert!(c.worlds.is_none(), "{text}");
             assert!(c.multiplayer_off(false).is_none() && c.voice_off(false).is_none());
+            // No server named: the built-in public server (spec 11.5).
+            assert_eq!(c.join_info(), Some(PUBLIC_JOIN_INFO), "{text}");
         }
+        // `"server": ""`: none.
+        assert_eq!(PageConfig::parse(PREVIEW).unwrap().join_info(), None);
         // A hosted server named: multiplayer stays on.
         let c = PageConfig::parse(
             r#"{"server": "https://ocw.example:47801", "voice": "wss://lk.example"}"#,

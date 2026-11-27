@@ -1,7 +1,10 @@
 //! The start choice of the desktop app (spec 3.2.4 Q3, Q5): at every start
-//! that the command line does not decide, the menu opens on *Connect to a
-//! server* / *Ride locally* with the last choice focused, so Enter takes
-//! it. *Connect to a server* opens Ride → Join (the address field and the
+//! that the command line does not decide, the menu opens on *Ride on the
+//! public server* (spec 11.5, when `net.public_server` names one) /
+//! *Connect to a server* / *Ride locally* with the last choice focused, so
+//! Enter takes it (before any choice: *Ride locally* – a solo ride stays
+//! local). *Ride on the public server* runs `join public` and opens Ride →
+//! Join, which shows how far it is. *Connect to a server* opens Ride → Join (the address field and the
 //! recent servers of `ocw.toml [servers]`); *Ride locally* closes the menu
 //! and rides on with the local rider in Training mode (every bike and all
 //! gear, no hearts; Campaign mode is postponed, see
@@ -121,7 +124,7 @@ impl Plugin for StartPlugin {
                 .arg(
                     Arg::new("choice")
                         .required(true)
-                        .value_parser(["server", "local"]),
+                        .value_parser(["public", "server", "local"]),
                 ),
             |world, m| {
                 let c = Choice::parse(m.get_one::<String>("choice").expect("required"))
@@ -130,6 +133,10 @@ impl Plugin for StartPlugin {
                 let saved = s.choose(c);
                 let mode = s.local_mode;
                 let mut out = match c {
+                    Choice::Public => {
+                        let hooks = *world.resource::<ocw_ui::join::JoinHooks>();
+                        (hooks.public)(world, false)?
+                    }
                     Choice::Server => {
                         "Connect to a server: type its address (Enter), paste a link, or pick a recent server".to_string()
                     }
@@ -162,7 +169,12 @@ struct OpenAtStart(StartMode);
 
 /// Opens the page with the last choice focused (Enter takes it).
 fn open(world: &mut World) {
-    let row = world.resource::<StartChoice>().last.row();
+    let public = crate::ride::public::url(world).is_some();
+    let last = match world.resource::<StartChoice>().last {
+        Choice::Public if !public => Choice::Server,
+        c => c,
+    };
+    let row = last.row(public);
     let mut m = world.resource_mut::<MenuState>();
     m.queue(Action::OpenSub(SubPage::Start));
     m.queue(Action::Hover(row));
@@ -179,6 +191,14 @@ fn open_at_start(world: &mut World) {
                 .resource_mut::<MenuState>()
                 .queue(Action::OpenSub(SubPage::Join));
         }
+        StartMode::Go(Choice::Public) => {
+            world
+                .resource_mut::<MenuState>()
+                .queue(Action::OpenSub(SubPage::Join));
+            world
+                .resource_mut::<ocw_render::console::ConsoleState>()
+                .queue("join public");
+        }
         StartMode::Go(Choice::Local) => {}
     }
 }
@@ -189,7 +209,11 @@ pub fn rows(world: &World) -> Vec<ocw_client::menu::pages::Row> {
         .get_resource::<StartChoice>()
         .map(|s| s.last)
         .unwrap_or_default();
-    ocw_client::menu::start::rows(last, &crate::settings::local_rider(world).name)
+    ocw_client::menu::start::rows(
+        last,
+        &crate::settings::local_rider(world).name,
+        crate::ride::public::url(world).as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -239,6 +263,20 @@ mod tests {
         assert_eq!(
             start_mode(&args(&["--start-choice", "server"])),
             StartMode::Go(Choice::Server)
+        );
+        assert_eq!(
+            start_mode(&args(&["--start-choice", "public"])),
+            StartMode::Go(Choice::Public)
+        );
+        // A plain start never goes online by itself (the start choice
+        // asks; riding locally is the choice marked before any other).
+        assert_eq!(Choice::default(), Choice::Local);
+        // `--join public` decides: the public server, no question.
+        let a = args(&["--join", "public"]);
+        assert_eq!(decided_by(&a), Some("--join"));
+        assert_eq!(
+            crate::ride::join::startup_line(a.join.as_deref().unwrap()),
+            "join \"public\""
         );
         assert!(Args::try_parse_from(["ocw-desktop", "--start-choice", "later"]).is_err());
     }

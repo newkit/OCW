@@ -1207,10 +1207,12 @@ mod tests {
         let mut app = start(&files);
         let v = view(&app);
         assert_eq!(v.title, "Open Cycling World");
-        assert_eq!(v.items[0], "Connect to a server");
-        assert!(v.items[1].starts_with("Ride locally as"), "{:?}", v.items);
-        assert!(v.items[1].ends_with("last choice"), "{:?}", v.items);
-        assert_eq!(v.focused, 1, "the last choice is preselected");
+        // The public server first (spec 11.5; for now on Fly.io).
+        assert_eq!(v.items[0], "Ride on the public server (ocw-server.fly.dev)");
+        assert_eq!(v.items[1], "Connect to a server");
+        assert!(v.items[2].starts_with("Ride locally as"), "{:?}", v.items);
+        assert!(v.items[2].ends_with("last choice"), "{:?}", v.items);
+        assert_eq!(v.focused, 2, "the last choice is preselected");
         tap(&mut app, KeyCode::Enter);
         assert!(!app.world().resource::<MenuState>().menu.is_open());
         let log = app.world().resource::<ConsoleState>().log().join("\n");
@@ -1221,7 +1223,7 @@ mod tests {
         // Join: the address field and the recent servers).
         save_start_choice(&files, Choice::Server).unwrap();
         let mut app = start(&files);
-        assert_eq!(view(&app).focused, 0);
+        assert_eq!(view(&app).focused, 1);
         tap(&mut app, KeyCode::Enter);
         assert_eq!(view(&app).title, "Join a ride");
         assert_eq!(load_start_choice(&files), Some(Choice::Server));
@@ -1231,6 +1233,27 @@ mod tests {
         tap(&mut app, KeyCode::Enter);
         assert!(!app.world().resource::<MenuState>().menu.is_open());
         assert_eq!(load_start_choice(&files), Some(Choice::Local));
+        // `net.public_server off`: no public row (the last public choice
+        // falls back to Connect to a server). Nothing here is fetched.
+        save_start_choice(&files, Choice::Public).unwrap();
+        let mut app = start(&files);
+        assert_eq!(view(&app).focused, 0);
+        let mut us = ocw_ui::settings::UserSettings::default();
+        us.settings.set_temp("net.public_server", "off").unwrap();
+        app.insert_resource(us);
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .queue("start.ask");
+        app.update();
+        app.update();
+        let v = view(&app);
+        assert!(
+            v.items[0].starts_with("Connect to a server"),
+            "{:?}",
+            v.items
+        );
+        assert!(v.items[0].ends_with("last choice"), "{:?}", v.items);
+        assert_eq!(v.focused, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

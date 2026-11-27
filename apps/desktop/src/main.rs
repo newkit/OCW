@@ -121,6 +121,9 @@ pub struct Args {
     /// `ocw://HOST[:PORT]?cert=SHA256&world=…&route=…`, as ocw-server and
     /// Ride -> Host a ride print it): the app starts alone and switches to
     /// the server's ride once its world is loaded (Ride -> Join).
+    /// `--join public`: the public server (spec 11.5; for now
+    /// ocw-server.fly.dev, setting net.public_server): its join info is
+    /// fetched and its world checked first.
     #[arg(long, value_name = "LINK", conflicts_with_all = ["server", "capture"])]
     pub join: Option<String>,
     /// SHA-256 fingerprint of the server's certificate (ocw-server prints
@@ -262,11 +265,12 @@ pub struct Args {
     /// Command-line options override its values for the session.
     #[arg(long, value_name = "PATH")]
     pub settings_file: Option<PathBuf>,
-    /// The start choice (spec 3.2.4): ask (Connect to a server / Ride
-    /// locally, the last choice preselected), local, or server (Ride ->
-    /// Join). Default: ask, unless an option decides (--server, --world,
+    /// The start choice (spec 3.2.4): ask (Ride on the public server /
+    /// Connect to a server / Ride locally, the last choice preselected),
+    /// local, server (Ride -> Join) or public (join the public server, spec
+    /// 11.5). Default: ask, unless an option decides (--server, --world,
     /// --route, --screenshot, --capture, --cmd, the kiosk's --no-hearts …).
-    #[arg(long, value_name = "CHOICE", value_parser = ["ask", "local", "server"])]
+    #[arg(long, value_name = "CHOICE", value_parser = ["ask", "local", "server", "public"])]
     pub start_choice: Option<String>,
     /// Ride as this rider profile (the local riders of ocw.toml) for this
     /// session, instead of the one chosen in the Workshop.
