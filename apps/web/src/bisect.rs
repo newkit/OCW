@@ -19,11 +19,16 @@
 //! | `ios=safe` | all of the above but `frames` (`pipelines=serial`) |
 //! | `shadowmap=N` | the sun's shadow map at most N² (256 – 4096; shadows on) |
 //! | `shadowfix=…` | a change to the shadow pass: `hw2x2`, `near` (comma-separated) |
+//! | `photos=0` | the own ride photographer's photos (`photos=1` turns them on) |
+//! | `photofix=…` | a change to the photo's capture: `small`, `once`, `screen`, `nosave`, `bgra`, `all` (comma-separated) |
 //!
 //! On iOS / iPadOS WebKit with WebGL 2 the shadows are off by default
 //! ([`Bisect::platform_defaults`]; spec 10G: the shadow pass closed the
 //! page on an iPhone, iOS 18.7): `noshadow=0` turns them on again,
-//! `shadowmap=N` turns them on at that size.
+//! `shadowmap=N` turns them on at that size. The own ride photos are off
+//! there too ([`Bisect::photos_off`]; spec 10G: the first photo closed the
+//! page on that iPhone): `photos=1` turns them on, `photofix=…` changes how
+//! they are captured.
 //!
 //! `=0` turns a switch off again (`ios=safe&nosee=0`: everything but the
 //! trees' shader). On WebGL 2 at most [`WEBGL2_BUDGET`] pipelines compile
@@ -50,6 +55,9 @@ pub struct Bisect {
     /// The address named `noshadow` (or `ios=safe`): the platform's
     /// default does not change it.
     pub shadow_named: bool,
+    /// `photos=`: the own ride photos on (`Some(true)`) or off
+    /// (`Some(false)`, also `ios=safe`); `None` the platform's default.
+    pub photos: Option<bool>,
 }
 
 /// The keys [`Bisect::set`] reads (index.html reads `novoice` itself).
@@ -68,6 +76,8 @@ pub const KEYS: &[&str] = &[
     "ios",
     "shadowmap",
     "shadowfix",
+    "photos",
+    "photofix",
 ];
 
 fn flag(value: &str) -> Option<bool> {
@@ -117,6 +127,7 @@ impl Bisect {
                 no_audio: true,
                 pipelines: Some(Some(1)),
                 shadow_named: true,
+                photos: Some(false),
             };
             return true;
         }
@@ -127,6 +138,24 @@ impl Bisect {
                     true
                 }
                 _ => false,
+            };
+        }
+        if key == "photos" {
+            return match flag(value) {
+                Some(on) => {
+                    self.photos = Some(on);
+                    true
+                }
+                None => false,
+            };
+        }
+        if key == "photofix" {
+            return match ocw_render::switches::PhotoFix::parse(value) {
+                Some(f) => {
+                    self.render.photo_fix = f;
+                    true
+                }
+                None => false,
             };
         }
         if key == "shadowfix" {
@@ -198,6 +227,24 @@ impl Bisect {
         false
     }
 
+    /// Whether the own ride photos are off, and why (`None`: on): on iOS /
+    /// iPadOS WebKit with WebGL 2 by default (spec 10G: taking the first
+    /// photo closed the page on an iPhone, iOS 18.7, 2026-11-27) unless
+    /// the address says `photos=1`; anywhere with `photos=0` (or
+    /// `ios=safe`).
+    pub fn photos_off(
+        &self,
+        ios_webkit: bool,
+        webgl2: bool,
+    ) -> Option<ocw_ui::photographer::PhotosOff> {
+        use ocw_ui::photographer::PhotosOff;
+        match self.photos {
+            Some(true) => None,
+            Some(false) => Some(PhotosOff::Switch),
+            None => (ios_webkit && webgl2).then_some(PhotosOff::IosWebKit),
+        }
+    }
+
     /// The renderer's switches for this GPU API: the pipelines' budget
     /// ([`WEBGL2_BUDGET`] on WebGL 2 unless `pipelines=` says), the
     /// compile log always (the page log's early lines).
@@ -223,6 +270,11 @@ impl Bisect {
         match self.pipelines {
             Some(Some(n)) => names.push(format!("pipelines={n} per frame")),
             Some(None) => names.push("pipelines=all".into()),
+            None => {}
+        }
+        match self.photos {
+            Some(true) => names.push("photos=1".into()),
+            Some(false) => names.push("photos=0".into()),
             None => {}
         }
         (!names.is_empty()).then(|| names.join(", "))
@@ -347,6 +399,43 @@ mod tests {
             let (b, off) = with("route=hills", ios, webgl2);
             assert!(!off && !b.render.no_shadow, "{ios} {webgl2}");
         }
+    }
+
+    /// iOS WebKit on WebGL 2: the own ride photos off by default (10G);
+    /// `photos=1` turns them on, `photos=0` off anywhere, `ios=safe` too;
+    /// `photofix=…` reaches the renderer; Android, desktops and WebGPU
+    /// keep them.
+    #[test]
+    fn ios_webkit_on_webgl2_takes_no_ride_photos_by_default() {
+        use ocw_ui::photographer::PhotosOff;
+        let off = |q: &str, ios: bool, webgl2: bool| parse(q).0.photos_off(ios, webgl2);
+        assert_eq!(off("route=hills", true, true), Some(PhotosOff::IosWebKit));
+        for (ios, webgl2) in [(false, true), (false, false), (true, false)] {
+            assert_eq!(off("route=hills", ios, webgl2), None, "{ios} {webgl2}");
+        }
+        assert_eq!(off("photos=1", true, true), None);
+        assert_eq!(off("photos=on", true, true), None);
+        assert_eq!(off("photos=0", false, false), Some(PhotosOff::Switch));
+        assert_eq!(off("ios=safe", false, true), Some(PhotosOff::Switch));
+        assert_eq!(off("ios=safe&photos=1", true, true), None);
+        // The shadows' default does not touch the photos and back.
+        let mut b = parse("photos=1").0;
+        assert!(b.platform_defaults(true, true));
+        assert_eq!(b.photos_off(true, true), None);
+        // photofix=…
+        let (b, w) = parse("photos=1&photofix=small,once");
+        assert!(w.is_empty(), "{w:?}");
+        assert!(b.render.photo_fix.small && b.render.photo_fix.once);
+        let s = b.summary().unwrap();
+        assert!(
+            s.contains("photofix=small,once") && s.contains("photos=1"),
+            "{s}"
+        );
+        assert!(parse("photofix=screen").0.render.photo_fix.screen);
+        assert!(parse("photofix=all").0.render.photo_fix.nosave);
+        let (b, w) = parse("photofix=tiny&photos=maybe");
+        assert_eq!(b, Bisect::default());
+        assert_eq!(w.len(), 2, "{w:?}");
     }
 
     #[test]

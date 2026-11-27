@@ -219,6 +219,9 @@ def main():
         ios_off = "shadows off on iOS WebKit with WebGL 2" in body
         check(f"{phone}: the iOS shadow default only on the iPhone", ios_off == (phone == "iphone"),
               [ln for ln in body.split("\n") if "shadows" in ln][:2])
+        photos_off = "ride photos off on iOS WebKit with WebGL 2: taking the first photo closed the page" in body
+        check(f"{phone}: the iOS ride-photo default only on the iPhone (10G, v6.86)", photos_off == (phone == "iphone"),
+              [ln for ln in body.split("\n") if "ride photo" in ln][:2])
         check(f"{phone}: console.error arrives as E", " E ocw-test: an error line for the log" in body)
         uncaught = [ln for ln in body.split("\n") if "ocw-test: an uncaught error" in ln]
         check(f"{phone}: an uncaught error arrives with file:line", uncaught and " ! uncaught" in uncaught[0]
@@ -254,8 +257,8 @@ def main():
                   note.startswith("Copied") or "selected" in note, note)
         shot(pg, phone, "copy")
         # Download.
-        # The log's .txt (a ride photo may download meanwhile: the ride
-        # photographer's JPEG, seen on the iPhone without shadows, v6.77).
+        # The log's .txt (a ride photo may download meanwhile on Android:
+        # the ride photographer's JPEG; the iPhone takes none, v6.86).
         with pg.expect_download(predicate=lambda d: d.suggested_filename.endswith(".txt"), timeout=15000) as dl:
             pg.click("#ocw-log button[data-log=download]")
         path = dl.value.path()

@@ -799,6 +799,42 @@ map of at most N² (one cascade on WebGL 2), `shadowfix=` takes `hw2x2`,
 `near` or both (`hw2x2,near`); `memory=phone` starts with the phone's
 normal memory mode instead of the saver.
 
+**The iPhone's second crash (2026-11-27): the first ride photo.** Without
+shadows the Hills rode steadily (wasm 147 MB, GPU ~51 MB, ~60 fps) until
+the ride photographer took its first photo, about 11 s in: the log's last
+lines were "ride photo n = 1 …" and the compile of one more shader program
+(the copy into the photo), then the page was gone. The photo is drawn by a
+second camera into a picture of its own (1280 × 720 on a phone), read back
+from the GPU, turned into a JPEG and downloaded. **Now, on iPhones and
+iPads with WebGL 2, the ride photographer takes no photos by default**:
+the log says "ride photos off on iOS WebKit with WebGL 2: taking the first
+photo closed the page on an iPhone", and *Settings → Display → Graphics →
+Ride photographer* shows *off on iOS (WebGL 2)* (the other riders'
+photographers are still drawn). `photos=1` turns them on again for a test,
+`photos=0` turns them off anywhere. Every step of a photo is now in the
+log ("ride photo 1: 1280 × 720 …", "reading back", "captured", "saving"),
+so the last line says which step closed the page. On WebGL 2 the photo is
+now drawn in the canvas's own colour format (no extra shader program to
+compile) and the second camera stops after the frame it captured (before,
+it drew 30 frames).
+
+To find out what in a photo closes the page, tap these and send "rides" or
+"closed" (a photo comes about 10 – 15 s into the ride: ride at least 30 s)
+and the log of the first that closed:
+
+22. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1> – the new default: no ride photos (should ride)
+23. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&photos=1> – photos on, with the WebGL 2 changes above
+24. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&photos=1&photofix=small> – the photo at 640 × 360 (a quarter of the memory)
+25. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&photos=1&photofix=screen> – no second camera: the photo is the screen as you see it (with the HUD)
+26. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&photos=1&photofix=once> – the second camera draws two frames instead of five
+27. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&photos=1&photofix=nosave> – the photo is taken but not turned into a JPEG or downloaded
+28. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&photos=1&photofix=all> – small, two frames and not saved together
+29. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&photos=1&photofix=bgra> – the colour format of before (expected to close if 23 rides)
+
+`photofix=` takes `small`, `once`, `screen`, `nosave`, `bgra` or several
+(`small,nosave`); `all` is `small,once,nosave`. None of them becomes the
+iPhone's default before the phone says it rides.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
