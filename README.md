@@ -474,6 +474,46 @@ remembers its devices (`localStorage`). Where Chromium keeps the permission
 the chooser. Console: `devices.list`, `devices.connect trainer|power|hr`,
 `devices.forget <name|all>`.
 
+**ANT+ sensors in the browser (WebUSB, spec 14 Phase 17 A5):** in Chrome,
+Edge and the other Chromium browsers on the desktop and on Android, an
+**ANT USB stick** (ANT USB-m `0fcf:1009`, ANT USB2 `0fcf:1008`, and the
+clones with these ids) works in the browser too. Settings → Trainer →
+Devices → **Add an ANT+ stick** (or the panel's **+ ANT+ stick**) opens the
+browser's list of USB devices; pick the stick. Then *ANT+ (USB stick)* →
+*Enter the network key* (as on the desktop: the field shows `*` only, Enter
+keeps it), and **Find ANT+ sensors** (10 s) lists the heart-rate straps and
+power meters around ("ANT+ heart rate 12345"); choose one and *Connect*. The
+browser runs the same ANT code as the desktop app (`ocw-devices::ant`: the
+stick core over WebUSB, `ant::web`); the heart rate and an ANT+ power
+meter's power drive the ride like a Bluetooth device's. **The network key
+stays in this browser's own storage** (`localStorage`, key `ocw.ant.key`):
+never in the settings, never sent to a server, never in the console or the
+page log; *Remove the key* deletes it. A stick pulled out and plugged in
+again is found again by itself (the page hears `disconnect` / `connect`),
+and after a reload the stick, the key and the remembered sensors come back
+without the chooser (Chromium keeps the permission; if it does not list the
+stick again, *Add an ANT+ stick* once more). Only one program can use the
+stick at a time (close Zwift, Garmin Express, the desktop app).
+- **Windows:** WebUSB can open the stick only with the **WinUSB** driver –
+  bind it with **Zadig** (spec 14 Phase 17 Q7). Garmin's own ANT driver,
+  which Zwift and the desktop app use, is not one WebUSB can open, and after
+  Zadig Zwift and Garmin Express no longer see the stick until the driver is
+  rolled back in the Device Manager. Without changing drivers, ride with the
+  desktop app, or use its trainer and strap through the sensor bridge
+  (below).
+- **Linux:** the browser needs the same udev rule as the desktop app
+  (`ocw-desktop --install-udev-rule`, see *ANT+* under the desktop's
+  devices); without it the page says *cannot open the stick (permission)*.
+  Whether Chromium can take the stick from the kernel's serial driver
+  (`usb_serial_simple`) is still to be tried with a real stick; if it
+  cannot, the page says *busy with another app*.
+- **No WebUSB** (Firefox, Safari, every browser on iOS): the row says *no
+  WebUSB here* and its page says why; the panel has no ANT+ button.
+- Console: `ant.stick.add`, `ant.key.edit|save|cancel|clear`, `ant.scan
+  [--stop]`, `devices.connect ant:120:12345:1`. Test without hardware:
+  `make test-web-ant` (a fake `navigator.usb` that speaks the simulated
+  stick's bytes; then WebKit without WebUSB).
+
 **Browsers without Web Bluetooth** (Firefox, Safari, every browser on iOS,
 Chromium on Linux without the flag above): the panel says so and the ride
 uses **virtual power** (↑ / ↓, `sim.power`) – or the trainer of the
@@ -853,6 +893,7 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make test-web-unicorn` | Unicorn mode over Vaduz (Liechtenstein streamed): fly up, the inspection, a pin, the menu row, landing (`--god`) |
 | `make test-web-multiplayer` | `ocw-server` and `ocw-bot` riders, the browser over WebTransport, 30 s |
 | `make test-web-ble` | A fake Web Bluetooth trainer and strap: connect, power, SIM / ERG writes, a drop, a reload, no Bluetooth |
+| `make test-web-ant` | ANT+ over WebUSB without hardware: a fake `navigator.usb` speaking the simulated stick's bytes – *Add an ANT+ stick*, the key typed and kept in the page's storage only (no request carries it), a strap and a power meter found and riding, unplug / replug, reload; no WebUSB (`#nousb`, then WebKit): the row says why |
 | `make test-web-ble-emulation` / `test-web-ble-real` | Chromium's own Web Bluetooth with a simulated KICKR / the real trainer in range (`BLE_DEVICE=KICKR`) |
 | `make test-web-audio` | The sound locked until a click, then the mixer's chunks through Web Audio, a volume over a reload |
 | `make test-web-voice` | `ocw-server` with voice tokens and the Echo rider, a fake LiveKit in the page: call, mute, drop, rejoin, echo test |
@@ -5030,14 +5071,14 @@ by its public key file `root.pub.json`.
 | Path | Contents |
 |---|---|
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
-| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS), WebTransport (`webtransport.rs`), Web Bluetooth devices (`devices.rs`, `browser_devices.rs`); `web/index.html` |
+| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS), WebTransport (`webtransport.rs`), Web Bluetooth devices (`devices.rs`, `browser_devices.rs`), ANT+ over WebUSB (`ant.rs`); `web/index.html` |
 | `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky, SIM / ERG trainer control (`trainer`), workouts (`workout`) |
 | `apps/bot` | `ocw-bot`: headless bot clients for remote servers, multiplayer test verdict |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
 | `crates/ocw-sim` | Physics, session logic, client prediction, interpolation, trainer control, workouts (format, `.erg` / `.mrc` import, runner) |
 | `crates/ocw-protocol` | Protobuf protocol (`proto/`) and conversions |
-| `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) – one protocol and runner over btleplug (desktop) and Web Bluetooth (`ble::web`, browser) |
+| `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) – one protocol and runner over btleplug (desktop) and Web Bluetooth (`ble::web`, browser); ANT+ sensors through an ANT USB stick – one stick core over `nusb` / libusb-win32 (desktop) and WebUSB (`ant::web`, browser) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
 | `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download; `stream`: packages streamed by chunk (range planning, verification, the chunk cache behind a trait, tile residency; also wasm) |

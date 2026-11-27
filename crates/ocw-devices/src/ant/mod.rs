@@ -28,7 +28,10 @@
 //!   driver on Windows (spec 14 Phase 17 Q7 (d)): the libusb-0.1 calls
 //!   behind the [`libusb0::Usb0`] seam (the system's `libusb0.dll`, loaded
 //!   at run time on Windows with `ant-usb`; a fake in tests), and
-//!   [`Fallback`], which tries `nusb` (WinUSB) first and then it.
+//!   [`Fallback`], which tries `nusb` (WinUSB) first and then it;
+//! - [`web`] (pure, the browser binding wasm32 only): the stick over the
+//!   browser's WebUSB (spec 14 Phase 17 A5) – the same [`stick::StickCore`]
+//!   on the page's event loop.
 //!
 //! The ANT+ network key is never in this crate (spec 14 Phase 17 Q1 (b)):
 //! the rider enters it once, the app keeps it in `secrets.toml` and hands
@@ -40,6 +43,7 @@ pub mod hr;
 pub mod power;
 pub mod sim;
 pub mod stick;
+pub mod web;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod libusb0;

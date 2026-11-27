@@ -139,6 +139,9 @@ impl Plugin for WebSessionPlugin {
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Startup, crate::browser_devices::start);
         register_commands(app);
+        // ANT+ over WebUSB (spec 14 Phase 17 A5): the stick, the key, the
+        // search.
+        crate::ant::register(app);
     }
 }
 
@@ -410,6 +413,7 @@ fn devices(
     mut console: ResMut<ConsoleState>,
     mut view: ResMut<RideView>,
     menu: Option<ResMut<ocw_ui::menu::DevicesMenu>>,
+    key: Option<Res<ocw_ui::key_entry::KeyEntry>>,
     mut said: Local<bool>,
     mut next: Local<f64>,
     mut loaded: Local<bool>,
@@ -454,6 +458,10 @@ fn devices(
         console.print(line);
     }
     s.devices.bridge_info = crate::bridge::info();
+    // ANT+ over WebUSB: the search, the page's lines, the menu's info; the
+    // remembered ANT+ sensors at the first frame.
+    let typing = key.filter(|k| k.typing).map(|k| k.shown(16));
+    crate::ant::frame(&mut s.devices, time.elapsed_secs_f64(), !*loaded, typing);
     // Remembered once connected (spec §3.2.1 *Devices*): saved then.
     if std::mem::take(&mut s.devices.remembered_changed) {
         persist(s);
@@ -501,6 +509,7 @@ pub fn devices_json(s: &WebSession) -> String {
     v["distance_m"] = s.client.state().distance.into();
     v["joined"] = s.client.rider_id().is_some().into();
     v["bridge"] = crate::bridge::json();
+    v["ant"] = crate::ant::json(&s.devices);
     v.to_string()
 }
 
@@ -627,15 +636,15 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("devices.connect")
-            .about("Choose a Bluetooth trainer, power meter or heart-rate strap in the browser's list (Chrome / Edge; the page's buttons do the same)")
-            .arg(
-                Arg::new("kind")
-                    .required(true)
-                    .value_parser(["trainer", "power", "hr"]),
-            ),
-        |_world, m| {
+            .about("Choose a Bluetooth trainer, power meter or heart-rate strap in the browser's list (trainer, power, hr; Chrome / Edge; the page's buttons do the same), or connect an ANT+ sensor the search found (its ant: id)")
+            .arg(Arg::new("kind").required(true)),
+        |world, m| {
             let kind = m.get_one::<String>("kind").expect("required");
-            let kind = ocw_devices::ble::web::DeviceKind::parse(kind).expect("checked by clap");
+            if ocw_devices::ant::AntDeviceId::is_ant(kind) {
+                return crate::ant::connect(&mut session_mut(world)?.devices, kind);
+            }
+            let kind = ocw_devices::ble::web::DeviceKind::parse(kind)
+                .ok_or_else(|| format!("unknown device kind {kind} (trainer, power, hr, or an ant: id)"))?;
             connect_device(kind)
         },
     ))

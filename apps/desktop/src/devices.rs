@@ -901,6 +901,7 @@ fn publish_menu(
             key_file: devices.ant_key.as_ref().map(crate::config::Slot::describe),
             fix: ant_fix(&status, std::env::consts::OS),
             access: access.last.clone(),
+            web: None,
         }
     });
     if menu.0 != info {

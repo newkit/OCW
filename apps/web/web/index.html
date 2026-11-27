@@ -251,6 +251,7 @@
       <button data-kind="trainer">+ Trainer</button>
       <button data-kind="power">+ Power meter</button>
       <button data-kind="hr">+ Heart rate</button>
+      <button data-ant hidden title="An ANT+ USB stick (WebUSB: Chrome, Edge; on Windows with the WinUSB driver)">+ ANT+ stick</button>
     </div>
     <div id="ocw-devices-list"></div>
     <div id="ocw-devices-msg" class="note"></div>
@@ -1118,6 +1119,23 @@
           }
           const said = msg.textContent;
           setTimeout(() => { if (msg.textContent === said) msg.textContent = ""; }, 8000);
+          canvas.focus();
+        };
+      }
+      // An ANT+ USB stick (spec 14 Phase 17 A5): only where WebUSB is
+      // (Chromium on the desktop and Android); the chooser opens in the
+      // click. Elsewhere the in-game Devices page says why.
+      const antButton = panel.querySelector("button[data-ant]");
+      if (navigator.usb) {
+        antButton.hidden = false;
+        antButton.onclick = () => {
+          try {
+            msg.className = "note";
+            msg.textContent = window.ocw.addAntStick();
+          } catch (e) {
+            msg.className = "err";
+            msg.textContent = String(e);
+          }
           canvas.focus();
         };
       }

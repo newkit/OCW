@@ -29,7 +29,7 @@ pub const DEVICE_NOTE: &str =
     "Connect it in its role, or forget it: it is then not connected at the next start.";
 
 /// The ANT+ page's note (spec 3.4.1, 14 Phase 17 Q1 (b)).
-pub const ANT_NOTE: &str = "ANT+ straps need the ANT+ network key (16 hex digits), which Garmin publishes for ANT+ developers. It stays on this computer, in secrets.toml.";
+pub const ANT_NOTE: &str = "ANT+ sensors need the ANT+ network key (16 hex digits), which Garmin publishes for ANT+ developers. It stays on this device (Kept in) and is never sent.";
 
 /// Devices -> ANT+ -> Driver for the ANT stick (Windows; spec 3.4.1 *The
 /// driver route on Windows*, 14 Phase 17 Q7 (d)).
@@ -295,7 +295,8 @@ impl BridgeInfo {
     }
 }
 
-/// ANT+ on the Devices pages (spec 3.4.1, 14 Phase 17; the desktop only).
+/// ANT+ on the Devices pages (spec 3.4.1, 14 Phase 17; the desktop, and
+/// the browser over WebUSB: [`AntInfo::web`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AntInfo {
     /// The stick: "ANT USB-m stick, in use", "no stick", "cannot open the
@@ -313,7 +314,35 @@ pub struct AntInfo {
     /// The last *Install access* run ("installed", "pkexec is missing:
     /// ...").
     pub access: Option<String>,
+    /// The browser's stick over WebUSB (spec 14 Phase 17 A5; `None`: the
+    /// desktop's stick service).
+    pub web: Option<WebUsbInfo>,
 }
+
+/// ANT+ in the browser (spec 14 Phase 17 A5, 17E *The browser*): the
+/// stick over WebUSB.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WebUsbInfo {
+    /// The browser has WebUSB (`navigator.usb`: Chrome, Edge and the other
+    /// Chromium browsers on the desktop and on Android); without it the
+    /// rows say why (Firefox, Safari, iOS).
+    pub supported: bool,
+    /// The browser runs on Windows: the stick needs the WinUSB driver
+    /// there (Zadig; Q7) – Garmin's driver is not one WebUSB can use.
+    pub windows: bool,
+    /// A stick was granted to this site (the chooser, now or before).
+    pub granted: bool,
+    /// A search for ANT+ sensors runs: seconds left.
+    pub scanning: Option<u32>,
+}
+
+/// The Devices list's row that opens the browser's chooser for a stick.
+pub const ANT_ADD_ROW: &str = "Add an ANT+ stick";
+/// The command behind it (`navigator.usb.requestDevice` in the key press's
+/// user gesture).
+pub const ANT_ADD_COMMAND: &str = "ant.stick.add";
+/// The browser's search for ANT+ sensors through the stick.
+pub const ANT_SCAN_ROW: &str = "Find ANT+ sensors";
 
 /// How to make a stick that cannot be opened work (by the system).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -408,8 +437,27 @@ pub fn rows(page: Page, info: &DevicesInfo) -> Vec<Row> {
 
 /// Devices → ANT+: the stick, the network key (enter, change, remove).
 fn ant_rows(a: &AntInfo) -> Vec<Row> {
+    if let Some(w) = &a.web
+        && !w.supported
+    {
+        return no_web_usb_rows(w);
+    }
     let mut out = vec![info_row("Stick", Some(short_label(&a.state, 40)))];
-    match a.fix {
+    if let Some(w) = &a.web {
+        out.push(add_stick_row(w));
+        if w.windows {
+            out.push(info_row("On Windows", Some("needs WinUSB (Zadig)".into())));
+        }
+        if a.fix == Some(AntFix::LinuxAccess) {
+            out.push(info_row(
+                "On Linux",
+                Some("needs the udev rule (README)".into()),
+            ));
+        }
+    }
+    // The desktop's fixes (the browser has its rows above).
+    let fix = if a.web.is_some() { None } else { a.fix };
+    match fix {
         Some(AntFix::WindowsDriver) => {
             out.push(open_row(ANT_DRIVER_ROW, None, Page::AntDriver));
         }
@@ -441,8 +489,54 @@ fn ant_rows(a: &AntInfo) -> Vec<Row> {
             }
         }
     }
+    if let Some(w) = &a.web
+        && a.key_set
+        && w.granted
+    {
+        out.push(scan_row(w));
+    }
     if let Some(f) = &a.key_file {
         out.push(info_row("Kept in", Some(short_label(f, 40))));
+    }
+    out
+}
+
+/// *Add an ANT+ stick* (the browser): the chooser, or why there is none.
+fn add_stick_row(w: &WebUsbInfo) -> Row {
+    if !w.supported {
+        return open_row(ANT_ADD_ROW, Some("no WebUSB here".into()), Page::Ant);
+    }
+    let mut r = Row::action(ANT_ADD_ROW, ANT_ADD_COMMAND);
+    r.value = Some(if w.granted { "added" } else { "Chrome, Edge" }.into());
+    r
+}
+
+/// *Find ANT+ sensors* (the browser): a 10 s search, or stop it.
+fn scan_row(w: &WebUsbInfo) -> Row {
+    match w.scanning {
+        Some(left) => {
+            let mut r = Row::action("Stop the search", "ant.scan --stop");
+            r.value = Some(format!("{left} s left"));
+            r
+        }
+        None => {
+            let mut r = Row::action(ANT_SCAN_ROW, "ant.scan");
+            r.value = Some(format!("{SCAN_SECONDS} s"));
+            r
+        }
+    }
+}
+
+/// Devices -> ANT+ in a browser without WebUSB: why, and what works.
+fn no_web_usb_rows(w: &WebUsbInfo) -> Vec<Row> {
+    let mut out = vec![
+        info_row("WebUSB", Some("not in this browser".into())),
+        info_row("Firefox, Safari, iOS", Some("have no WebUSB".into())),
+        info_row("Use Chrome or Edge", Some("desktop or Android".into())),
+        info_row("Or the desktop app", Some("its sensor bridge".into())),
+    ];
+    if w.windows {
+        out.push(info_row("On Windows", Some("needs WinUSB (Zadig)".into())));
     }
     out
 }
@@ -589,7 +683,20 @@ fn list_rows(info: &DevicesInfo) -> Vec<Row> {
         out.push(bridge_row(b));
     }
     if let Some(a) = &info.ant {
-        out.push(open_row("ANT+ (USB stick)", Some(a.value()), Page::Ant));
+        match &a.web {
+            // The browser: the chooser's row first; without WebUSB it
+            // opens the page that says why.
+            Some(w) => {
+                out.push(add_stick_row(w));
+                if w.supported {
+                    out.push(open_row("ANT+ (USB stick)", Some(a.value()), Page::Ant));
+                    if a.key_set && w.granted {
+                        out.push(scan_row(w));
+                    }
+                }
+            }
+            None => out.push(open_row("ANT+ (USB stick)", Some(a.value()), Page::Ant)),
+        }
     }
     out.extend(info.entries.iter().enumerate().map(|(i, e)| {
         open_row(
@@ -639,8 +746,9 @@ fn device_rows(e: &Entry, info: &DevicesInfo) -> Vec<Row> {
     }
     if matches!(e.link, Link::Idle | Link::Failed(_)) {
         let line = match info.scan {
-            // The browser connects only from its chooser.
-            Scan::Chooser(_) => connect_kind(e.role),
+            // The browser connects Bluetooth devices only from its
+            // chooser; ANT+ sensors through the stick, by id.
+            Scan::Chooser(_) if !e.is_ant() => connect_kind(e.role),
             _ => format!("devices.connect {}", e.id),
         };
         out.push(Row::action("Connect", line));
@@ -1158,5 +1266,122 @@ mod tests {
             assert!(rows(p, &info).len() < 7);
             assert!(rows(p, &info).iter().all(|r| r.label.len() <= 48));
         }
+    }
+
+    /// The browser (spec 14 Phase 17 A5): *Add an ANT+ stick* where
+    /// WebUSB is, the reason where it is not, the WinUSB note on Windows,
+    /// the search and the found sensors connected by id.
+    #[test]
+    fn the_browser_adds_an_ant_stick_over_web_usb() {
+        let web = |supported, windows, granted| WebUsbInfo {
+            supported,
+            windows,
+            granted,
+            scanning: None,
+        };
+        let mut info = DevicesInfo {
+            scan: Scan::Chooser(None),
+            ant: Some(AntInfo {
+                state: "no stick".into(),
+                key_file: Some("this browser only (never sent)".into()),
+                web: Some(web(true, false, false)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let labels = |info: &DevicesInfo, p| -> Vec<String> {
+            rows(p, info).into_iter().map(|r| r.label).collect()
+        };
+        // The list: the three Bluetooth rows, then the stick's; no search
+        // before a key and a stick.
+        let r = rows(Page::Devices, &info);
+        assert_eq!(r[3].label, ANT_ADD_ROW);
+        assert_eq!(
+            r[3].confirm,
+            Some(Activate::Command(ANT_ADD_COMMAND.into()))
+        );
+        assert_eq!(r[4].label, "ANT+ (USB stick)");
+        assert!(
+            !labels(&info, Page::Devices)
+                .iter()
+                .any(|l| l == ANT_SCAN_ROW)
+        );
+        // Key and stick: Find ANT+ sensors, on the list and the page.
+        let a = info.ant.as_mut().unwrap();
+        a.key_set = true;
+        a.state = "ANT USB-m stick, ready".into();
+        a.web = Some(web(true, false, true));
+        let r = rows(Page::Devices, &info);
+        assert_eq!(r[3].value.as_deref(), Some("added"));
+        assert_eq!(r[5].label, ANT_SCAN_ROW);
+        assert_eq!(r[5].confirm, Some(Activate::Command("ant.scan".into())));
+        assert_eq!(
+            labels(&info, Page::Ant),
+            [
+                "Stick",
+                ANT_ADD_ROW,
+                "Change the network key",
+                "Remove the key",
+                ANT_SCAN_ROW,
+                "Kept in"
+            ]
+        );
+        info.ant.as_mut().unwrap().web.as_mut().unwrap().scanning = Some(7);
+        let r = rows(Page::Ant, &info);
+        assert_eq!(r[4].label, "Stop the search");
+        assert_eq!(r[4].value.as_deref(), Some("7 s left"));
+        // Windows: the WinUSB note (Q7); a Linux permission: the rule.
+        let a = info.ant.as_mut().unwrap();
+        a.web = Some(web(true, true, true));
+        a.fix = Some(AntFix::LinuxAccess);
+        let r = rows(Page::Ant, &info);
+        assert!(
+            r.iter()
+                .any(|r| r.label == "On Windows"
+                    && r.value.as_deref() == Some("needs WinUSB (Zadig)"))
+        );
+        assert!(r.iter().any(|r| r.label == "On Linux"));
+        assert!(
+            !r.iter().any(|r| r.label == ANT_ACCESS_ROW),
+            "pkexec: the desktop only"
+        );
+        // A found ANT+ sensor connects through the stick, by id.
+        info.entries.push(Entry {
+            id: "ant:120:1234:1".into(),
+            name: "ANT+ heart rate 1234".into(),
+            role: Role::HeartRate,
+            rssi: Some(-60),
+            link: Link::Idle,
+            remembered: false,
+            heart_rate: None,
+        });
+        let d = rows(Page::Device(0), &info);
+        assert!(d.iter().any(|r| r.label == "Connect"
+            && r.confirm == Some(Activate::Command("devices.connect ant:120:1234:1".into()))));
+        // Without WebUSB: the row says so and opens the page that says why.
+        info.ant.as_mut().unwrap().web = Some(web(false, false, false));
+        let r = rows(Page::Devices, &info);
+        assert_eq!(r[3].label, ANT_ADD_ROW);
+        assert_eq!(r[3].value.as_deref(), Some("no WebUSB here"));
+        assert_eq!(r[3].confirm, Some(Activate::Open(Page::Ant)));
+        assert!(
+            !labels(&info, Page::Devices)
+                .iter()
+                .any(|l| l == "ANT+ (USB stick)")
+        );
+        assert_eq!(
+            labels(&info, Page::Ant),
+            [
+                "WebUSB",
+                "Firefox, Safari, iOS",
+                "Use Chrome or Edge",
+                "Or the desktop app"
+            ]
+        );
+        for p in [Page::Devices, Page::Ant] {
+            assert!(rows(p, &info).iter().all(|r| r.label.len() <= 48), "{p:?}");
+            assert!(rows(p, &info).len() <= 8, "{p:?}");
+        }
+        assert!(ANT_NOTE.is_ascii() && !ANT_NOTE.contains("secrets.toml"));
     }
 }

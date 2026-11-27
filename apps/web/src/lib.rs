@@ -57,6 +57,7 @@
 //! resident around the rider within a memory budget.
 
 pub mod account;
+pub mod ant;
 pub mod audio;
 pub mod bisect;
 pub mod bridge;
