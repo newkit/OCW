@@ -124,9 +124,26 @@ pub(crate) struct ServerVehicles {
     interest: BTreeMap<ConnectionId, Interest>,
     sent: BTreeMap<ConnectionId, TrafficSent>,
     rider_stats: TrafficRiderStats,
+    /// Each rider's encounters since their last update (spec 18E T7: the
+    /// client's honks, pass-by whooshes and proximity cue).
+    cues: BTreeMap<RiderId, Vec<v1::TrafficCue>>,
 }
 
+/// At most this many cues wait for a rider's next update.
+const MAX_CUES: usize = 16;
+
 impl ServerVehicles {
+    fn cue(&mut self, rider: u32, vehicle: u32, kind: v1::TrafficCueKind, seconds: f32) {
+        let q = self.cues.entry(RiderId(rider)).or_default();
+        if q.len() < MAX_CUES {
+            q.push(v1::TrafficCue {
+                vehicle,
+                kind: kind as i32,
+                seconds,
+            });
+        }
+    }
+
     /// A world switch: the vehicles of the old graph are gone; every
     /// connection starts again with a reset.
     pub(crate) fn world_changed(&mut self) {
@@ -364,9 +381,30 @@ impl GameServer {
                         );
                     }
                 }
-                RiderEvent::Passed(_) => st.passes += 1,
-                RiderEvent::Honk { .. } => st.honks += 1,
-                RiderEvent::Approaching { .. } => st.approaching += 1,
+                RiderEvent::Passed(p) => {
+                    st.passes += 1;
+                    self.vehicles
+                        .cue(p.rider, p.vehicle, v1::TrafficCueKind::Passed, 0.0);
+                }
+                RiderEvent::Honk { vehicle, rider, .. } => {
+                    st.honks += 1;
+                    self.vehicles
+                        .cue(rider, vehicle, v1::TrafficCueKind::Honk, 0.0);
+                }
+                RiderEvent::Approaching {
+                    vehicle,
+                    rider,
+                    seconds,
+                    ..
+                } => {
+                    st.approaching += 1;
+                    self.vehicles.cue(
+                        rider,
+                        vehicle,
+                        v1::TrafficCueKind::Approaching,
+                        seconds as f32,
+                    );
+                }
             }
         }
         for g in gusts {
@@ -434,6 +472,8 @@ impl GameServer {
         self.vehicles
             .interest
             .retain(|c, _| self.riders.contains_key(c));
+        let riding: BTreeSet<RiderId> = self.riders.values().copied().collect();
+        self.vehicles.cues.retain(|r, _| riding.contains(r));
         for (conn, rider) in conns {
             let Some(&centre) = centres.get(&rider) else {
                 continue;
@@ -472,6 +512,7 @@ impl GameServer {
                 interest.known.remove(id);
             }
             u.despawns = gone;
+            u.cues = self.vehicles.cues.remove(&rider).unwrap_or_default();
             // The changes of the vehicles it keeps, in order.
             for ev in &pending {
                 if let TrafficEvent::Change(c) = ev
@@ -503,7 +544,10 @@ impl GameServer {
                     }
                 }
             }
-            let quiet = u.spawns.is_empty() && u.changes.is_empty() && u.despawns.is_empty();
+            let quiet = u.spawns.is_empty()
+                && u.changes.is_empty()
+                && u.despawns.is_empty()
+                && u.cues.is_empty();
             let heartbeat = !interest.known.is_empty()
                 && interest
                     .last_tick

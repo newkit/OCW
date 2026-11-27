@@ -192,6 +192,13 @@ impl RoadRules {
             self.level.key().to_owned()
         }
     }
+
+    /// Whether drivers honk at riders (Q8: mostly polite and some realism;
+    /// lunatics always; never the polite ones; spec 18E T7).
+    pub fn honks(&self) -> bool {
+        self.level.is_on()
+            && (self.level == RoadTraffic::Lunatic || self.manners != DriverManners::Polite)
+    }
 }
 
 /// What the rider's screen shows of the traffic (18A): the master switch

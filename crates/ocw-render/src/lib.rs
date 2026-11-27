@@ -69,7 +69,8 @@ pub mod switches;
 pub mod terrain;
 pub mod thumbs;
 pub mod touch_hud;
-// Road vehicles: the view type and the debug boxes (spec 18E T5).
+// Road vehicles: the view type, the models and the debug boxes (spec 18E
+// T5, T7).
 pub mod traffic;
 pub mod tunnel;
 pub mod tunnel_cut;
@@ -196,6 +197,11 @@ pub struct RideView {
     /// The road vehicles near the local rider (spec 14 Phase 18, 18E T5):
     /// as the client extrapolates them from the server's plans.
     pub vehicles: Vec<traffic::VehicleView>,
+    /// What the vehicles did to the local rider lately (spec 18E T7: honks,
+    /// passes, one closing in from behind), for the sounds and the HUD.
+    pub vehicle_cues: Vec<traffic::VehicleCue>,
+    /// Road vehicles are heard (`traffic.enabled` and `traffic.sound`).
+    pub vehicle_sound: bool,
     /// The simulated aircraft (spec 14 Phase 18, T8; `None`: none drawn –
     /// `traffic.air off`, or no ride).
     pub air: Option<aircraft::AirView>,
@@ -357,6 +363,8 @@ impl RideView {
             strava_s: None,
             strava_message: None,
             vehicles: Vec::new(),
+            vehicle_cues: Vec::new(),
+            vehicle_sound: false,
             air: None,
         }
     }
@@ -579,9 +587,12 @@ impl Plugin for OcwRenderPlugins {
             // The simulated aircraft and their contrails (Phase 18, T8).
             aircraft::AircraftPlugin,
         ))
-        // Road vehicles as debug boxes behind a dev switch (18E T5; the
-        // models are T7).
-        .add_plugins(traffic::TrafficDebugPlugin);
+        // Road vehicles with their models (18E T7), as debug boxes behind
+        // a dev switch (T5).
+        .add_plugins((
+            traffic::models::VehicleModelsPlugin,
+            traffic::TrafficDebugPlugin,
+        ));
     }
 }
 

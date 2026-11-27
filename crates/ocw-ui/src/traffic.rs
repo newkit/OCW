@@ -300,12 +300,29 @@ pub fn register_commands(app: &mut App) {
         ));
 }
 
+/// Whether the road vehicles are heard (spec 18E T7): the master switch
+/// and `traffic.sound`.
+fn vehicle_sound(
+    settings: Option<Res<TrafficSettings>>,
+    view: Option<ResMut<ocw_render::RideView>>,
+) {
+    let Some(mut view) = view else { return };
+    let s = settings.map(|s| s.view).unwrap_or_default();
+    let on = s.enabled && s.sound;
+    if view.vehicle_sound != on {
+        view.vehicle_sound = on;
+    }
+}
+
 /// The `traffic` command and the settings' resource.
 pub struct TrafficPlugin;
 
 impl Plugin for TrafficPlugin {
     fn build(&self, app: &mut App) {
         register_commands(app);
+        crate::configure_sets(app);
+        // Road vehicles heard or not (T7: `traffic.enabled`, `traffic.sound`).
+        app.add_systems(Update, vehicle_sound.in_set(crate::ViewExtrasSet));
         // The simulated aircraft (T8).
         if !app.is_plugin_added::<crate::air::AirPlugin>() {
             app.add_plugins(crate::air::AirPlugin);

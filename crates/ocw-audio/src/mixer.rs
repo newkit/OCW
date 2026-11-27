@@ -20,6 +20,7 @@ use super::mix::{Bus, BusGains};
 use super::others::{OthersFrame, OthersSynth};
 use super::ride::{RideParams, RideSynth};
 use super::spatial::Placement;
+use super::vehicles::{VehicleSound, VehicleSynth};
 use super::weather::{ThunderSound, WeatherParams, WeatherSynth};
 
 /// Samples between parameter and filter updates.
@@ -61,6 +62,9 @@ pub enum MixerMsg {
     /// The aircraft heard now (spec 14 Phase 18, T8; every frame while
     /// any is heard, once empty to fade them out).
     Aircraft(Vec<AircraftSound>),
+    /// The road vehicles heard now (spec 14 Phase 18, T7; every frame
+    /// while any is heard, once empty to fade them out).
+    Vehicles(Vec<VehicleSound>),
 }
 
 /// See the module docs.
@@ -82,6 +86,7 @@ pub struct Mixer {
     drone: DroneSynth,
     drone_sound: Option<DroneSound>,
     aircraft: AircraftSynth,
+    vehicles: VehicleSynth,
     /// Coefficient of the per-block smoothing.
     smooth: f32,
     /// Samples into the current block.
@@ -111,6 +116,7 @@ impl Mixer {
             drone: DroneSynth::new(sr),
             drone_sound: None,
             aircraft: AircraftSynth::new(sr),
+            vehicles: VehicleSynth::new(sr),
             smooth: smoothing(0.06, sr, BLOCK),
             phase: 0,
             rx: None,
@@ -139,6 +145,7 @@ impl Mixer {
             self.weather = WeatherSynth::new(sr);
             self.drone = DroneSynth::new(sr);
             self.aircraft = AircraftSynth::new(sr);
+            self.vehicles = VehicleSynth::new(sr);
             self.smooth = smoothing(0.06, sr, BLOCK);
             self.voices.clear();
             self.placed.clear();
@@ -169,6 +176,7 @@ impl Mixer {
             }
             MixerMsg::Drone(d) => self.drone_sound = d,
             MixerMsg::Aircraft(a) => self.aircraft.apply(&a),
+            MixerMsg::Vehicles(v) => self.vehicles.apply(&v),
         }
     }
 
@@ -306,6 +314,10 @@ impl Mixer {
         let (al, ar) = self.aircraft.sample();
         pl += al;
         pr += ar;
+        // The road vehicles, placed, on the effects bus (T7).
+        let (vl, vr) = self.vehicles.sample();
+        pl += vl;
+        pr += vr;
         for (v, [l, r], air) in &mut self.placed {
             let mut s = v.sample(sr);
             if let Some(f) = air {

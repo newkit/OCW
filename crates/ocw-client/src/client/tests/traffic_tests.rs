@@ -449,3 +449,44 @@ fn old_worlds_have_traffic_and_a_world_switch_resets_it() {
     r.run(0.1, 0.0);
     assert!(r.sim_tick() < old_tick, "a new traffic simulation");
 }
+
+/// The vehicles' encounters reach the rider's client (spec 18E T7): every
+/// pass and vehicle closing in from behind the server counted comes as a
+/// cue for the sounds and the HUD; the turning vehicles indicate.
+#[test]
+fn passes_and_vehicles_behind_reach_the_client_and_turns_indicate() {
+    let mut r = Ride::new(RoadTraffic::Busy);
+    let ada = r.join("Ada Rider");
+    let mut indicating = BTreeSet::new();
+    for _ in 0..90 {
+        r.run(1.0, 60.0);
+        for v in r.clients[ada].1.vehicles_view(r.t) {
+            if v.indicator != ocw_render::traffic::Indicator::Off {
+                indicating.insert(v.id);
+            }
+        }
+    }
+    r.until_broadcast(60.0);
+    let server = r.server.traffic_rider_stats();
+    let client = r.clients[ada].1.vehicles().stats();
+    // Whatever the vehicles did to the rider, every encounter the server
+    // counted for the rider came as a cue.
+    assert_eq!(
+        client.cues,
+        server.passes + server.honks + server.approaching,
+        "{server:?} {client:?}"
+    );
+    assert!(
+        indicating.len() >= 3,
+        "{} vehicles indicated",
+        indicating.len()
+    );
+    // Polite drivers: no honks in the view's cues, whatever came.
+    assert!(
+        r.clients[ada]
+            .1
+            .vehicle_cues(r.t)
+            .iter()
+            .all(|c| c.kind != ocw_render::traffic::VehicleCueKind::Honk)
+    );
+}

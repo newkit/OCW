@@ -818,6 +818,24 @@ message TrafficUpdate {
   // The session's tick (Snapshot.server_tick) at `tick`: the client runs
   // the traffic on its estimate of the server's clock.
   uint64 server_tick = 8;
+  // What vehicles did to this rider since the last update (spec 18E T7:
+  // honks, passes, one closing in from behind) for the sounds and the HUD.
+  repeated TrafficCue cues = 9;
+}
+
+// A vehicle's encounter with the rider (ocw_sim::traffic::RiderEvent).
+message TrafficCue {
+  uint32 vehicle = 1;
+  TrafficCueKind kind = 2;
+  // Approaching: seconds until it reaches the rider.
+  float seconds = 3;
+}
+
+enum TrafficCueKind {
+  TRAFFIC_CUE_KIND_UNSPECIFIED = 0;
+  TRAFFIC_CUE_KIND_HONK = 1;
+  TRAFFIC_CUE_KIND_PASSED = 2;
+  TRAFFIC_CUE_KIND_APPROACHING = 3;
 }
 
 // How a vehicle moves between changes (ocw_sim::traffic::Motion).

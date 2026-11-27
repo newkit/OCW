@@ -39,6 +39,7 @@ pub fn fill(
     view.riders = client.view(now, overstep);
     // The road vehicles near the rider (spec 18E T5).
     view.vehicles = client.vehicles_view(now);
+    view.vehicle_cues = client.vehicle_cues(now);
     // Riders off the road ride the terrain's track (spec §14 Phase 13A).
     view.off_road = client.off_road_tracks(now);
     view.position = view
@@ -65,7 +66,9 @@ pub fn fill(
     // proximity cue and the crash feed (in events it is in the event panel).
     view.proximity = client.proximity();
     // The aids drawn as graphics (12D) and the camera's reaction (12C).
-    view.proximity_arrow = client.proximity_arrow();
+    view.proximity_arrow = client
+        .proximity_arrow()
+        .or_else(|| client.vehicle_behind_arrow(now));
     view.hit_warning = client.hit_warning();
     view.camera_fx = client.camera_fx(now, shake);
     // Damage (spec §14 Phase 12F): the widget; a stop's line as a notice.
