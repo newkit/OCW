@@ -225,6 +225,11 @@ pub fn models() -> Vec<(Entry, Model)> {
         );
         out.push((e, m));
     }
+    // The cow of the UFOs' beam scene (spec 18E T9).
+    {
+        let m = crate::cow::model();
+        out.push((crate::cow::entry(), m));
+    }
     // The workshop's pieces (Phase 15 M3): `workshop::room` places them
     // for the number of bikes.
     for p in crate::workshop::Piece::ALL {
@@ -354,8 +359,9 @@ mod tests {
         let b = files();
         // Bikes, the riders, the rider's part files (4N N8), helmets.
         // … the unicorn, the workshop pieces and the VR bike computer.
-        // … and the traffic.
-        let more = 1 + crate::workshop::Piece::ALL.len() + 1 + crate::vehicles::Vehicle::ALL.len();
+        // … the traffic and the UFOs' cow.
+        let more =
+            1 + crate::workshop::Piece::ALL.len() + 1 + crate::vehicles::Vehicle::ALL.len() + 1;
         assert_eq!(
             a.len(),
             6 + 2 + crate::rider_split::part_files().len() + 4 + more

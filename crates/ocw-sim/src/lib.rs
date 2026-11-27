@@ -27,6 +27,7 @@ pub mod road_feel;
 pub mod session;
 pub mod traffic;
 pub mod trainer;
+pub mod ufo;
 pub mod weather;
 pub mod workout;
 

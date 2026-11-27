@@ -85,6 +85,10 @@ pub struct AudioFeed {
     /// Road vehicles were heard in the last message, and which (T7).
     vehicles_heard: bool,
     vehicles_playing: Vec<u32>,
+    /// UFOs were heard in the last message (T9), and the ones darting
+    /// away already whooshed.
+    ufos_heard: bool,
+    ufos_away: Vec<u64>,
 }
 
 /// The mix from the settings (`audio.master` … `audio.mute`) and the
@@ -170,6 +174,7 @@ impl AudioFeed {
         self.weather(f, &mut out);
         self.aircraft(f.view, &mut out);
         self.vehicles(f.view, &mut out);
+        self.ufos(f.view, &mut out);
         let now = Instant::now();
         out.extend(self.cues(f).into_iter().map(|(c, at)| match at {
             Some(p) => MixerMsg::SpatialCue(c, p, now),
@@ -265,6 +270,73 @@ impl AudioFeed {
         }
         self.aircraft_heard = !sounds.is_empty();
         out.push(MixerMsg::Aircraft(sounds));
+    }
+
+    /// The UFOs heard (spec 14 Phase 18, T9; with `traffic.sound`): the
+    /// hum of the two loudest, and a whoosh where one darts away.
+    fn ufos(&mut self, view: Option<&RideView>, out: &mut Vec<MixerMsg>) {
+        use ocw_audio::aircraft::{AircraftSound, Engine, loudest};
+        let Some(u) = view.and_then(|v| v.ufo.as_ref()).filter(|u| u.heard) else {
+            if self.ufos_heard {
+                out.push(MixerMsg::Ufos(Vec::new()));
+                self.ufos_heard = false;
+            }
+            self.ufos_away.clear();
+            return;
+        };
+        let place = |id: u64, pos: [f64; 3], vel: [f64; 3], power: f64| {
+            AircraftSound::placed(
+                id,
+                Engine::Ufo,
+                u.listener,
+                u.listener_forward,
+                pos,
+                vel,
+                power,
+            )
+        };
+        let sounds = loudest(
+            u.ufos
+                .iter()
+                .filter(|x| !x.departing)
+                .filter_map(|x| place(x.id, x.pos, x.vel, f64::from(x.presence)))
+                .collect(),
+        );
+        let now = Instant::now();
+        for x in u.ufos.iter().filter(|x| x.departing) {
+            if self.ufos_away.contains(&x.id) {
+                continue;
+            }
+            self.ufos_away.push(x.id);
+            if let Some(s) = place(x.id, x.pos, [0.0; 3], 1.0) {
+                let d = ((x.pos[0] - u.listener[0]).powi(2)
+                    + (x.pos[1] - u.listener[1]).powi(2)
+                    + (x.pos[2] - u.listener[2]).powi(2))
+                .sqrt();
+                let p = ocw_audio::spatial::Placement {
+                    distance_m: d,
+                    gain: s.level(),
+                    pan: 0.0,
+                    left: s.left,
+                    right: s.right,
+                    air_cutoff_hz: s.cutoff_hz,
+                    doppler: 1.0,
+                };
+                out.push(MixerMsg::SpatialCue(
+                    ocw_audio::cues::Cue::UfoWhoosh,
+                    p,
+                    now,
+                ));
+            }
+        }
+        if self.ufos_away.len() > 32 {
+            self.ufos_away.remove(0);
+        }
+        if sounds.is_empty() && !self.ufos_heard {
+            return;
+        }
+        self.ufos_heard = !sounds.is_empty();
+        out.push(MixerMsg::Ufos(sounds));
     }
 
     /// The road vehicles heard (spec 14 Phase 18, T7): the eight loudest

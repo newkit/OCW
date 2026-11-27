@@ -227,7 +227,11 @@ enum Group {
     Spin(usize),
 }
 
-fn mesh_of(p: &ocw_assets::model::Primitive, xf: bevy::math::Affine3A, shade: f32) -> Mesh {
+pub(crate) fn mesh_of(
+    p: &ocw_assets::model::Primitive,
+    xf: bevy::math::Affine3A,
+    shade: f32,
+) -> Mesh {
     let mut m = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -429,7 +433,7 @@ fn ensure_models(
 }
 
 /// The camera's eye and its pixels per radian (vertical).
-fn eye_and_focal(
+pub(crate) fn eye_and_focal(
     cams: &Query<(&Camera, &GlobalTransform, &Projection), With<FollowCamera>>,
 ) -> Option<(Vec3, f32)> {
     let (cam, t, proj) = cams.iter().next()?;
