@@ -41,6 +41,12 @@ pub struct VehicleView {
     pub braking: bool,
     /// The indicator set: turning at the next junction or pulling out.
     pub indicator: Indicator,
+    /// A bus on its line (spec 18B): its line's id (`ocw_sim::traffic::
+    /// bus::LineId`; 0 none) and its doors open at a stop.
+    pub line: u32,
+    pub doors: bool,
+    /// A parked car (static, its lamps off).
+    pub parked: bool,
 }
 
 /// What a vehicle did to the local rider (the server's T4 events, spec
@@ -324,6 +330,9 @@ mod tests {
             speed: 0.0,
             braking: false,
             indicator: Indicator::Off,
+            line: 0,
+            doors: false,
+            parked: false,
         };
         // Facing −Z: no turn; +X (east): a quarter turn clockwise seen
         // from above (−π/2 about +Y).
@@ -362,6 +371,9 @@ mod tests {
             speed: 10.0,
             braking: true,
             indicator: Indicator::Off,
+            line: 0,
+            doors: false,
+            parked: false,
         };
         app.world_mut().resource_mut::<RideView>().vehicles = vec![car];
         app.update();

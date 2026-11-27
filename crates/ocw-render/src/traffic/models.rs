@@ -18,6 +18,11 @@
 //!   far away the lamps stay dots of a few pixels.
 //! - **Moving parts:** wheels turn with the distance driven; the trailer
 //!   follows the kingpin's track ([`lamps::trailer_yaw`]).
+//! - **Buses at their stops** (18B): the doors (`door_*` nodes, apart
+//!   like the wheels) slide open along the body while the view says so,
+//!   in [`DOOR_S`].
+//! - **Parked cars** (18B, [`RideView::parked`]): the same models,
+//!   static and dark, within their own budget ([`lod::parked_budget`]).
 //! - **Spray:** on a wet road the riders' spray plumes behind the rear
 //!   wheels, bigger behind lorries and buses
 //!   ([`crate::weather::spray::amount`]).
@@ -78,6 +83,22 @@ pub fn glow_levels(dark: bool) -> Vec4 {
 pub const TRAILER_AXLES_M: f32 = 8.4;
 /// Far lamps stay this big on the screen (px).
 pub const DOT_PX: f32 = 2.0;
+/// A bus's doors open or close in this long (s).
+pub const DOOR_S: f32 = 1.2;
+/// An open door stands this far out of the body and slides this far
+/// back along it (m).
+pub const DOOR_OUT_M: f32 = 0.14;
+pub const DOOR_SLIDE_M: f32 = 0.85;
+
+/// Where a door leaf is when `open` (0 shut … 1 open) of a door at
+/// `pivot` (model metres; the doors are on the side of the pivot's x).
+pub fn door_offset(pivot: Vec3, open: f32) -> Vec3 {
+    let k = open.clamp(0.0, 1.0);
+    // Out first, then along: a plug door.
+    let out = (k * 3.0).min(1.0) * DOOR_OUT_M * pivot.x.signum();
+    let along = ((k - 0.25) / 0.75).clamp(0.0, 1.0) * DOOR_SLIDE_M;
+    Vec3::new(out, 0.0, along)
+}
 
 pub struct VehicleModelsPlugin;
 
@@ -112,6 +133,8 @@ struct ModelParts {
     lod1: Handle<Mesh>,
     boxed: Handle<Mesh>,
     wheels: Vec<WheelPart>,
+    /// A bus's door leaves about their nodes' places.
+    doors: Vec<(Handle<Mesh>, Vec3)>,
     /// The trailer's mesh about the kingpin, and the kingpin.
     trailer: Option<(Handle<Mesh>, Vec3)>,
     /// Both headlights' cones in one mesh.
@@ -149,6 +172,9 @@ struct Shown {
     lod: Lod,
     paint: u32,
     wheels: Vec<(Entity, Vec3, f32, bool)>,
+    /// The door leaves and their places; how far they are open (0 – 1).
+    doors: Vec<(Entity, Vec3)>,
+    door_open: f32,
     trailer: Option<(Entity, Entity, Vec3)>,
     cones: Entity,
     dots: [Entity; 2],
@@ -181,6 +207,9 @@ pub struct TrafficDrawStats {
     pub blinking: usize,
     /// Plumes of spray shown.
     pub spray: usize,
+    /// Parked cars drawn, and buses with their doors open (18B).
+    pub parked: usize,
+    pub doors_open: usize,
 }
 
 /// A vehicle part of the body mesh.
@@ -434,6 +463,7 @@ fn model_parts(id: VehicleModel, model: &Model, meshes: &mut Assets<Mesh>) -> Mo
     let mut far = Builder::default();
     let mut trailer = Builder::default();
     let mut wheels = Vec::new();
+    let mut doors = Vec::new();
     let mut heads = Vec::new();
     let mut brakes = Vec::new();
     let kingpin = trailer_node.map(|t| Vec3::from(model.world(t).translation));
@@ -466,6 +496,63 @@ fn model_parts(id: VehicleModel, model: &Model, meshes: &mut Assets<Mesh>) -> Mo
                     bus,
                 );
             }
+            continue;
+        }
+        if n.name.starts_with("door_") && !on_trailer {
+            let pivot = Vec3::from(world.translation);
+            let mut b = Builder::default();
+            let local = bevy::math::Affine3A::from_translation(-pivot) * world;
+            for p in &n.primitives {
+                b.add(
+                    p,
+                    &model.materials[p.material],
+                    local,
+                    shade,
+                    paint_slot,
+                    bus,
+                );
+            }
+            // The doorway behind the leaf: dark, seen once it slides away.
+            if !b.pos.is_empty() {
+                let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+                for q in &b.pos {
+                    let w = Vec3::from(*q) + pivot;
+                    lo = lo.min(w);
+                    hi = hi.max(w);
+                }
+                let c = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
+                let dark = [0.03, 0.03, 0.035, 1.0];
+                if pivot.x >= 0.0 {
+                    let x = lo.x + 0.004;
+                    near.quad(
+                        [
+                            c(x, lo.y, hi.z),
+                            c(x, lo.y, lo.z),
+                            c(x, hi.y, lo.z),
+                            c(x, hi.y, hi.z),
+                        ],
+                        Vec3::X,
+                        Role::Fixed,
+                        dark,
+                        0.8,
+                    );
+                } else {
+                    let x = hi.x - 0.004;
+                    near.quad(
+                        [
+                            c(x, lo.y, lo.z),
+                            c(x, lo.y, hi.z),
+                            c(x, hi.y, hi.z),
+                            c(x, hi.y, lo.z),
+                        ],
+                        Vec3::NEG_X,
+                        Role::Fixed,
+                        dark,
+                        0.8,
+                    );
+                }
+            }
+            doors.push((meshes.add(b.mesh()), pivot));
             continue;
         }
         if n.name.starts_with("wheel_") {
@@ -581,6 +668,7 @@ fn model_parts(id: VehicleModel, model: &Model, meshes: &mut Assets<Mesh>) -> Mo
         },
         boxed: meshes.add(box_mesh(lo, hi, class)),
         wheels,
+        doors,
         trailer: kingpin
             .filter(|_| !trailer.pos.is_empty())
             .map(|k| (meshes.add(trailer.mesh()), k)),
@@ -746,6 +834,24 @@ fn spawn_vehicle(
             (e, w.pivot, w.radius, w.on_trailer)
         })
         .collect();
+    let doors = parts
+        .doors
+        .iter()
+        .map(|(mesh, pivot)| {
+            let e = commands
+                .spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(mat.clone()),
+                    tag.clone(),
+                    Transform::from_translation(*pivot),
+                    Visibility::Hidden,
+                    NotShadowCaster,
+                    ChildOf(root),
+                ))
+                .id();
+            (e, *pivot)
+        })
+        .collect();
     let cones = commands
         .spawn((
             Mesh3d(parts.cones.clone()),
@@ -799,6 +905,8 @@ fn spawn_vehicle(
         lod,
         paint,
         wheels,
+        doors,
+        door_open: if v.doors { 1.0 } else { 0.0 },
         trailer,
         cones,
         dots,
@@ -869,7 +977,14 @@ fn sync_vehicles(
         standard,
         spray: spray_materials,
     } = stores;
-    let list: &[VehicleView] = if debug.boxes { &[] } else { &view.vehicles };
+    // The moving vehicles, then the parked cars (18B).
+    let all: Vec<VehicleView> = if debug.boxes {
+        Vec::new()
+    } else {
+        view.vehicles.iter().chain(&view.parked).copied().collect()
+    };
+    let moving = if debug.boxes { 0 } else { view.vehicles.len() };
+    let list: &[VehicleView] = &all;
     // Gone: despawn.
     drawn.shown.retain(|id, s| {
         let keep = list.iter().any(|v| v.id == *id);
@@ -960,7 +1075,8 @@ fn sync_vehicles(
             )
         })
         .collect();
-    let levels = lod::plan(&input, budget);
+    let mut levels = lod::plan(&input[..moving], budget);
+    levels.extend(lod::plan(&input[moving..], lod::parked_budget(level)));
     let t = time.elapsed_secs_f64();
     let dt = time.delta_secs();
     let mut st = TrafficDrawStats::default();
@@ -978,6 +1094,7 @@ fn sync_vehicles(
             continue;
         };
         match lod {
+            _ if v.parked => st.parked += 1,
             Lod::Near => st.near += 1,
             Lod::Lod1 => st.lod1 += 1,
             Lod::Box => st.boxes += 1,
@@ -1018,7 +1135,22 @@ fn sync_vehicles(
         {
             show(v, near);
         }
-        let shadows = near && budget.shadows && dist <= lod::SHADOW_M;
+        // A bus's doors: shown with the near model, sliding open at a stop.
+        if !s.doors.is_empty() {
+            let want = if v.doors { 1.0 } else { 0.0 };
+            let step = dt / DOOR_S;
+            s.door_open += (want - s.door_open).clamp(-step, step);
+            st.doors_open += usize::from(v.doors);
+            for (e, pivot) in &s.doors {
+                if let Ok(d) = vis.get_mut(*e) {
+                    show(d, near);
+                }
+                if near && let Ok(mut t) = tfs.get_mut(*e) {
+                    *t = Transform::from_translation(*pivot + door_offset(*pivot, s.door_open));
+                }
+            }
+        }
+        let shadows = near && !v.parked && budget.shadows && dist <= lod::SHADOW_M;
         if shadows != s.shadows {
             let mut set = |e: Entity| {
                 if let Ok(mut c) = commands.get_entity(e) {
@@ -1068,6 +1200,7 @@ fn sync_vehicles(
         if tag != s.tag || colour != s.paint {
             let mut ents = vec![s.body];
             ents.extend(s.wheels.iter().map(|w| w.0));
+            ents.extend(s.doors.iter().map(|d| d.0));
             if let Some((_, tb, _)) = s.trailer {
                 ents.push(tb);
             }
@@ -1211,6 +1344,9 @@ mod tests {
             speed: 14.0,
             braking: false,
             indicator: Indicator::Off,
+            line: 0,
+            doors: false,
+            parked: false,
         }
     }
 

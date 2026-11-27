@@ -83,6 +83,20 @@ pub fn budget(level: QualityLevel) -> Budget {
     }
 }
 
+/// The parked cars' own budget (spec 18B): as many as the moving
+/// vehicles' at each level, without lights, shadows or cones; they are
+/// only asked for within 400 m (`ocw_client`'s `PARKED_VIEW_M`).
+pub fn parked_budget(level: QualityLevel) -> Budget {
+    let b = budget(level);
+    Budget {
+        near: b.near,
+        far: b.far,
+        spot_lights: 0,
+        shadows: false,
+        cones: false,
+    }
+}
+
 fn level_at(d: f32, before: Option<Lod>) -> Option<Lod> {
     // The border moves away from the current level by the hysteresis.
     let border = |b: f32, inner: Lod| match before {

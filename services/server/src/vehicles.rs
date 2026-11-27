@@ -34,7 +34,7 @@ use ocw_protocol::vehicles::{change_to_wire, spawn_to_wire};
 use ocw_protocol::{encode, server_message};
 use ocw_sim::traffic::{
     Bubble, DemandTime, DriverManners, Gust, Plan, Region, RiderEvent, RoadUser, TrafficConfig,
-    TrafficEvent, TrafficLevel, TrafficSim, world,
+    TrafficEvent, TrafficLevel, TrafficSim, parked::ParkedCars, world,
 };
 use ocw_world::RoadNetwork;
 
@@ -111,6 +111,9 @@ pub(crate) struct RoadRun {
     time: Option<(u64, DemandTime)>,
     /// The events since the last broadcast.
     pending: Vec<TrafficEvent>,
+    /// The parked cars of the world (spec 18B; the riders' solids while
+    /// the road traffic is on, the same the clients draw).
+    parked: Option<Arc<ParkedCars>>,
 }
 
 /// The server's road vehicles: the run while it is on, and what each
@@ -170,6 +173,12 @@ impl GameServer {
     /// The traffic simulation, while it runs (tests and tools).
     pub fn traffic_sim(&self) -> Option<&TrafficSim> {
         self.vehicles.run.as_ref().map(|r| &r.sim)
+    }
+
+    /// The parked cars, while the road traffic runs on a world with
+    /// traffic data (spec 18B).
+    pub fn parked_cars(&self) -> Option<&Arc<ParkedCars>> {
+        self.vehicles.run.as_ref().and_then(|r| r.parked.as_ref())
     }
 
     /// What connection `conn` was sent of the road traffic.
@@ -254,6 +263,9 @@ impl GameServer {
             if self.vehicles.run.take().is_some() {
                 tracing::info!("road traffic off: the vehicles are gone");
             }
+            if self.session.parked_cars().is_some() {
+                self.session.set_parked_cars(None);
+            }
             self.vehicles_off_updates();
             return;
         }
@@ -265,6 +277,7 @@ impl GameServer {
             .is_some_and(|r| r.net.fingerprint() != net.fingerprint())
         {
             self.vehicles.world_changed();
+            self.session.set_parked_cars(None);
         }
         if self.vehicles.run.is_none() {
             let rules_src = world::WorldRules::new(&net);
@@ -282,6 +295,8 @@ impl GameServer {
                 manners: manners_of(rules.manners),
                 ..Default::default()
             };
+            let parked = ParkedCars::new(net.clone()).map(Arc::new);
+            self.session.set_parked_cars(parked.clone());
             let place = self.geo_origin.unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
             let zone = ocw_sky::Zone::get(&ocw_sky::zone::zone_for(place.0, place.1)).ok();
             self.vehicles.run = Some(RoadRun {
@@ -291,6 +306,7 @@ impl GameServer {
                 zone,
                 time: None,
                 pending: Vec::new(),
+                parked,
             });
         }
         // The riders: bubbles around the connected ones, every rider on

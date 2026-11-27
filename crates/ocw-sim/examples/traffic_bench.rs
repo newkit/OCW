@@ -6,8 +6,15 @@
 //!     [--package FILE.ocwpkg] [--at X,Z] [--radius 1500] [--hour 17.5] \
 //!     [--level busy] [--minutes 10] [--max 500] [--seed 1] \
 //!     [--svg OUT.svg] [--ring OUT.svg] [--class-rules] \
-//!     [--inspect] [--vertices V,V] [--view X,Z,R] [--title TEXT]
+//!     [--inspect] [--vertices V,V] [--view X,Z,R] [--title TEXT] \
+//!     [--buses]
 //! ```
+//!
+//! `--buses` (with `--package`; spec 18B) reports the package's bus lines
+//! (pieces, stops, joins and cuts, headways), the parked cars per km by
+//! street class within the bubble (with the package's obstacles), and
+//! runs the traffic to list where and when buses stand at their stops
+//! with their doors open.
 //!
 //! It prints why vehicles stand ([`TrafficSim::waits`]: a full exit, a
 //! vehicle in the junction, give way, a light, a queue), the heads of the
@@ -62,6 +69,7 @@ struct Args {
     fixture: Option<String>,
     riders: usize,
     around: Option<String>,
+    buses: bool,
 }
 
 fn args() -> Args {
@@ -84,6 +92,7 @@ fn args() -> Args {
         fixture: None,
         riders: 0,
         around: None,
+        buses: false,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -120,6 +129,11 @@ fn args() -> Args {
             }
             "--inspect" => {
                 a.inspect = true;
+                i += 1;
+                continue;
+            }
+            "--buses" => {
+                a.buses = true;
                 i += 1;
                 continue;
             }
@@ -191,6 +205,157 @@ fn load(path: &str) -> RoadNetwork {
     RoadNetwork::new(graph).with_traffic_of(&pkg)
 }
 
+/// `--buses`: the lines, the parked cars and the buses at their stops.
+fn bus_report(a: &Args) {
+    use ocw_sim::traffic::parked::{ParkedCars, occupancy};
+    use std::sync::Arc;
+    let path = a.package.as_deref().expect("--buses needs --package");
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let pkg = ocw_world::WorldPackage::from_bytes(&bytes).expect("package");
+    let graph = pkg.graph.clone().expect("a road graph");
+    let obstacles = ocw_world::obstacles::WorldObstacles::from_package(&pkg).map(Arc::new);
+    let net = Arc::new(
+        RoadNetwork::new(graph)
+            .with_traffic_of(&pkg)
+            .with_obstacles(obstacles),
+    );
+    let cfg = TrafficConfig {
+        seed: a.seed,
+        level: a.level,
+        max_vehicles: a.max,
+        step_ms: 100,
+        ..TrafficConfig::default()
+    };
+    let rules = ocw_sim::traffic::WorldRules::new(&net);
+    let mut sim = TrafficSim::new(&net, Box::new(rules), cfg);
+    let c = sim.bus_line_counts();
+    println!(
+        "bus routes {}: {} line pieces, {} stops ({} not on their lines), {} gaps joined, {} cuts",
+        c.routes, c.pieces, c.stops, c.stops_missed, c.joined, c.cuts
+    );
+    for l in sim.bus_lines() {
+        println!(
+            "  line {:>5} \"{}\": {:.1} km, {} stops, every {} min (phase {} s)",
+            l.id,
+            l.sign(),
+            l.length / 1000.0,
+            l.stops.len(),
+            l.base_min,
+            l.phase_s
+        );
+    }
+    let center = a.at.unwrap_or([0.0, 0.0]);
+    // Parked cars per km by street class within the bubble.
+    let parked = ParkedCars::new(net.clone()).expect("TRFC");
+    let t0 = Instant::now();
+    let cars = parked.near(center, a.radius);
+    let took = t0.elapsed();
+    let mut by_class: std::collections::BTreeMap<RoadClass, (usize, f64)> = Default::default();
+    for c in &cars {
+        if let Some(e) = c.edge {
+            by_class.entry(net.edge(e as usize).class).or_default().0 += 1;
+        }
+    }
+    for e in &net.graph().edges {
+        let mid = e.points[e.points.len() / 2];
+        if (mid[0] - center[0]).hypot(mid[1] - center[1]) <= a.radius && occupancy(e.class) > 0.0 {
+            by_class.entry(e.class).or_default().1 += e.length_m() / 1000.0;
+        }
+    }
+    let in_lots = cars.iter().filter(|c| c.edge.is_none()).count();
+    println!(
+        "parked cars within {:.0} m of ({:.0}, {:.0}): {} ({} in car parks), placed in {:.1} ms",
+        a.radius,
+        center[0],
+        center[1],
+        cars.len(),
+        in_lots,
+        took.as_secs_f64() * 1000.0
+    );
+    for (class, (n, km)) in &by_class {
+        println!(
+            "  {class:?}: {n} cars on {km:.1} km of road, {:.0} a km",
+            *n as f64 / km.max(1e-9)
+        );
+    }
+    // The streets with the most parked cars (for pictures).
+    let mut per_edge: std::collections::BTreeMap<u32, usize> = Default::default();
+    for c in &cars {
+        if let Some(e) = c.edge {
+            *per_edge.entry(e).or_default() += 1;
+        }
+    }
+    let mut top: Vec<(usize, u32)> = per_edge.iter().map(|(&e, &n)| (n, e)).collect();
+    top.sort_unstable_by(|a, b| b.cmp(a));
+    for &(n, e) in top.iter().take(6) {
+        let g = net.geometry(e as usize);
+        let p = g.point_at(g.length() / 2.0);
+        let edge = net.edge(e as usize);
+        println!(
+            "  edge {e} ({:?}, {}): {n} cars on {:.0} m, middle x {:.0} z {:.0}",
+            edge.class,
+            edge.name.as_deref().unwrap_or("-"),
+            g.length(),
+            p[0],
+            p[2]
+        );
+    }
+    let c = sim.bus_line_counts();
+    println!("routes left out (under two stops): {}", c.idle);
+    // The buses at their stops.
+    let bubble = Bubble {
+        center,
+        radius: a.radius,
+    };
+    let time = DemandTime::weekday_at(a.hour);
+    let per_s = 10u64;
+    let mut open: std::collections::BTreeMap<u32, u64> = Default::default();
+    let mut dwells: Vec<(f64, u32, f64)> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for t in 0..(a.minutes * 60.0 * per_s as f64) as u64 {
+        sim.step(&net, &[bubble], &[], &time.plus_seconds((t / per_s) as u32));
+        let _ = sim.drain_events();
+        for b in sim.buses() {
+            seen.insert(b.id);
+            if b.doors && !open.contains_key(&b.id) {
+                open.insert(b.id, t);
+                let line = &sim.bus_lines()[b.line];
+                let (p, h) = ocw_sim::traffic::bus::place(&net, line, b.at - 6.0);
+                if dwells.len() < 40 {
+                    println!(
+                        "  {:>6.1} s: bus {} \"{}\" at stop {} – x {:.0} z {:.0}, heading ({:.2}, {:.2})",
+                        t as f64 / per_s as f64,
+                        b.id,
+                        line.sign(),
+                        b.next_stop,
+                        p[0],
+                        p[1],
+                        h[0],
+                        h[1]
+                    );
+                }
+            }
+            if !b.doors
+                && let Some(from) = open.remove(&b.id)
+            {
+                dwells.push((
+                    t as f64 / per_s as f64,
+                    b.id,
+                    (t - from) as f64 / per_s as f64,
+                ));
+            }
+        }
+    }
+    let mean = dwells.iter().map(|d| d.2).sum::<f64>() / dwells.len().max(1) as f64;
+    println!(
+        "{} buses in {:.0} minutes, {} stops served, doors open {:.1} s on average",
+        seen.len(),
+        a.minutes,
+        dwells.len(),
+        mean
+    );
+}
+
 /// The busiest junction (the most daily traffic of the roads meeting there).
 fn busiest(net: &RoadNetwork, sim: &TrafficSim) -> [f64; 2] {
     let g = net.graph();
@@ -227,6 +392,10 @@ fn main() {
     }
     if let Some(dir) = &a.around {
         around_plots(dir);
+        return;
+    }
+    if a.buses {
+        bus_report(&a);
         return;
     }
     let net = match &a.package {

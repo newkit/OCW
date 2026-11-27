@@ -456,14 +456,27 @@ impl Predictor {
         world: Option<std::sync::Arc<ocw_world::obstacles::WorldObstacles>>,
     ) {
         let woods = self.world.woods.take();
+        let parked = self.world.parked.take();
         self.world = WorldCache::new(world).with_woods(woods);
+        self.world.parked = parked;
     }
 
     /// The drawn trees off the road as trunks (spec 14 Phase 13 Q10 (a)),
     /// the same as the server's.
     pub fn set_woods(&mut self, woods: Option<std::sync::Arc<ocw_world::woods::Woods>>) {
         let world = self.world.world.take();
+        let parked = self.world.parked.take();
         self.world = WorldCache::new(world).with_woods(woods);
+        self.world.parked = parked;
+    }
+
+    /// The parked cars (spec 18B), the same as the server's while the
+    /// road traffic is on.
+    pub fn set_parked_cars(
+        &mut self,
+        parked: Option<std::sync::Arc<crate::traffic::parked::ParkedCars>>,
+    ) {
+        self.world.parked = parked;
     }
 
     /// The damage's effects in force (the server's, spec §14 Phase 12E).

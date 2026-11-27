@@ -85,6 +85,8 @@ pub fn spawn_to_wire(p: &Plan, update_tick: Tick) -> v1::TrafficSpawn {
         shift_at: p.shift.at,
         shift_to: p.shift.to,
         shift_rate: p.shift.rate,
+        line: p.line,
+        doors: p.doors,
     }
 }
 
@@ -121,6 +123,8 @@ pub fn spawn_from_wire(m: &v1::TrafficSpawn, update_tick: Tick) -> Option<Plan> 
             to: m.shift_to,
             rate: m.shift_rate,
         },
+        line: m.line,
+        doors: m.doors,
     })
 }
 
@@ -141,6 +145,7 @@ pub fn change_to_wire(c: &PlanChange, update_tick: Tick) -> v1::TrafficChange {
         shift_at: c.shift.at,
         shift_to: c.shift.to,
         shift_rate: c.shift.rate,
+        doors: c.doors,
     }
 }
 
@@ -164,6 +169,7 @@ pub fn change_from_wire(m: &v1::TrafficChange, update_tick: Tick) -> Option<Plan
             to: m.shift_to,
             rate: m.shift_rate,
         },
+        doors: m.doors,
     })
 }
 
@@ -212,6 +218,8 @@ mod tests {
                 to: 1.75,
                 rate: 0.6,
             },
+            line: 0x0003_0001,
+            doors: true,
         }
     }
 
@@ -236,6 +244,7 @@ mod tests {
                         to: 0.0,
                         rate: 0.5,
                     },
+                    doors: true,
                 },
                 1000,
             )],
