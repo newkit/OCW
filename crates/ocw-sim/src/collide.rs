@@ -187,6 +187,10 @@ pub enum ContactKind {
     /// Slipped on wet leaves in a corner (spec 4.6.2 Q6, `crate::leaves`;
     /// only with damage on and never in group rides).
     Leaves,
+    /// A road vehicle (spec 14 Phase 18, 18B, Q4): a car that could not
+    /// stop in time hit the rider, or the rider steered into it
+    /// ([`vehicle_hit`]).
+    Vehicle,
 }
 
 impl ContactKind {
@@ -202,6 +206,7 @@ impl ContactKind {
             ContactKind::RoadEdge => "road edge",
             ContactKind::Slide => "slid out",
             ContactKind::Leaves => "wet leaves",
+            ContactKind::Vehicle => "vehicle",
         }
     }
 }
@@ -668,7 +673,8 @@ pub fn fallers(c: &Contact, bodies: &[Body], mode: Mode, tick: u64) -> (bool, bo
         | ContactKind::World(_)
         | ContactKind::RoadEdge
         | ContactKind::Slide
-        | ContactKind::Leaves => (
+        | ContactKind::Leaves
+        | ContactKind::Vehicle => (
             !a.fallen && v >= CRASH_OBJECT_MPS * crash_scale(a.grip),
             !b.fallen && v >= CRASH_OBJECT_MPS * crash_scale(b.grip),
         ),
@@ -1065,6 +1071,79 @@ pub fn edge_hit(speed: f64, heading: f64, mass: f64, grip: f64, mode: Mode) -> O
         });
     }
     Some(out)
+}
+
+/// A road vehicle sweeping past a rider it touches drags the rider down
+/// above this relative speed along the road (m/s, about 11 km/h), even
+/// when the push sideways is gentle (spec 14 Phase 18 T4).
+pub const VEHICLE_SWIPE_MPS: f64 = 3.0;
+
+/// The overlap of a rider's footprint with a road vehicle's box (12B with
+/// vehicles, spec 18B: the box of the model's `col_box`): the unit normal
+/// from the rider into the vehicle and the depth, `None` if apart. Both
+/// in world space (x, z), e.g. from `TrafficSim::bodies`.
+pub fn vehicle_overlap(
+    rider: &Body,
+    vehicle: &crate::traffic::VehicleBody,
+) -> Option<([f64; 2], f64)> {
+    rect_overlap(
+        (rider.forward(), rider.half()),
+        (vehicle.forward, (vehicle.half_length, vehicle.half_width)),
+        sub(vehicle.pos, rider.pos),
+    )
+}
+
+/// The rider's response to a touch by a road vehicle (spec 18F Q4: a car
+/// that cannot stop in time hits the rider; a rider who steers into a
+/// car touches it – only with collisions on): the vehicle is far heavier,
+/// so the rider takes all of it. `closing_mps` along the contact normal,
+/// `relative` the vehicle's velocity relative to the rider in the rider's
+/// frame (along, right), `push_side` which way the rider is pushed (+1 =
+/// right). A crash in [`Mode::Full`] at [`CRASH_OBJECT_MPS`] (× the
+/// grip's [`crash_scale`]) or when the vehicle sweeps past faster than
+/// [`VEHICLE_SWIPE_MPS`]; otherwise (and always in [`Mode::Soft`]) a
+/// bump with a wobble. Off: nothing. The damage follows the usual rules
+/// (12E, only with `ride.damage on`): the hit's kind is
+/// [`ContactKind::Vehicle`].
+pub fn vehicle_hit(
+    body: &Body,
+    closing_mps: f64,
+    relative: [f64; 2],
+    push_side: f64,
+    mode: Mode,
+) -> Response {
+    let mut out = Response::default();
+    if mode == Mode::Off || body.fallen {
+        return out;
+    }
+    let side = if push_side < 0.0 { -1.0 } else { 1.0 };
+    let swipe = relative[0].abs();
+    // The velocity change in the rider's frame: the closing speed along
+    // the push, a share of the sweep along the road.
+    let impulse = [relative[0] * 0.3, side * closing_mps.max(0.3)];
+    let hit = Hit {
+        kind: ContactKind::Vehicle,
+        other: RiderId(0),
+        closing_mps,
+        energy_j: 0.5 * body.mass * (closing_mps * closing_mps + 0.1 * swipe * swipe),
+        impulse,
+    };
+    // Pushed out of the vehicle's way, a little.
+    out.dd = side * 0.05;
+    let scale = crash_scale(body.grip);
+    let crash = mode == Mode::Full
+        && (closing_mps >= CRASH_OBJECT_MPS * scale || swipe >= VEHICLE_SWIPE_MPS * scale);
+    if crash {
+        out.crash = Some(hit);
+    } else {
+        out.bump = Some((wobble_strength(closing_mps.max(swipe * 0.3)), side));
+        out.touch = Some(hit);
+        // A rear touch takes the rider's speed up to the vehicle's a bit.
+        if relative[0] > 0.0 {
+            out.speed = Some(body.speed + relative[0] * 0.1);
+        }
+    }
+    out
 }
 
 /// Tiles of the obstacle index not used for this long are dropped (s).

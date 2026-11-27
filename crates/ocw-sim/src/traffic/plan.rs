@@ -51,6 +51,28 @@ pub enum Motion {
     Stopped,
 }
 
+/// The lateral shift of a vehicle from its lane's centre (T4: pulling
+/// out to pass a rider, moving back in, swerving away from a rider in its
+/// lane): metres towards the road's centreline (negative = towards the
+/// kerb), moving towards `to` at `rate` m/s.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Shift {
+    pub at: f32,
+    pub to: f32,
+    pub rate: f32,
+}
+
+/// The server sends a change when the follower's shift is off by more
+/// than this (m).
+pub const SHIFT_TOLERANCE_M: f64 = 0.15;
+
+/// One tick of a shift (`at` towards `to` at `rate`, m and m/s): the same
+/// on the server and the clients.
+pub fn shift_step(at: f64, to: f64, rate: f64, dt: f64) -> f64 {
+    let max = rate.abs() * dt;
+    at + (to - at).clamp(-max, max)
+}
+
 /// A vehicle as it is spawned: sent once (`TrafficSpawn`, T5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
@@ -71,6 +93,8 @@ pub struct Plan {
     /// Lane, 0 = the kerb-side lane of the driving direction.
     pub lane: u8,
     pub motion: Motion,
+    /// Its lateral shift (T4; zero at a spawn).
+    pub shift: Shift,
 }
 
 /// What changed in a vehicle's plan at `tick` (after that tick's step).
@@ -85,6 +109,8 @@ pub struct PlanChange {
     pub v: f32,
     pub lane: u8,
     pub motion: Motion,
+    /// The lateral shift (T4).
+    pub shift: Shift,
     /// A longer route (it neared the end of its plan): these steps
     /// replace the route's last step (whose turn now leads into the new
     /// ones) and follow it. Empty: the route is unchanged.
@@ -128,6 +154,10 @@ pub struct PlanFollower {
     pub v: f64,
     pub lane: u8,
     pub motion: Motion,
+    /// The lateral shift now, its target and rate (see [`Shift`]).
+    pub shift: f64,
+    pub shift_to: f64,
+    pub shift_rate: f64,
     /// The tick the state is at.
     pub tick: Tick,
     /// The route ended (the vehicle stands at its end).
@@ -150,6 +180,9 @@ impl PlanFollower {
             v: f64::from(plan.v),
             lane: plan.lane,
             motion: plan.motion,
+            shift: f64::from(plan.shift.at),
+            shift_to: f64::from(plan.shift.to),
+            shift_rate: f64::from(plan.shift.rate),
             tick: plan.tick,
             ended: false,
         }
@@ -168,6 +201,9 @@ impl PlanFollower {
         self.v = f64::from(c.v);
         self.lane = c.lane;
         self.motion = c.motion;
+        self.shift = f64::from(c.shift.at);
+        self.shift_to = f64::from(c.shift.to);
+        self.shift_rate = f64::from(c.shift.rate);
         self.tick = c.tick;
         self.ended = false;
     }
@@ -194,6 +230,7 @@ impl PlanFollower {
     /// One tick of `dt` seconds.
     pub fn step(&mut self, net: &RoadNetwork, curves: &Curves, dt: f64) {
         self.tick += 1;
+        self.shift = shift_step(self.shift, self.shift_to, self.shift_rate, dt);
         if self.ended || self.motion == Motion::Stopped {
             if self.motion == Motion::Stopped {
                 self.v = 0.0;

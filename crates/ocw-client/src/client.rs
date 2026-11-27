@@ -226,6 +226,8 @@ pub struct ClientCore {
     collisions: crate::collisions::CollisionClient,
     /// The session's road traffic and air seed (spec 14 Phase 18, T1).
     traffic: crate::traffic::TrafficClient,
+    /// The road vehicles near the rider (spec 14 Phase 18, 18E T5).
+    vehicles: crate::vehicles::ClientVehicles,
     avoid: ocw_sim::avoid::AvoidState,
     was_down: bool,
     proximity_cue: bool,
@@ -341,6 +343,7 @@ impl ClientCore {
             god_notice: None,
             collisions: Default::default(),
             traffic: Default::default(),
+            vehicles: Default::default(),
             avoid: Default::default(),
             was_down: false,
             proximity_cue: false,
@@ -781,6 +784,8 @@ impl ClientCore {
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 self.collisions.on_welcome(&w);
                 self.traffic.on_welcome(&w);
+                // A new session: its server sends the vehicles again.
+                self.vehicles.clear();
                 self.damage.on_welcome(&w);
                 // A ghost to the others again for the first seconds, as
                 // the server keeps a joining rider (spec §14 Phase 12A).
@@ -818,6 +823,17 @@ impl ClientCore {
                 self.voice_apart = a.riders.into_iter().map(RiderId).collect();
                 None
             }
+            S::Traffic(u) => {
+                let tick = self.server_tick_now(now_s);
+                // A free ride's road graph, else the route's own road.
+                let net = match &self.free {
+                    Some(f) => f.net.clone(),
+                    None if self.vehicles.shown() => self.vehicles.route_network(&self.route),
+                    None => return None,
+                };
+                self.vehicles.on_update(&u, Some(&net), tick, now_s);
+                None
+            }
             S::NotHearingYou(n) => {
                 self.not_hearing_you = n.riders.into_iter().map(RiderId).collect();
                 None
@@ -839,6 +855,7 @@ impl ClientCore {
                 // mean other riders now, so nothing is reconciled until
                 // the app has loaded the new world and joined again.
                 self.rider_id = None;
+                self.vehicles.clear();
                 Some(Notice::WorldChange(c))
             }
             S::Event(e) => {
@@ -2160,6 +2177,25 @@ impl ClientCore {
             .is_none_or(|a| a.allows(self.rider_id, self.clock_info.and_then(|c| c.host)))
     }
 
+    /// The road vehicles near the rider (spec 14 Phase 18, 18E T5).
+    pub fn vehicles(&self) -> &crate::vehicles::ClientVehicles {
+        &self.vehicles
+    }
+
+    /// Whether this client keeps road vehicles (the browser: no, Q9 (b)).
+    pub fn set_road_vehicles_shown(&mut self, on: bool) {
+        self.vehicles.set_shown(on);
+    }
+
+    /// The road vehicles for the renderer at client time `now_s`
+    /// (extrapolated on the server's clock, corrections blended).
+    pub fn vehicles_view(&self, now_s: f64) -> Vec<ocw_render::traffic::VehicleView> {
+        if self.last_snapshot_at.is_none() {
+            return Vec::new();
+        }
+        self.vehicles.view(self.server_tick_now(now_s), now_s)
+    }
+
     /// The session's traffic as the server sent it (spec 14 Phase 18).
     pub fn traffic(&self) -> &crate::traffic::TrafficClient {
         &self.traffic
@@ -3151,6 +3187,7 @@ mod tests {
     use super::*;
 
     mod off_road_tests;
+    mod traffic_tests;
 
     fn route() -> Route {
         Route::test_loop()

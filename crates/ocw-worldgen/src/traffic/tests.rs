@@ -468,3 +468,76 @@ fn speed_coverage_counts_roads_without_a_limit() {
     assert_eq!(total.edges - total.unmapped_edges, 2);
     assert!(c.by_class[&RoadClass::Primary].unmapped_km > 0.5);
 }
+
+/// The traffic core reads the built package's rules (spec 18E T5):
+/// the one-way street's direction and its lorry ban, the lights at node 3
+/// on every arm, the give-way sign for the tertiary road at node 2 (the
+/// main road has right of way there), and a simulated busy hour keeps
+/// them.
+#[test]
+fn the_traffic_core_drives_by_the_built_rules() {
+    use ocw_sim::traffic::WorldRules;
+    use ocw_sim::traffic::{
+        Bubble, Control, DemandTime, EdgeRules as _, TrafficConfig, TrafficLevel, TrafficSim,
+        VehicleClass,
+    };
+    let (pkg, _) = built("Europe/Vaduz", true);
+    let net = ocw_world::RoadNetwork::new(pkg.graph.clone().unwrap()).with_traffic_of(&pkg);
+    let rules = WorldRules::new(&net);
+    assert!(rules.from_data());
+    let index = |e: &Edge| net.edge_index(e.id).unwrap();
+    let street = index(&edge_of(&pkg, 101, 0));
+    let r = rules.edge_rule(&net, street);
+    assert!(!r.allows(VehicleClass::Car, true) && r.allows(VehicleClass::Car, false));
+    assert!(!r.access.allows(VehicleClass::Lorry));
+    // Node 3: the end of the main road's 2 – 3 edge; lights on all arms.
+    let west = edge_of(&pkg, 100, 1);
+    let v3 = west.to;
+    for &e in net.edges_at(v3) {
+        let fwd = net.edge(e).to == v3;
+        assert_eq!(
+            rules.node_control(&net, v3, e, fwd),
+            Some(Control::Signals),
+            "arm {e}"
+        );
+    }
+    // Node 2: the tertiary road gives way, the main road has priority.
+    let side = edge_of(&pkg, 103, 0);
+    let v2 = side.to;
+    assert_eq!(
+        rules.node_control(&net, v2, index(&side), true),
+        Some(Control::GiveWay)
+    );
+    let main = index(&edge_of(&pkg, 100, 0));
+    assert_eq!(
+        rules.node_control(&net, v2, main, net.edge(main).to == v2),
+        Some(Control::Priority)
+    );
+    // A busy hour on the package's rules.
+    let mut sim = TrafficSim::new(
+        &net,
+        Box::new(rules),
+        TrafficConfig {
+            seed: 11,
+            step_ms: 100,
+            level: TrafficLevel::Busy,
+            ..Default::default()
+        },
+    );
+    let bubble = Bubble {
+        center: [0.0, 0.0],
+        radius: 1500.0,
+    };
+    let mut seen = 0;
+    for t in 0..36_000u32 {
+        let time = DemandTime::weekday_at(8.0).plus_seconds(t / 10);
+        sim.step(&net, &[bubble], &[], &time);
+        for (e, fwd, class) in sim.placements() {
+            assert!(!(e == street && fwd), "against the one-way street");
+            assert!(!(e == street && class == VehicleClass::Lorry), "a lorry");
+            seen += 1;
+        }
+        sim.drain_events();
+    }
+    assert!(seen > 1000, "{seen} vehicle-ticks");
+}

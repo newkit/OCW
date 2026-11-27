@@ -68,6 +68,8 @@ pub struct BotRider {
     /// §14 Phase 9, S6: the prediction rides the server's weather physics,
     /// like the desktop client's).
     weather: Option<(ocw_protocol::WeatherInfo, f64)>,
+    /// The road vehicles near the rider (ids; spec 18E T5).
+    vehicles: std::collections::BTreeSet<u32>,
 }
 
 impl BotRider {
@@ -113,6 +115,7 @@ impl BotRider {
             report,
             timing: Default::default(),
             weather: None,
+            vehicles: Default::default(),
         }
     }
 
@@ -177,6 +180,22 @@ impl BotRider {
                 self.close(&format!("rejected: {}", r.reason), now_s);
             }
             S::Snapshot(s) => self.on_snapshot(&s, now_s),
+            // Road vehicles (spec 18E T5): counted, not followed.
+            S::Traffic(u) => {
+                self.report.traffic_updates += 1;
+                self.report.traffic_bytes += bytes.len() as u64;
+                if u.reset {
+                    self.vehicles.clear();
+                }
+                for id in &u.despawns {
+                    self.vehicles.remove(id);
+                }
+                self.vehicles.extend(u.spawns.iter().map(|s| s.id));
+                self.report.traffic_max_vehicles = self
+                    .report
+                    .traffic_max_vehicles
+                    .max(self.vehicles.len() as u32);
+            }
             // Dev results, events, paths: not used by bots.
             _ => {}
         }

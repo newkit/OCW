@@ -10,6 +10,9 @@
 !proto
 !assets
 !artwork/logos
+# Bevy's patched renderer: Cargo.toml's [patch.crates-io] points at it, and
+# cargo needs every patch path to resolve the workspace, even for ocw-server.
+!vendor/bevy_render
 # The shipped models (ocw-assets embeds them; the server's collisions take
 # the props' shapes from them): pull the LFS files first, pointer files
 # give the server no shapes.

@@ -200,6 +200,9 @@ impl WebSession {
         transport: Option<Box<dyn Transport>>,
     ) -> Self {
         let mut client = client;
+        // Road traffic is desktop only (spec 14 Phase 18 Q9 (b)): a
+        // server that sends vehicles anyway is ignored here.
+        client.set_road_vehicles_shown(false);
         if let Some(remote) = &config.remote {
             client.set_access_token(config.access_token.clone());
             // Voice choices by name are remembered per server (§7.1.7 Q9).

@@ -35,6 +35,9 @@ pub mod stats;
 // Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
 pub mod timing;
 pub mod traffic;
+// The road vehicles: the traffic simulation and what each rider is sent
+// (spec 14 Phase 18, 18E T5).
+pub mod vehicles;
 pub mod voice;
 /// Voice blocks: who exchanges no voice with whom (spec §7.1.7 Q9).
 pub mod voice_block;
@@ -360,6 +363,9 @@ pub struct GameServer {
     event_weather: Option<(u32, ocw_weather::machine::EventWeather)>,
     /// The session's road traffic and air seed (spec 14 Phase 18, T1).
     traffic: traffic::ServerTraffic,
+    /// The road vehicles while the road traffic is on, and what each
+    /// connection has of them (spec 14 Phase 18, 18E T5).
+    vehicles: vehicles::ServerVehicles,
     /// Real weather (spec §14 Phase 9, S7), while it is on.
     real: Option<realweather::RealSession>,
     /// Performs real weather's requests (`None`: this server has no
@@ -565,6 +571,7 @@ impl GameServer {
         let traffic = traffic::ServerTraffic::new(&config, epoch);
         Self {
             traffic,
+            vehicles: Default::default(),
             clock,
             weather,
             config,
@@ -679,6 +686,8 @@ impl GameServer {
             self.geo_origin = r.geo_origin().or(self.geo_origin);
         }
         self.session = new_session(course, &self.config);
+        // The vehicles of the old graph are gone (spec 18E T5).
+        self.vehicles.world_changed();
         let conns: Vec<ConnectionId> = std::mem::take(&mut self.riders).into_keys().collect();
         self.event_dirty = false;
         self.pending_world = None;
@@ -1124,6 +1133,7 @@ impl GameServer {
         self.voice_hearing.remove(&conn);
         self.not_hearing_you.remove(&conn);
         self.directed.retain(|(c, _)| *c != conn);
+        self.vehicles.disconnect(conn);
         if let Some(rider) = self.riders.remove(&conn) {
             self.statuses.remove(&rider);
             self.photos.remove(&rider);
@@ -2368,6 +2378,9 @@ impl GameServer {
             self.session.set_leaf_season(Some(day));
         }
         self.session.step();
+        // The road vehicles (spec 14 Phase 18, 18E T5): only while the
+        // road traffic is on; their updates go to each rider directed.
+        self.vehicles_tick();
         let t = self.session_time_s();
         self.weather.tick(t);
         self.real_weather_tick(t);

@@ -229,6 +229,11 @@ pub struct RoadNetwork {
     woods: Option<std::sync::Arc<crate::woods::Woods>>,
     /// The edges by 100 m cell, made when first needed ([`Self::nearest_within`]).
     edge_grid: std::sync::Arc<std::sync::OnceLock<EdgeGrid>>,
+    /// The motor-traffic rules of the package (section `TRFC`, spec 18B;
+    /// `None`: an old package, the rules implied by class) and the country
+    /// for edges without data (spec 18E T5: the traffic core reads them).
+    traffic: Option<std::sync::Arc<crate::traffic::TrafficData>>,
+    traffic_country: crate::traffic::Country,
 }
 
 /// Cell size of the edge index (m).
@@ -300,6 +305,37 @@ impl RoadNetwork {
             ground: None,
             woods: None,
             edge_grid: Default::default(),
+            traffic: None,
+            traffic_country: crate::traffic::Country::Other,
+        }
+    }
+
+    /// The same network with the traffic rules of its package (spec 18E
+    /// T5): its `TRFC` section, else the rules implied by class and the
+    /// country of its time zone ([`crate::traffic::RoadRules::of`]).
+    pub fn with_traffic_of(self, package: &crate::WorldPackage) -> Self {
+        let country = crate::traffic::RoadRules::of(package).country;
+        self.with_traffic(package.traffic.clone(), country)
+    }
+
+    /// The same network with these traffic rules (`None`: implied by class
+    /// in `country`).
+    pub fn with_traffic(
+        mut self,
+        data: Option<std::sync::Arc<crate::traffic::TrafficData>>,
+        country: crate::traffic::Country,
+    ) -> Self {
+        self.traffic = data;
+        self.traffic_country = country;
+        self
+    }
+
+    /// The motor-traffic rules of the edges (spec 18B): the package's
+    /// `TRFC` where it has it, else the implied ones.
+    pub fn road_rules(&self) -> crate::traffic::RoadRules<'_> {
+        crate::traffic::RoadRules {
+            data: self.traffic.as_deref(),
+            country: self.traffic_country,
         }
     }
 
