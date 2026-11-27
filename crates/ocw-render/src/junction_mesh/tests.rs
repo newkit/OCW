@@ -714,6 +714,8 @@ fn stored_junctions_and_strip_edges_shape_the_same_tiles() {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         let plain = PackageJunctions::new(&pkg).unwrap();
         assert!(!plain.settled && !plain.set.is_stored());

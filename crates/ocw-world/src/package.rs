@@ -48,7 +48,10 @@
 //! §14 Phase 12 K3, optional), see [`crate::obstacles`]; `PLCE` – the
 //! place names (OSM `place=*`: cities, towns, villages … with their rank,
 //! for the map labels; spec §4.7, §14 Phase 16 16A, optional), see
-//! [`crate::places`]. A package
+//! [`crate::places`]; `TRFC` – the road traffic rules per edge, signals,
+//! bus stops and lines, car parks (spec 14 Phase 18, 18B, optional), see
+//! [`crate::traffic`]; `AERO` – aerodromes, runways and helipads (18C,
+//! optional), see [`crate::aero`]. A package
 //! without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
@@ -59,6 +62,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::aero::{AERO_TAG, Aero, read_aero, write_aero};
 use crate::bridges::{BRIDGES_TAG, Bridges, read_bridges, write_bridges};
 use crate::buildings::{
     BUILDING_PARTS_TAG, BUILDING_TAGS_TAG, BUILDINGS_TAG, Buildings, apply_building_parts,
@@ -89,6 +93,7 @@ use crate::road_condition::{
 };
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
+use crate::traffic::{TRAFFIC_TAG, TrafficData, read_traffic, write_traffic};
 use crate::vegetation::{VEGETATION_TAG, read_vegetation, write_vegetation};
 use crate::water_lines::{WATER_LINES_TAG, read_water_lines, write_water_lines};
 
@@ -209,6 +214,15 @@ pub struct WorldPackage {
     /// strip); `None` in older packages, whose junctions are computed from
     /// the graph with the same result.
     pub junctions: Option<std::sync::Arc<JunctionData>>,
+    /// The road traffic rules (section `TRFC`, spec 14 Phase 18, 18B: per
+    /// edge access, one-way, lanes, limits, parking; signals, bus stops
+    /// and lines, car parks); `None` in older packages ("no traffic
+    /// data": [`crate::traffic::RoadRules`] gives the implied rules by
+    /// class). Shared like the graph.
+    pub traffic: Option<Arc<TrafficData>>,
+    /// Aerodromes, runways and helipads (section `AERO`, 18C); `None` in
+    /// older packages.
+    pub aero: Option<Aero>,
 }
 
 impl WorldPackage {
@@ -462,6 +476,16 @@ impl WorldPackage {
                 write_landmarks(&p.landmarks, &mut payload);
                 sections.push((LANDMARKS_TAG, payload));
             }
+        }
+        if let Some(t) = &self.traffic {
+            let mut payload = Vec::new();
+            write_traffic(t, &mut payload);
+            sections.push((TRAFFIC_TAG, payload));
+        }
+        if let Some(a) = &self.aero {
+            let mut payload = Vec::new();
+            write_aero(a, &mut payload);
+            sections.push((AERO_TAG, payload));
         }
         if let Some(j) = &self.junctions {
             if let Some(i) = &j.index {
@@ -791,6 +815,8 @@ struct Sections {
     lit: Vec<(TileKey, Vec<RoadLit>)>,
     condition: Vec<(TileKey, Vec<RoadCondition>)>,
     junctions: JunctionData,
+    traffic: Option<TrafficData>,
+    aero: Option<Aero>,
 }
 
 impl Sections {
@@ -856,6 +882,8 @@ impl Sections {
             look: self.look,
             obstacles: self.obstacles,
             places: self.places,
+            traffic: self.traffic.map(Arc::new),
+            aero: self.aero,
         }
     }
 }
@@ -1044,6 +1072,24 @@ impl SectionReader {
             // streamed bases.
             match read_landmarks(payload) {
                 Ok(l) => s.places.get_or_insert_with(Places::default).landmarks = l,
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == TRAFFIC_TAG {
+            // Optional (spec 14 Phase 18, 18B): a newer layout is skipped
+            // ("no traffic data": the implied rules by class). Package-wide
+            // (the server and the browser's local server simulate the
+            // traffic), so also in skeletons and streamed bases.
+            match read_traffic(payload) {
+                Ok(t) => s.traffic = Some(t),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == AERO_TAG {
+            // Optional (18C): a newer layout is skipped (no aerodromes).
+            // Small, so also in skeletons and streamed bases.
+            match read_aero(payload) {
+                Ok(a) => s.aero = Some(a),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -1448,6 +1494,9 @@ impl WorldPackage {
             }),
             places: self.places.clone(),
             junctions: self.junctions.clone(),
+            // Package-wide: kept whole.
+            traffic: self.traffic.clone(),
+            aero: self.aero.clone(),
         }
     }
 }
@@ -2036,6 +2085,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         }
     }
 

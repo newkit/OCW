@@ -727,6 +727,8 @@ mod tests {
             obstacles: None,
             places: None,
             junctions: None,
+            traffic: None,
+            aero: None,
         };
         // Without a palette: nothing, with a reason.
         let s = cut_corridor(&mut pkg, &imagery, CorridorOptions::default());

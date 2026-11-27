@@ -159,6 +159,8 @@ pub fn package() -> WorldPackage {
         obstacles: Some(obst),
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     }
 }
 

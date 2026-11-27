@@ -199,6 +199,8 @@ pub(crate) fn lit_road_package() -> WorldPackage {
         obstacles: None,
         places: None,
         junctions: None,
+        traffic: None,
+        aero: None,
     }
 }
 
