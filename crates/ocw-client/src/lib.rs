@@ -56,6 +56,7 @@ pub mod history;
 pub mod host;
 pub mod input;
 pub mod join;
+pub mod live_air;
 pub mod menu;
 pub mod motion;
 /// The bike stand's part tiles (spec §14 Phase 4, 4G *Tiles*).

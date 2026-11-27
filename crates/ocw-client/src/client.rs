@@ -249,6 +249,8 @@ pub struct ClientCore {
     /// on (spec 18B: from the package, no network; the server has the
     /// same).
     parked: Option<Arc<ocw_sim::traffic::parked::ParkedCars>>,
+    /// Live aircraft (spec 14 Phase 18, 18E T10).
+    live_air: crate::live_air::LiveAirClient,
     avoid: ocw_sim::avoid::AvoidState,
     was_down: bool,
     proximity_cue: bool,
@@ -370,6 +372,7 @@ impl ClientCore {
             traffic: Default::default(),
             vehicles: Default::default(),
             parked: None,
+            live_air: Default::default(),
             avoid: Default::default(),
             was_down: false,
             proximity_cue: false,
@@ -833,6 +836,7 @@ impl ClientCore {
                 self.traffic.on_welcome(&w);
                 // A new session: its server sends the vehicles again.
                 self.vehicles.clear();
+                self.live_air.on_welcome();
                 self.damage.on_welcome(&w);
                 // A ghost to the others again for the first seconds, as
                 // the server keeps a joining rider (spec §14 Phase 12A).
@@ -881,6 +885,10 @@ impl ClientCore {
                 self.vehicles.on_update(&u, Some(&net), tick, now_s);
                 None
             }
+            S::LiveAir(u) => {
+                self.live_air.on_update(&u);
+                None
+            }
             S::NotHearingYou(n) => {
                 self.not_hearing_you = n.riders.into_iter().map(RiderId).collect();
                 None
@@ -903,6 +911,7 @@ impl ClientCore {
                 // the app has loaded the new world and joined again.
                 self.rider_id = None;
                 self.vehicles.clear();
+                self.live_air.clear();
                 Some(Notice::WorldChange(c))
             }
             S::Event(e) => {
@@ -2319,6 +2328,18 @@ impl ClientCore {
             .into_iter()
             .filter(|c| honks || c.kind != ocw_render::traffic::VehicleCueKind::Honk)
             .collect()
+    }
+
+    /// The live aircraft as the server sent them (spec 18E T10).
+    pub fn live_air(&self) -> &crate::live_air::LiveAirClient {
+        &self.live_air
+    }
+
+    /// The `LiveAirWish` to send for the rider's *Aircraft: live*, when it
+    /// changed or the session is new (spec 18E T10).
+    pub fn live_air_wish(&mut self, wanted: bool) -> Option<Vec<u8>> {
+        self.rider_id?;
+        self.live_air.wish_message(wanted)
     }
 
     /// The session's traffic as the server sent it (spec 14 Phase 18).

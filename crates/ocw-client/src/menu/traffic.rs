@@ -3,12 +3,15 @@
 //! (the session's: solo the rider's, in a shared ride the host's, in an
 //! event the organiser's, Q2 – dimmed with who decides when it is not the
 //! rider's), aircraft and UFOs (the rider's own view), and a second page
-//! with the sounds and the live rows (*Aircraft: live*, *Live traffic
-//! data*: present, dimmed with why until their sources are built, Q5 /
-//! Q6). Road traffic is in the desktop app only (Q9 (b)): its rows are left
+//! with the sounds and the live rows: *Aircraft: live* (T10: on / off,
+//! with whether the live aircraft are drawn now or why the simulated sky
+//! is) and *Live traffic data* (present, dimmed with why until a world
+//! has a source, Q5). Road traffic is in the desktop app only (Q9 (b)): its rows are left
 //! out on [`Platform::Browser`] (the browser, phones, the Quest).
 
 use ocw_protocol::traffic::TrafficInfo;
+
+use crate::live_air::LiveState;
 
 use super::model::Platform;
 use super::pages::{Activate, Page, Row, open_row, setting_row};
@@ -16,10 +19,11 @@ use crate::settings::Settings;
 
 /// The page note of Settings → Traffic.
 pub const NOTE: &str = "Road traffic is the ride's: solo yours, in a shared ride the host's, in events the organiser's (races: none). Aircraft and UFOs are for you only.";
-/// … of its second page.
-pub const MORE_NOTE: &str = "Live aircraft and live road data come once their sources are built; until then the simulated ones.";
-/// The *Aircraft: live* row's value (Q6, T10).
-pub const AIR_LIVE_SOON: &str = "not available yet";
+/// … of its second page (with the live aircraft's credit, 18D).
+pub const MORE_NOTE: &str =
+    "Live aircraft come from the game server (Aircraft data: adsb.lol (ODbL)).";
+/// The live aircraft's source, as Settings names it.
+pub const AIR_LIVE_SOURCE: &str = "adsb.lol (ODbL)";
 /// The *Live traffic data* row's value (Q5: greyed until a world has a
 /// source that suits us).
 pub const LIVE_ROAD_NONE: &str = "no live data for this world yet";
@@ -36,6 +40,8 @@ pub struct TrafficMenuInfo {
     /// Who decides: "you", "the host", "the organiser", "the event's
     /// organiser".
     pub decided_by: &'static str,
+    /// With *Aircraft: live*: drawn now, or why not (`None`: not chosen).
+    pub live_air: Option<LiveState>,
 }
 
 impl TrafficMenuInfo {
@@ -46,6 +52,7 @@ impl TrafficMenuInfo {
             session: None,
             may_change: true,
             decided_by: "you",
+            live_air: None,
         }
     }
 }
@@ -95,7 +102,7 @@ pub fn rows(page: Page, settings: &Settings, info: &TrafficMenuInfo) -> Vec<Row>
                     ));
                 }
             }
-            out.push(air_row(settings));
+            out.push(air_row(settings, info.live_air));
             out.push(setting_row(settings, "traffic.ufo", "UFOs"));
             out.push(open_row(
                 "Sound and live data",
@@ -107,8 +114,7 @@ pub fn rows(page: Page, settings: &Settings, info: &TrafficMenuInfo) -> Vec<Row>
         Page::TrafficMore => {
             let mut out = vec![
                 setting_row(settings, "traffic.sound", "Sound"),
-                // Q6: live aircraft come with T10.
-                disabled("Aircraft: live", AIR_LIVE_SOON.into()),
+                live_row(settings, info.live_air),
             ];
             if desktop {
                 // Q5: greyed until a world has a source (18D).
@@ -120,13 +126,19 @@ pub fn rows(page: Page, settings: &Settings, info: &TrafficMenuInfo) -> Vec<Row>
     }
 }
 
-/// The aircraft row: off / simulated (live is its own dimmed row until
-/// the feed is built; a `live` set in the console shows as simulated).
-fn air_row(settings: &Settings) -> Row {
+/// The aircraft row: off / simulated / live (live is switched on its own
+/// row, *Aircraft: live*; here it shows whether it is drawn now).
+fn air_row(settings: &Settings, live: Option<LiveState>) -> Row {
     let v = text(settings, "traffic.air");
     let (value, other) = match v.as_str() {
         "off" => ("off".to_owned(), "simulated"),
-        "live" => ("live (simulated)".to_owned(), "off"),
+        "live" => (
+            match live {
+                Some(LiveState::Live) | None => "live".to_owned(),
+                Some(_) => "live (simulated now)".to_owned(),
+            },
+            "off",
+        ),
         _ => ("simulated".to_owned(), "off"),
     };
     let line = format!("set traffic.air {other}");
@@ -136,6 +148,29 @@ fn air_row(settings: &Settings) -> Row {
         left: Some(line.clone()),
         right: Some(line.clone()),
         confirm: Some(Activate::Command(line)),
+    }
+}
+
+/// *Aircraft: live* (T10): on / off, and whether the live aircraft are
+/// drawn now or why the simulated sky is.
+fn live_row(settings: &Settings, live: Option<LiveState>) -> Row {
+    let on = text(settings, "traffic.air") == "live";
+    let value = match (on, live) {
+        (false, _) => "off".to_owned(),
+        (true, Some(LiveState::Live) | None) => format!("on – {AIR_LIVE_SOURCE}"),
+        (true, Some(s)) => format!("on – {}", s.label()),
+    };
+    let line = if on {
+        "set traffic.air simulated"
+    } else {
+        "set traffic.air live"
+    };
+    Row {
+        label: "Aircraft: live".into(),
+        value: Some(value),
+        left: Some(line.into()),
+        right: Some(line.into()),
+        confirm: Some(Activate::Command(line.into())),
     }
 }
 
@@ -202,8 +237,16 @@ mod tests {
         for r in [&d, &b, &dm, &bm] {
             assert!(r.len() < MAX_ITEMS, "with Back on one page");
         }
-        // Q5 / Q6: present, dimmed, with why.
-        assert_eq!(row(&dm, "Aircraft: live").confirm, Some(Activate::Disabled));
+        // T10: *Aircraft: live* switches; Q5: dimmed with why.
+        assert_eq!(row(&dm, "Aircraft: live").value.as_deref(), Some("off"));
+        assert_eq!(
+            row(&dm, "Aircraft: live").confirm,
+            Some(Activate::Command("set traffic.air live".into()))
+        );
+        assert_eq!(
+            row(&dm, "Live traffic data").confirm,
+            Some(Activate::Disabled)
+        );
         assert_eq!(
             row(&dm, "Live traffic data").value.as_deref(),
             Some(LIVE_ROAD_NONE)
@@ -244,19 +287,39 @@ mod tests {
             row(&r, "Sound and live data").confirm,
             Some(Activate::Open(Page::TrafficMore))
         );
-        // Live set in the console: shown as simulated until the feed is
-        // built.
+        // Live (T10): drawn, or the simulated sky now with why.
         let mut live = Settings::default();
         live.set("traffic.air", "live").unwrap();
-        let r = rows(
-            Page::Traffic,
-            &live,
-            &TrafficMenuInfo::alone(Platform::Desktop),
+        let drawn = TrafficMenuInfo {
+            live_air: Some(LiveState::Live),
+            ..TrafficMenuInfo::alone(Platform::Browser)
+        };
+        let r = rows(Page::Traffic, &live, &drawn);
+        assert_eq!(row(&r, "Aircraft").value.as_deref(), Some("live"));
+        let m = rows(Page::TrafficMore, &live, &drawn);
+        assert_eq!(
+            row(&m, "Aircraft: live").value.as_deref(),
+            Some("on – adsb.lol (ODbL)")
         );
         assert_eq!(
-            row(&r, "Aircraft").value.as_deref(),
-            Some("live (simulated)")
+            row(&m, "Aircraft: live").confirm,
+            Some(Activate::Command("set traffic.air simulated".into()))
         );
+        let down = TrafficMenuInfo {
+            live_air: Some(LiveState::Down),
+            ..drawn
+        };
+        let r = rows(Page::Traffic, &live, &down);
+        assert_eq!(
+            row(&r, "Aircraft").value.as_deref(),
+            Some("live (simulated now)")
+        );
+        let m = rows(Page::TrafficMore, &live, &down);
+        assert_eq!(
+            row(&m, "Aircraft: live").value.as_deref(),
+            Some("on – simulated: the live feed is down")
+        );
+        assert!(MORE_NOTE.contains("adsb.lol (ODbL)"), "the credit (18D)");
     }
 
     /// Q2: in a shared ride the host's road traffic shows dimmed with who
@@ -276,6 +339,7 @@ mod tests {
             }),
             may_change: false,
             decided_by: "the host",
+            live_air: None,
         };
         let r = rows(Page::Traffic, &s, &info);
         let road = row(&r, "Road traffic");

@@ -19,6 +19,9 @@ pub mod ownership;
 // and the bundled voice server (spec §7.1.6 V2; native only).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod hosting;
+// Live aircraft (spec 14 Phase 18, 18E T10): the session's feed (pure)
+// and the HTTP requests (native only, `live_air::http`).
+pub mod live_air;
 pub mod local;
 // Real weather (spec §14 Phase 9, S7): the session's feed (pure) and the
 // HTTP requests (native only, `realweather::http`).
@@ -300,6 +303,20 @@ impl std::fmt::Debug for Credits {
 pub use ocw_protocol::ClockAccess;
 
 /// The system's real UTC instant (Unix ms).
+/// The salt of the live aircraft's address hashes (spec 18E T10): new
+/// for every server (the OS random source natively; the clock in the
+/// browser, which fetches none).
+fn live_air_salt() -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut b = [0u8; 8];
+        if getrandom::fill(&mut b).is_ok() {
+            return u64::from_le_bytes(b);
+        }
+    }
+    unix_now_ms() as u64
+}
+
 pub fn unix_now_ms() -> i64 {
     // std's clock panics on wasm32-unknown-unknown; web-time asks the
     // browser (`Date.now()`).
@@ -372,6 +389,13 @@ pub struct GameServer {
     /// weather service – the browser's local server, most tests).
     /// (In a mutex only so the server stays `Sync`; it is never contended.)
     fetcher: Option<std::sync::Mutex<Box<dyn realweather::WeatherFetcher>>>,
+    /// Live aircraft (spec 14 Phase 18, 18E T10): the feed, the
+    /// connections whose riders want them, and who performs the requests
+    /// (`None`: this server fetches none – the browser's local server,
+    /// most tests).
+    live_air: live_air::LiveAirFeed,
+    live_wish: BTreeSet<ConnectionId>,
+    air_fetcher: Option<std::sync::Mutex<Box<dyn live_air::AirFetcher>>>,
     /// (lat, lon) of the course's local metres.
     geo_origin: Option<(f64, f64)>,
     /// The season the leaves on the road lie in (spec 4.6.2 Q6), from the
@@ -593,6 +617,12 @@ impl GameServer {
             event_weather: None,
             real,
             fetcher: None,
+            live_air: live_air::LiveAirFeed::new(
+                Box::new(live_air::AdsbLol::from_env()),
+                live_air_salt(),
+            ),
+            live_wish: BTreeSet::new(),
+            air_fetcher: None,
             geo_origin,
             leaf_season: Default::default(),
             real_pressure_y_m: None,
@@ -615,6 +645,72 @@ impl GameServer {
     /// HTTP fetcher on the native servers, recorded answers in tests.
     pub fn set_weather_fetcher(&mut self, fetcher: Box<dyn realweather::WeatherFetcher>) {
         self.fetcher = Some(std::sync::Mutex::new(fetcher));
+    }
+
+    /// Lets this server fetch live aircraft (spec 14 Phase 18, 18E T10):
+    /// the HTTP fetcher on the native servers, recorded answers in tests.
+    pub fn set_air_fetcher(&mut self, fetcher: Box<dyn live_air::AirFetcher>) {
+        self.air_fetcher = Some(std::sync::Mutex::new(fetcher));
+    }
+
+    /// [`GameServer::set_air_fetcher`] as a builder.
+    pub fn with_air_fetcher(mut self, fetcher: Box<dyn live_air::AirFetcher>) -> Self {
+        self.set_air_fetcher(fetcher);
+        self
+    }
+
+    /// Uses `feed` for live aircraft (tests: another source or budget).
+    pub fn set_live_air_feed(&mut self, feed: live_air::LiveAirFeed) {
+        self.live_air = feed;
+    }
+
+    /// The live aircraft feed (the `air` command's server side, tests).
+    pub fn live_air(&self) -> &live_air::LiveAirFeed {
+        &self.live_air
+    }
+
+    /// A rider's *Aircraft: live* (spec 18E T10): kept per connection; one
+    /// who starts wanting them gets what the server has at once.
+    fn live_air_wish(&mut self, conn: ConnectionId, on: bool) {
+        if !on {
+            self.live_wish.remove(&conn);
+            return;
+        }
+        self.live_wish.insert(conn);
+        let now = self.clock.real(self.session_time_s());
+        if let Some(u) = self.live_air.current(now, self.air_fetcher.is_some()) {
+            self.directed
+                .push((conn, encode(&server_message(S::LiveAir(u)))));
+        }
+    }
+
+    /// Once a second: the live aircraft feed's step; a new update goes to
+    /// every connection that wants it (spec 18E T10).
+    fn live_air_tick(&mut self, t: f64) {
+        if self.air_fetcher.is_none() || !self.session.tick().is_multiple_of(u64::from(SIM_TICK_HZ))
+        {
+            return;
+        }
+        let now = self.clock.real(t);
+        let wanted = !self.live_wish.is_empty();
+        let place = if wanted {
+            let p = self.weather_place();
+            (p.lat, p.lon)
+        } else {
+            (0.0, 0.0)
+        };
+        let Some(Ok(fetcher)) = self.air_fetcher.as_mut().map(std::sync::Mutex::get_mut) else {
+            return;
+        };
+        if let Some(u) = self
+            .live_air
+            .step(now, wanted, place, Some(fetcher.as_mut()))
+        {
+            let bytes = encode(&server_message(S::LiveAir(u)));
+            for c in &self.live_wish {
+                self.directed.push((*c, bytes.clone()));
+            }
+        }
     }
 
     /// [`GameServer::set_weather_fetcher`] as a builder.
@@ -688,6 +784,8 @@ impl GameServer {
         self.session = new_session(course, &self.config);
         // The vehicles of the old graph are gone (spec 18E T5).
         self.vehicles.world_changed();
+        // The live aircraft were for the old place (18E T10).
+        self.live_air.world_changed();
         let conns: Vec<ConnectionId> = std::mem::take(&mut self.riders).into_keys().collect();
         self.event_dirty = false;
         self.pending_world = None;
@@ -1132,6 +1230,7 @@ impl GameServer {
         self.voice_audience.remove(&conn);
         self.voice_hearing.remove(&conn);
         self.not_hearing_you.remove(&conn);
+        self.live_wish.remove(&conn);
         self.directed.retain(|(c, _)| *c != conn);
         self.vehicles.disconnect(conn);
         if let Some(rider) = self.riders.remove(&conn) {
@@ -1232,6 +1331,10 @@ impl GameServer {
             (C::Echo(req), Some(rider)) => Some(self.echo_request(rider, req)),
             (C::Rules(req), Some(rider)) => Some(self.rules_request(rider, req)),
             (C::Traffic(req), Some(rider)) => Some(self.traffic_request(rider, &req)),
+            (C::LiveAir(w), Some(_)) => {
+                self.live_air_wish(conn, w.on);
+                None
+            }
             (C::Damage(req), Some(rider)) => {
                 let r = if req.repair {
                     self.session.request_repair(rider)
@@ -2384,6 +2487,7 @@ impl GameServer {
         let t = self.session_time_s();
         self.weather.tick(t);
         self.real_weather_tick(t);
+        self.live_air_tick(t);
         let mut out = Vec::new();
         // The event: at once on a change, and at 2 Hz while a race or time
         // trial runs.

@@ -824,6 +824,12 @@ fn main() {
     server.set_weather_fetcher(Box::new(
         ocw_server::realweather::http::HttpFetcher::default(),
     ));
+    // Live aircraft (spec 14 Phase 18, 18E T10): fetched by the server
+    // for its world while a rider wants them (adsb.lol; OCW_ADSB_LOL_KEY
+    // for a key, OCW_LIVE_AIR_OFFLINE=1 for none).
+    server.set_air_fetcher(Box::new(
+        ocw_server::live_air::http::HttpAirFetcher::default(),
+    ));
     if let Some(echo) = server.session().echo_rider() {
         tracing::info!(
             echo = %echo,

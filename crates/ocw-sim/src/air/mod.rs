@@ -22,6 +22,7 @@
 //! instant ([`AirInputs::now_s`]).
 
 pub mod airways;
+pub mod live;
 pub mod path;
 pub mod relief;
 #[cfg(test)]

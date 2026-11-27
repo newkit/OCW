@@ -6,6 +6,12 @@
 //! Everywhere (Q9 (b)): desktop, browser and the headsets, the number by
 //! the quality level.
 //!
+//! *Aircraft: live* (`traffic.air live`, 18E T10): the rider's wish goes
+//! to the server (`LiveAirWish`, again after every Welcome); the server's
+//! live aircraft are drawn while they are usable, the simulated sky
+//! otherwise ([`ocw_client::live_air::LiveState`] says why), with the
+//! source's credit on the screen while live aircraft are drawn.
+//!
 //! Commands: `air` (what flies now, the aerodromes, the upper air and the
 //! contrails), `air.spot [KIND|MISSION] [METRES] [SECONDS]` (unicorn mode:
 //! wait beside the path of the nearest such aircraft, where it will be in
@@ -123,10 +129,24 @@ fn frame_inputs(world: &mut World) -> Option<AirFrame<'static>> {
         ground_m,
         max_aircraft,
         contrails,
+        live: None,
     })
 }
 
+/// Tells the server whether the rider wants live aircraft, when that
+/// changed or the session is new.
+fn send_live_wish(world: &mut World) {
+    let wanted = world
+        .get_resource::<TrafficSettings>()
+        .is_some_and(|s| AirClient::wants_live(&s.view));
+    let msg = crate::client_mut(world).and_then(|mut c| c.live_air_wish(wanted));
+    if let Some(msg) = msg {
+        crate::send(world, msg);
+    }
+}
+
 fn update_air(world: &mut World) {
+    send_live_wish(world);
     let Some(f) = frame_inputs(world) else {
         if let Some(mut v) = world.get_resource_mut::<RideView>()
             && v.air.is_some()
@@ -143,8 +163,10 @@ fn update_air(world: &mut World) {
     let weather = world
         .get_resource::<RideView>()
         .and_then(|v| v.weather.as_ref().map(|w| w.state));
+    let live = crate::client(world).map(|c| c.live_air().clone());
     let frame = AirFrame {
         weather: weather.as_ref(),
+        live: live.as_ref(),
         ..f
     };
     let air = world.resource_mut::<AirState>().0.frame(&frame);
@@ -179,24 +201,75 @@ fn flights_now(world: &mut World) -> Result<Now, String> {
     ))
 }
 
+/// The live aircraft's state for the `air` and `traffic` commands and
+/// Settings → Traffic (`None`: live is not chosen).
+pub fn live_state(world: &mut World) -> Option<ocw_client::live_air::LiveState> {
+    let f = frame_inputs(world).or_else(|| {
+        // Not riding: what the settings ask.
+        let s = world.get_resource::<TrafficSettings>().copied()?;
+        AirClient::wants_live(&s.view).then_some(AirFrame {
+            choice: s.view,
+            seed: 0,
+            clock: None,
+            weather: None,
+            eye: [0.0; 3],
+            forward: [0.0, -1.0],
+            ground_m: 0.0,
+            max_aircraft: 0,
+            contrails: false,
+            live: None,
+        })
+    })?;
+    let live = crate::client(world).map(|c| c.live_air().clone());
+    AirClient::live_state(&AirFrame {
+        live: live.as_ref(),
+        ..f
+    })
+}
+
+/// The live aircraft's lines of the `air` command.
+fn live_summary(world: &mut World) -> Option<String> {
+    let state = live_state(world)?;
+    let c = crate::client(world)?;
+    let l = c.live_air();
+    let mut line = format!("aircraft: live – {}", state.label());
+    if state == ocw_client::live_air::LiveState::Live {
+        let n = l
+            .fetched_ms()
+            .and_then(|t| l.aircraft(t).map(<[_]>::len))
+            .unwrap_or(0);
+        line.push_str(&format!(
+            "; {n} aircraft in the last fetch; {}",
+            l.attribution().unwrap_or_default()
+        ));
+    } else if !l.note().is_empty() {
+        line.push_str(&format!(" ({})", l.note()));
+    }
+    Some(line)
+}
+
 fn summary(world: &mut World) -> Result<String, String> {
-    let note = match world
-        .get_resource::<TrafficSettings>()
-        .map(|s| s.view.air_shown())
-    {
-        Some(ocw_core::traffic::AirTraffic::Live) => {
-            " (live aircraft are not available yet: simulated)"
-        }
-        _ => "",
+    let live = live_summary(world);
+    let live_drawn = live.as_ref().is_some_and(|l| l.contains("– live;"));
+    let note = if live.is_some() && !live_drawn {
+        " (live chosen, not usable now)"
+    } else {
+        ""
     };
     let (mut flights, now, eye, upper) = flights_now(world)?;
     let st = world.resource::<AirState>();
     let space = st.0.space().cloned().ok_or("no airspace yet")?;
-    let mut out = vec![format!(
-        "aircraft: simulated{note}; {} aerodromes, {} sources of flights",
+    let mut out: Vec<String> = live.into_iter().collect();
+    out.push(format!(
+        "{}{note}; {} aerodromes, {} sources of flights",
+        if live_drawn {
+            "simulated sky (behind the live one)"
+        } else {
+            "aircraft: simulated"
+        },
         space.fields().count(),
         space.generator_count()
-    )];
+    ));
     let fields: Vec<String> = space
         .fields()
         .take(8)
@@ -505,7 +578,7 @@ fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("air.spot")
-            .about("Unicorn mode: wait beside the path of the nearest aircraft of a kind or mission (airliner, small, helicopter, glider, balloon; arrival, departure, cruise, circuit, rescue, soaring, drift …), METRES to its side, where it will be in SECONDS")
+            .about("Unicorn mode: wait beside the path of the nearest aircraft of a kind or mission (airliner, small, helicopter, glider, balloon; arrival, departure, cruise, circuit, rescue, soaring, drift …; live: the nearest live aircraft drawn), METRES to its side, where it will be in SECONDS")
             .arg(Arg::new("what").default_value("any"))
             .arg(Arg::new("metres").value_parser(value_parser!(f64)).default_value("150").allow_negative_numbers(true))
             .arg(Arg::new("seconds").value_parser(value_parser!(f64)).default_value("20")),
@@ -513,6 +586,9 @@ fn register_commands(app: &mut App) {
             let what = m.get_one::<String>("what").expect("default").to_lowercase();
             let side = *m.get_one::<f64>("metres").expect("default");
             let ahead = *m.get_one::<f64>("seconds").expect("default");
+            if what == "live" {
+                return spot_live(world, side, ahead);
+            }
             let (flights, now, eye, _) = flights_now(world)?;
             let matches = |f: &Flight| {
                 what == "any"
@@ -568,6 +644,57 @@ fn register_commands(app: &mut App) {
             ))
         },
     ));
+}
+
+/// `air.spot live`: the unicorn beside the nearest live aircraft drawn
+/// (18E T10; on its straight line SECONDS ahead), looking back at it.
+fn spot_live(world: &mut World, side: f64, ahead: f64) -> Result<String, String> {
+    let (eye, _) = eye(world).ok_or("no camera")?;
+    let view = world.get_resource::<RideView>().ok_or("not riding")?;
+    let air = view.air.as_ref().ok_or("no aircraft drawn")?;
+    if air.attribution.is_none() {
+        return Err("no live aircraft drawn (traffic.air live, and the feed must answer)".into());
+    }
+    let a = air
+        .aircraft
+        .iter()
+        .min_by(|a, b| {
+            let d = |p: [f64; 3]| (p[0] - eye[0]).hypot(p[2] - eye[2]);
+            d(a.pos).total_cmp(&d(b.pos))
+        })
+        .ok_or("no live aircraft near")?
+        .clone();
+    let at = [
+        a.pos[0] + a.vel[0] * ahead,
+        a.pos[1] + a.vel[1] * ahead.min(ocw_sim::air::live::CLIMB_S),
+        a.pos[2] + a.vel[2] * ahead,
+    ];
+    let l = a.vel[0].hypot(a.vel[2]).max(1e-6);
+    let dir = [a.vel[0] / l, a.vel[2] / l];
+    let right = [-dir[1], dir[0]];
+    let spot = [
+        at[0] + right[0] * side,
+        at[1] + 15.0,
+        at[2] + right[1] * side,
+    ];
+    let look = [a.pos[0] - spot[0], a.pos[1] - spot[1], a.pos[2] - spot[2]];
+    let yaw = heading_of([look[0], look[2]]);
+    let pitch = look[1].atan2(look[0].hypot(look[2]));
+    let moved = crate::client_mut(world).is_some_and(|mut c| {
+        c.god_mut()
+            .teleport(spot, Some(-yaw.to_radians()), Some(pitch))
+    });
+    if !moved {
+        return Err("not flying (god on first)".into());
+    }
+    Ok(format!(
+        "unicorn at ({:.0}, {:.0}, {:.0}) m beside the live {} {:.0} m high – it passes in {ahead:.0} s",
+        spot[0],
+        spot[1],
+        spot[2],
+        a.kind.key(),
+        a.pos[1]
+    ))
 }
 
 #[cfg(test)]
