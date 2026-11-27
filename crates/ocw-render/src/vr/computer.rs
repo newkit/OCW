@@ -36,11 +36,14 @@ use ocw_xr::computer::{self, BarMount, ComputerSetup, Placement};
 
 use super::VR_LAYER;
 use crate::RideView;
+use crate::heart_hud::PINK;
 use crate::hud::{LookAhead, Units, band_color, profile_bars};
 use crate::riders::{Avatar, AvatarRig};
 
 /// The model file (`ocw_assets::computer::FILE` without `.glb`).
 pub const MODEL: &str = "parts/computer/computer-head-unit-wedge";
+/// The heart rate's field.
+const HR_FIELD: usize = 2;
 /// Bars of the elevation profile on the screen.
 const PROFILE_BARS: usize = 40;
 
@@ -751,7 +754,13 @@ fn screen_text(
     units: Option<Res<Units>>,
     led_mat: Option<Res<LedMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut texts: Query<(&ScreenText, &mut Text, Option<&mut UiTransform>)>,
+    heart: Option<Res<crate::heart_hud::HeartState>>,
+    mut texts: Query<(
+        &ScreenText,
+        &mut Text,
+        Option<&mut UiTransform>,
+        Option<&mut TextColor>,
+    )>,
     mut toast: Query<&mut Node, With<ToastBox>>,
     mut leds: Query<(&Led, &mut BackgroundColor)>,
     mut last_band: Local<Option<GradeBand>>,
@@ -767,7 +776,19 @@ fn screen_text(
     s.toast = toast_text(hint_active.then_some(hint.text.as_str()), s.toast.take());
     s.link = fit(&vr.link, 11);
     s.frame = fit(&vr.frame, 16);
-    for (part, mut t, ui) in &mut texts {
+    // The heart rate in pink while it rises (as the HUD's heart).
+    let rising = heart.is_some_and(|h| h.rising());
+    for (part, mut t, ui, color) in &mut texts {
+        if let (ScreenText::Field(HR_FIELD), Some(mut c)) = (*part, color) {
+            let want = if rising {
+                Color::srgb(PINK[0], PINK[1], PINK[2])
+            } else {
+                FG
+            };
+            if c.0 != want {
+                c.0 = want;
+            }
+        }
         let want = match *part {
             ScreenText::Clock => s.clock.clone(),
             // In a headset with a bridge line: the bridge, not the weather.

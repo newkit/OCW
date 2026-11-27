@@ -38,6 +38,9 @@ ocw-account-api.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+# `hr.test`: the test heart rate's device events (and the virtual
+# trainer's power in the photographer's ride tests).
+ocw-devices.workspace = true
 
 # The app icon (`app_icon`, native only): window icon, desktop entry.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -47,8 +50,6 @@ dirs.workspace = true
 [dev-dependencies]
 ocw-fit.workspace = true
 ocw-server.workspace = true
-# The virtual trainer's power in the photographer's ride tests.
-ocw-devices.workspace = true
 
 [lints]
 workspace = true

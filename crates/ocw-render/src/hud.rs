@@ -57,6 +57,13 @@ impl Plugin for HudPlugin {
             )
             .add_systems(PostUpdate, fit_top_panel)
             .add_systems(Last, measure_hud);
+        crate::heart_hud::plugin(app);
+        app.add_systems(
+            Update,
+            crate::heart_hud::update_heart
+                .after(update_hud)
+                .before(show_hud),
+        );
         add_version_label(app);
     }
 }
@@ -306,7 +313,19 @@ pub struct HudBoxes {
     pub text: String,
 }
 
-#[allow(clippy::type_complexity)] // a Bevy system: disjoint UI queries
+/// The whole big line ("HR" in the heart's place).
+fn big_line(
+    big: &Query<&Text, (With<HudText>, Without<HudSmallText>)>,
+    rest: &Query<&TextSpan, With<HudTextRest>>,
+) -> String {
+    let root = big.single().map(|t| t.0.as_str()).unwrap_or_default();
+    match rest.single() {
+        Ok(r) if !r.0.is_empty() => format!("{root}HR{}", r.0),
+        _ => root.to_string(),
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system: disjoint UI queries
 fn measure_hud(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     safe: Option<Res<crate::safe_area::SafeArea>>,
@@ -322,6 +341,7 @@ fn measure_hud(
     )>,
     big: Query<&Text, (With<HudText>, Without<HudSmallText>)>,
     small: Query<&Text, (With<HudSmallText>, Without<HudText>)>,
+    rest: Query<&TextSpan, With<HudTextRest>>,
     mut boxes: ResMut<HudBoxes>,
 ) {
     let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
@@ -346,7 +366,7 @@ fn measure_hud(
         }
     }
     let (b, s) = (
-        big.single().map(|t| t.0.clone()).unwrap_or_default(),
+        big_line(&big, &rest),
         small.single().map(|t| t.0.clone()).unwrap_or_default(),
     );
     out.big_lines = b.lines().count();
@@ -457,6 +477,10 @@ fn update_look_ahead(view: Res<RideView>, mut ahead: ResMut<LookAhead>) {
 
 #[derive(Component)]
 struct HudText;
+
+/// The big line after the heart (empty without one).
+#[derive(Component)]
+struct HudTextRest;
 
 #[derive(Component)]
 struct HudSmallText;
@@ -599,7 +623,21 @@ fn spawn_hud(mut commands: Commands) {
                 },
                 TextColor(Color::WHITE),
                 HudText,
-            ));
+            ))
+            // The heart beside the heart rate (in the place of "HR",
+            // `crate::heart_hud`) and the line's rest after it.
+            .with_children(|t| {
+                t.spawn(crate::heart_hud::inline_heart());
+                t.spawn((
+                    TextSpan::new(""),
+                    TextFont {
+                        font_size: BIG_FONT.into(),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    HudTextRest,
+                ));
+            });
             hud.spawn((
                 Text::new(""),
                 TextFont {
@@ -1339,6 +1377,8 @@ fn update_hud(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
     mut small: Query<&mut Text, (With<HudSmallText>, Without<HudText>)>,
+    mut rest: Query<&mut TextSpan, With<HudTextRest>>,
+    slot: Option<ResMut<crate::heart_hud::HeartSlot>>,
 ) {
     let compact = layout.is_some_and(|l| l.compact);
     // The keys are left out while the touch hints show: the rider steers
@@ -1370,16 +1410,20 @@ fn update_hud(
             lines.push_str(&view.status);
         }
         let (line, lines) = panel_text(panel_px(&panel, &windows), &line, &lines);
-        if big.0 != line {
-            big.0 = line;
-        }
+        set_big(&mut big, rest.single_mut().ok(), slot, &line, false);
         if small.0 != lines {
             small.0 = lines;
         }
         return;
     }
     let Some(local) = view.local() else {
-        big.0 = "Connecting...".into();
+        set_big(
+            &mut big,
+            rest.single_mut().ok(),
+            slot,
+            "Connecting...",
+            false,
+        );
         return;
     };
     let track = view.track(local.id);
@@ -1460,11 +1504,34 @@ fn update_hud(
         lines.push_str(status);
     }
     let (line, lines) = panel_text(panel_px(&panel, &windows), &line, &lines);
-    if big.0 != line {
-        big.0 = line;
-    }
+    let heart = local.heart_rate_bpm.is_some();
+    set_big(&mut big, rest.single_mut().ok(), slot, &line, heart);
     if small.0 != lines {
         small.0 = lines;
+    }
+}
+
+/// Writes the big line: with a heart (`heart` and an "HR 142" in it) the
+/// text before "HR" in the root, the rest after the heart's place.
+fn set_big(
+    big: &mut Text,
+    rest: Option<Mut<TextSpan>>,
+    slot: Option<ResMut<crate::heart_hud::HeartSlot>>,
+    line: &str,
+    heart: bool,
+) {
+    let split = crate::heart_hud::split_heart(line).filter(|_| heart && rest.is_some());
+    let (a, b) = split.unwrap_or((line, ""));
+    if big.0 != a {
+        big.0 = a.to_string();
+    }
+    if let Some(mut r) = rest
+        && r.0 != b
+    {
+        r.0 = b.to_string();
+    }
+    if let Some(mut s) = slot {
+        s.set_if_neq(crate::heart_hud::HeartSlot(split.is_some()));
     }
 }
 
@@ -2166,6 +2233,85 @@ mod tests {
     /// (unchanged); compact (a phone) the big line has only the numbers,
     /// the short status joins the place line, and the keys go while the
     /// touch hints show (they come back with a key).
+    /// With a heart rate the big line keeps its text, with the heart in
+    /// the place of "HR" (root before, span after); without one there is
+    /// no place and no heart.
+    #[test]
+    fn the_heart_takes_the_place_of_hr_in_the_big_line() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(ramp()))
+            .init_resource::<LookAhead>()
+            .init_resource::<Units>()
+            .init_resource::<AppKeys>()
+            .init_resource::<TopPanelWidth>()
+            .init_resource::<crate::heart_hud::HeartSlot>()
+            .init_resource::<crate::heart_hud::HeartState>()
+            .add_systems(Startup, spawn_hud)
+            .add_systems(
+                Update,
+                (
+                    update_look_ahead,
+                    update_hud,
+                    crate::heart_hud::update_heart,
+                )
+                    .chain(),
+            );
+        let mut rider = me();
+        rider.heart_rate_bpm = Some(142.0);
+        app.world_mut()
+            .resource_mut::<RideView>()
+            .riders
+            .push(rider);
+        let parts = |app: &mut App| {
+            let w = app.world_mut();
+            let root = w
+                .query_filtered::<&Text, With<HudText>>()
+                .single(w)
+                .unwrap()
+                .0
+                .clone();
+            let rest = w
+                .query_filtered::<&TextSpan, With<HudTextRest>>()
+                .single(w)
+                .unwrap()
+                .0
+                .clone();
+            let img = w
+                .query_filtered::<&InlineImage, With<crate::heart_hud::HeartIcon>>()
+                .single(w)
+                .unwrap()
+                .clone();
+            (root, rest, img)
+        };
+        app.update();
+        let (root, rest, img) = parts(&mut app);
+        assert!(!root.contains("HR") && root.contains("rpm"), "{root}");
+        assert!(rest.starts_with(" 142"), "{rest}");
+        assert!(app.world().resource::<crate::heart_hud::HeartSlot>().0);
+        assert!(
+            app.world()
+                .resource::<crate::heart_hud::HeartState>()
+                .look
+                .is_some()
+        );
+        // No image assets in this app: the box stays empty.
+        assert_eq!(img.width, Some(0.0));
+        // The strap stops: no place, no heart.
+        app.world_mut().resource_mut::<RideView>().riders[0].heart_rate_bpm = None;
+        app.update();
+        let (root, rest, _) = parts(&mut app);
+        assert!(root.contains("rpm") && !root.contains("HR"), "{root}");
+        assert_eq!(rest, "");
+        assert!(!app.world().resource::<crate::heart_hud::HeartSlot>().0);
+        assert!(
+            app.world()
+                .resource::<crate::heart_hud::HeartState>()
+                .look
+                .is_none()
+        );
+    }
+
     #[test]
     fn the_compact_hud_text_on_a_phone() {
         let mut app = App::new();

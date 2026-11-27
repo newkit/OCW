@@ -79,6 +79,8 @@ impl Plugin for ConnectionPlugin {
                 ocw_ui::events::EventsPlugin,
                 // The rider status signs (spec §2.6).
                 ocw_ui::status::StatusPlugin,
+                // `hr.test`: a test heart rate for the HUD's heart.
+                ocw_ui::hr_test::HrTestPlugin,
             ));
         }
         register_commands(app);
