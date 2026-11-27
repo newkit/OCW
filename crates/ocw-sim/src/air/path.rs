@@ -300,6 +300,15 @@ impl FlightPath {
         self.v.last().map_or(0.0, |l| l.t + l.hold_s)
     }
 
+    /// When the wheels first touch after flying (s from the start; the
+    /// end when it never lands).
+    pub fn time_of_touchdown(&self) -> f64 {
+        self.v
+            .windows(2)
+            .find(|w| !w[0].ground && w[1].ground)
+            .map_or_else(|| self.duration_s(), |w| w[1].t)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.v.len() < 2
     }

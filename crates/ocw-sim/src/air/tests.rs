@@ -588,3 +588,21 @@ fn tenerife_has_arrivals_in_the_evening() {
     }
     assert!(none <= 2, "{none} of 40 sessions without an arrival");
 }
+
+#[test]
+fn arrivals_land_apart() {
+    let space = space();
+    let w = summer();
+    let all = day_flights(&space, &w, 21, DAY0);
+    let mut landings: Vec<f64> = all
+        .values()
+        .filter(|f| f.mission == Mission::Arrival)
+        .map(|f| f.start_s + f.path.time_of_touchdown())
+        .collect();
+    landings.sort_by(f64::total_cmp);
+    assert!(landings.len() > 30, "{}", landings.len());
+    let period = 3600.0 / 9.0;
+    for w in landings.windows(2) {
+        assert!(w[1] - w[0] >= 0.7 * period - 1.0, "{} s apart", w[1] - w[0]);
+    }
+}

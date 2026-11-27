@@ -776,7 +776,13 @@ impl AirSpace {
     fn flight(&self, g: &Gen, k: i64, inp: &AirInputs) -> Option<Flight> {
         let h = mix(inp.seed ^ mix(u64::from(g.id) << 40 ^ k as u64));
         let mut d = Draw::new(h);
-        let start_s = (k as f64 + 0.9 * d.f()) * g.period_s;
+        // Airliners at an airport keep their slots (separated as by the
+        // tower: at least 70 % of the period apart); the rest spread out.
+        let airport = matches!(g.what, GenKind::Arrival { .. } | GenKind::Departure { .. });
+        let jitter = if airport { 0.3 } else { 0.9 };
+        // An arrival's slot is its landing; it starts a flight earlier.
+        let slot_s = (k as f64 + jitter * d.f()) * g.period_s;
+        let start_s = slot_s;
         let keep = d.f();
         let (hour, month) = local_hour_month(start_s, inp.utc_offset_s);
         let w = inp.weather;
@@ -840,13 +846,20 @@ impl AirSpace {
                     return None;
                 }
                 let rw = self.runway_in_use(field, w, day_salt);
+                let path = self.arrival(rw, &mut d);
+                // Down on the runway at the slot's time.
+                let touchdown = path.time_of_touchdown();
                 f(
                     AirKind::Airliner,
                     Mission::Arrival,
-                    self.arrival(rw, &mut d),
+                    path,
                     Some(rw),
                     rw.elevation_m,
                 )
+                .map(|mut fl| {
+                    fl.start_s -= touchdown;
+                    fl
+                })
             }
             GenKind::Departure { field } => {
                 if keep > by_hour(&AIRLINER_HOURS, hour) {
@@ -1301,7 +1314,13 @@ impl AirSky {
                 continue;
             }
             let k0 = ((now - g.max_s - g.period_s) / g.period_s).floor() as i64;
-            let k1 = (now / g.period_s).floor() as i64;
+            // Arrivals start up to a flight before their slot.
+            let lead = if matches!(g.what, GenKind::Arrival { .. }) {
+                g.max_s
+            } else {
+                0.0
+            };
+            let k1 = ((now + lead) / g.period_s).floor() as i64;
             for k in k0..=k1 {
                 let f = self
                     .cache
