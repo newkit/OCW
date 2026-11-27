@@ -230,6 +230,34 @@ pub struct PipelineCache {
     pub(crate) synchronous_pipeline_compilation: bool,
     /// If `true`, the shader cache needs to be repopulated from the main world's `Assets<Shader>`.
     needs_shader_reload: bool,
+    /// OCW patch (vendor/README.md): at most this many pipelines start
+    /// compiling in one frame, the others wait for the next frames
+    /// (`None`: all of them at once, Bevy's behaviour). A pipeline whose
+    /// shader or import is not loaded yet does not count.
+    pub compile_budget: Option<usize>,
+    /// OCW patch (vendor/README.md): called after each attempt to compile
+    /// a pipeline, with what it compiled.
+    pub compile_log: Option<fn(&PipelineCompileReport)>,
+}
+
+/// OCW patch (vendor/README.md): one attempt to compile a pipeline, for
+/// [`PipelineCache::compile_log`].
+#[derive(Debug, Clone)]
+pub struct PipelineCompileReport<'a> {
+    /// The pipeline's id in the cache.
+    pub id: usize,
+    /// Its label (`""`: none).
+    pub label: &'a str,
+    /// The path of its fragment shader, else of its vertex (or compute,
+    /// mesh) shader (`""`: unknown).
+    pub shader: &'a str,
+    /// How long the attempt took (ms).
+    pub ms: f64,
+    /// `"ok"`, `"creating"` (a task), `"waiting"` (a shader or an import is
+    /// not loaded yet: tried again later) or `"error"`.
+    pub outcome: &'static str,
+    /// The pipelines still waiting after this one (this frame's queue).
+    pub queued: usize,
 }
 
 impl PipelineCache {
@@ -284,6 +312,8 @@ impl PipelineCache {
             global_shader_defs,
             synchronous_pipeline_compilation,
             needs_shader_reload: true,
+            compile_budget: None,
+            compile_log: None,
         }
     }
 
@@ -876,16 +906,39 @@ impl PipelineCache {
             }
         }
 
-        for id in waiting_pipelines {
-            self.process_pipeline(&mut pipelines[id], id);
+        // OCW patch: with a budget, the oldest pipelines first and at most
+        // `compile_budget` started this frame (the others stay waiting).
+        let mut ids: Vec<usize> = waiting_pipelines.into_iter().collect();
+        if self.compile_budget.is_some() || self.compile_log.is_some() {
+            ids.sort_unstable();
+        }
+        let mut started = 0;
+        let total = ids.len();
+        for (n, id) in ids.into_iter().enumerate() {
+            let queued = matches!(pipelines[id].state, CachedPipelineState::Queued);
+            if queued && self.compile_budget.is_some_and(|max| started >= max) {
+                self.waiting_pipelines.insert(id);
+                continue;
+            }
+            if self.process_pipeline(&mut pipelines[id], id, total - n - 1) {
+                started += 1;
+            }
         }
 
         self.pipelines = pipelines;
     }
 
-    fn process_pipeline(&mut self, cached_pipeline: &mut CachedPipeline, id: usize) {
+    /// OCW patch: returns whether a pipeline started compiling (not one
+    /// that waits for a shader or an import).
+    fn process_pipeline(
+        &mut self,
+        cached_pipeline: &mut CachedPipeline,
+        id: usize,
+        queued: usize,
+    ) -> bool {
         match &mut cached_pipeline.state {
             CachedPipelineState::Queued => {
+                let t0 = bevy_platform::time::Instant::now();
                 cached_pipeline.state = match &cached_pipeline.descriptor {
                     PipelineDescriptor::RenderPipelineDescriptor(descriptor) => {
                         self.start_create_render_pipeline(id, *descriptor.clone())
@@ -897,12 +950,46 @@ impl PipelineCache {
                         self.start_create_mesh_pipeline(id, *descriptor.clone())
                     }
                 };
+                let outcome = match &cached_pipeline.state {
+                    CachedPipelineState::Ok(_) => "ok",
+                    CachedPipelineState::Creating(_) => "creating",
+                    CachedPipelineState::Err(
+                        ShaderCacheError::ShaderNotLoaded(_)
+                        | ShaderCacheError::ShaderImportNotYetAvailable,
+                    ) => "waiting",
+                    CachedPipelineState::Err(_) => "error",
+                    CachedPipelineState::Queued => "waiting",
+                };
+                if let Some(log) = self.compile_log {
+                    let (label, shader) = describe(&cached_pipeline.descriptor);
+                    log(&PipelineCompileReport {
+                        id,
+                        label: label.as_deref().unwrap_or(""),
+                        shader: &shader,
+                        ms: t0.elapsed().as_secs_f64() * 1000.0,
+                        outcome,
+                        queued,
+                    });
+                }
+                if outcome == "waiting" {
+                    // Tried again in a later frame (below); no compile.
+                    self.waiting_pipelines.insert(id);
+                    // The Err state is turned back into Queued next time.
+                    return false;
+                }
+                if matches!(cached_pipeline.state, CachedPipelineState::Ok(_)) {
+                    return true;
+                }
+                // Creating (a task), or an error the Err arm below reports
+                // in the next frame.
+                self.waiting_pipelines.insert(id);
+                return true;
             }
 
             CachedPipelineState::Creating(task) => match bevy_tasks::futures::check_ready(task) {
                 Some(Ok(pipeline)) => {
                     cached_pipeline.state = CachedPipelineState::Ok(pipeline);
-                    return;
+                    return false;
                 }
                 Some(Err(err)) => cached_pipeline.state = CachedPipelineState::Err(err),
                 _ => (),
@@ -925,19 +1012,20 @@ impl PipelineCache {
                         error!("{}", pipeline_error_context(cached_pipeline));
                     }
                     error!("failed to process shader error:\n{}", error_detail);
-                    return;
+                    return false;
                 }
                 ShaderCacheError::CreateShaderModule(description) => {
                     error!("failed to create shader module: {}", description);
-                    return;
+                    return false;
                 }
             },
 
-            CachedPipelineState::Ok(_) => return,
+            CachedPipelineState::Ok(_) => return false,
         }
 
         // Retry
         self.waiting_pipelines.insert(id);
+        false
     }
 
     pub(crate) fn process_pipeline_queue_system(mut cache: ResMut<Self>) {
@@ -1052,6 +1140,30 @@ fn pipeline_error_context(cached_pipeline: &CachedPipeline) -> String {
                 }
             }
         }
+    }
+}
+
+/// OCW patch: a pipeline's label and the path of its main shader.
+fn describe(descriptor: &PipelineDescriptor) -> (Option<Cow<'static, str>>, String) {
+    let path = |h: &Handle<Shader>| h.path().map(|p| alloc::format!("{p}")).unwrap_or_default();
+    match descriptor {
+        PipelineDescriptor::RenderPipelineDescriptor(d) => (
+            d.label.clone(),
+            d.fragment
+                .as_ref()
+                .map(|f| path(&f.shader))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| path(&d.vertex.shader)),
+        ),
+        PipelineDescriptor::ComputePipelineDescriptor(d) => (d.label.clone(), path(&d.shader)),
+        PipelineDescriptor::MeshPipelineDescriptor(d) => (
+            d.label.clone(),
+            d.fragment
+                .as_ref()
+                .map(|f| path(&f.shader))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| path(&d.mesh.shader)),
+        ),
     }
 }
 
