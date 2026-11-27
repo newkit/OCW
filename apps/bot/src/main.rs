@@ -122,6 +122,10 @@ struct VerdictArgs {
     /// Minimum metres every bot rider must ride.
     #[arg(long, default_value_t = 20.0)]
     min_ridden_m: f64,
+    /// The session has road traffic (spec 18E T5): every bot rider must
+    /// get road vehicles near it.
+    #[arg(long)]
+    traffic: bool,
     /// Output of each bot process (with its OCW-BOT-REPORT line).
     outputs: Vec<PathBuf>,
 }
@@ -392,6 +396,7 @@ fn run_verdict(args: &VerdictArgs) -> i32 {
         riders_per_process: args.riders_per_process,
         clients: args.clients.clone(),
         min_ridden_m: args.min_ridden_m,
+        traffic: args.traffic,
         ..Default::default()
     };
     let v = verdict(&server, &bots, &expect);

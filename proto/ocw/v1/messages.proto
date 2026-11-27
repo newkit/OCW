@@ -782,7 +782,118 @@ message ServerMessage {
     VoiceHearing voice_hearing = 13;
     // The headphones per viewer (spec §7.1.7 Q17): to this rider only.
     NotHearingYou not_hearing_you = 14;
+    // The road vehicles near this rider (spec 14 Phase 18, 18E T5): to
+    // this rider only.
+    TrafficUpdate traffic = 15;
   }
+}
+
+// The road vehicles near one rider (spec 14 Phase 18, 18A, 18E T5; Q3
+// (a)): each vehicle once as its plan (route and speeds) when it comes
+// within the rider's interest radius (1.5 km), then only its changes,
+// and a despawn when it leaves the radius or the simulation. The client
+// extrapolates every vehicle from its plan with the same follower the
+// server runs (ocw_sim::traffic::PlanFollower), so the changes are rare
+// (the vehicle brakes, stops, pulls away, changes lane, gets a longer
+// route). Batched: at most one message per rider and broadcast (10 Hz),
+// none when nothing changed (a bare one about once a second keeps the
+// client's traffic clock). Reliable and in order; to this rider only.
+message TrafficUpdate {
+  // The traffic simulation's tick this update is at (its clock: ticks of
+  // step_ms since the traffic started; a world switch starts it again).
+  uint64 tick = 1;
+  // Vehicles new to this rider: their plans now (or at their spawn).
+  repeated TrafficSpawn spawns = 2;
+  // Changes of vehicles the rider has, in order.
+  repeated TrafficChange changes = 3;
+  // Vehicles gone (left the radius or the simulation).
+  repeated uint32 despawns = 4 [packed = true];
+  // Forget every vehicle first (the first update after joining,
+  // reconnecting or a world switch, and when the road traffic went off).
+  bool reset = 5;
+  // The tick's length (ms; 20 = 50 Hz).
+  uint32 step_ms = 6;
+  // RoadGraph fingerprint the edge indices refer to.
+  fixed64 graph_hash = 7;
+  // The session's tick (Snapshot.server_tick) at `tick`: the client runs
+  // the traffic on its estimate of the server's clock.
+  uint64 server_tick = 8;
+}
+
+// How a vehicle moves between changes (ocw_sim::traffic::Motion).
+enum TrafficMotion {
+  // The free road towards the plan's speeds (curves, turns, limits).
+  TRAFFIC_MOTION_FREE = 0;
+  // A constant acceleration until a target speed, then that speed.
+  TRAFFIC_MOTION_ACCEL = 1;
+  // Standing.
+  TRAFFIC_MOTION_STOPPED = 2;
+}
+
+// A route of graph edges, in parallel packed arrays (one entry a step).
+message TrafficRoute {
+  // edge index × 2, + 1 when driven from its `to` to its `from`.
+  repeated uint32 edges = 1 [packed = true];
+  // The driver's desired speed on the step (m/s), exactly the server's.
+  repeated float speeds = 2 [packed = true];
+  // The radius of the turn at the step's end into the next (m).
+  repeated float turn_r = 3 [packed = true];
+}
+
+// A vehicle's plan (ocw_sim::traffic::Plan): everything the client's
+// follower needs to drive it exactly as the server's does.
+message TrafficSpawn {
+  uint32 id = 1;
+  // 0 car, 1 van, 2 lorry, 3 bus, 4 motorbike, 5 tractor.
+  uint32 class = 2;
+  // Seeds the look (body shape, colour) on the client.
+  fixed32 look = 3;
+  // TrafficUpdate.tick minus the plan's tick.
+  uint32 age = 4;
+  // The driver: acceleration, deceleration, lateral acceleration (m/s²),
+  // headway (s), standstill gap (m); doubles, so both sides use the same
+  // bits.
+  repeated double driver = 5 [packed = true];
+  TrafficRoute route = 6;
+  // The number of the route's first step since the vehicle's spawn.
+  uint32 base = 7;
+  // Metres along the first step, speed (m/s).
+  float s = 8;
+  float v = 9;
+  // Lane, 0 = the kerb side of the driving direction.
+  uint32 lane = 10;
+  TrafficMotion motion = 11;
+  // With MOTION_ACCEL: m/s² and the target speed (m/s).
+  float accel = 12;
+  float target = 13;
+  // The lateral shift from the lane's centre (T4: pulling out to pass a
+  // rider, swerving): metres towards the centreline now, its target and
+  // the rate (m/s) it moves at (ocw_sim::traffic::Shift).
+  float shift_at = 14;
+  float shift_to = 15;
+  float shift_rate = 16;
+}
+
+// What changed in a vehicle's plan (ocw_sim::traffic::PlanChange): its
+// state at that tick replaces the extrapolated one.
+message TrafficChange {
+  uint32 id = 1;
+  // TrafficUpdate.tick minus the change's tick.
+  uint32 age = 2;
+  // The route step (counted since the spawn).
+  uint32 step = 3;
+  float s = 4;
+  float v = 5;
+  uint32 lane = 6;
+  TrafficMotion motion = 7;
+  float accel = 8;
+  float target = 9;
+  // A longer route: these steps replace the route's last one and follow.
+  TrafficRoute extend = 10;
+  // The lateral shift, as TrafficSpawn's.
+  float shift_at = 11;
+  float shift_to = 12;
+  float shift_rate = 13;
 }
 
 // A rider's bike build (spec §14 Phase 4, 4G): reliable, sent to everyone
@@ -1363,6 +1474,9 @@ enum ContactKind {
   // Slipped on wet leaves in a corner (spec 4.6.2 Q6; damage on, never in
   // group rides).
   CONTACT_KIND_LEAVES = 10;
+  // A road vehicle (spec 14 Phase 18 T4, Q4): a car that could not stop
+  // hit the rider, or the rider steered into it.
+  CONTACT_KIND_VEHICLE = 11;
 }
 
 message CrashState {

@@ -451,6 +451,66 @@ impl Session {
         }
     }
 
+    /// A road vehicle touched rider `id` (spec 14 Phase 18, T4 / T5; Q4):
+    /// the traffic core's contact – closing speed along the normal, the
+    /// vehicle's velocity relative to the rider in the rider's frame,
+    /// which way the rider is pushed – as 12B's response
+    /// ([`collide::vehicle_hit`]): a crash in full collisions, else a bump;
+    /// the damage follows 12E. Nothing with collisions off or for a rider
+    /// who does not collide now (god mode, the Echo rider, joining).
+    /// Whether it touched.
+    pub fn vehicle_contact(
+        &mut self,
+        id: RiderId,
+        closing_mps: f64,
+        relative: [f64; 2],
+        push_side: f64,
+    ) -> bool {
+        let mode = self.collision_mode();
+        let Some(r) = self.riders.get(&id) else {
+            return false;
+        };
+        if mode == Mode::Off || r.crash.is_some() || !self.collides(r) {
+            return false;
+        }
+        let body = self.body(id, r, Frame::World);
+        let resp = collide::vehicle_hit(&body, closing_mps, relative, push_side, mode);
+        if resp.touched() {
+            self.apply_response(id, &resp);
+            return true;
+        }
+        false
+    }
+
+    /// The air of a passing vehicle on rider `id` (spec 18B *Slipstream
+    /// and wind*: a lean wobble of 12B's size, no help to speed or power):
+    /// `gust` from the traffic core (its sideways force: the lean it gives
+    /// rider and bike, signed + = to the right). Only a wobble the riders
+    /// see; the physics (and so the client's prediction) is unchanged.
+    /// Gusts under 0.5° are not felt.
+    pub fn vehicle_gust(&mut self, id: RiderId, gust: &crate::traffic::Gust) {
+        const FELT_RAD: f64 = 0.5 * std::f64::consts::PI / 180.0;
+        let tick = self.tick;
+        let Some(r) = self.riders.get_mut(&id) else {
+            return;
+        };
+        let lean_rad = gust.lean_rad(r.effective.rider_mass_kg + r.effective.bike_mass_kg);
+        if lean_rad.abs() < FELT_RAD || r.crash.is_some() {
+            return;
+        }
+        // Not again while a wobble is still going.
+        if r.bump
+            .is_some_and(|b| (tick.saturating_sub(b.tick) as f64) * SIM_DT < collide::WOBBLE_S)
+        {
+            return;
+        }
+        r.bump = Some(Bump {
+            tick,
+            strength: lean_rad.abs().min(collide::wobble_strength(0.0)),
+            side: lean_rad.signum(),
+        });
+    }
+
     /// Stages a contact for the local rider `id` (`dev.bump` / `dev.crash`,
     /// local server only): the nearest other rider is put beside (a bump
     /// from the side) or just ahead with its rear wheel overlapping the
@@ -757,6 +817,58 @@ mod tests {
     fn manual(s: &mut Session, id: RiderId) {
         let seq = s.riders[&id].last_steer_seq + 1;
         s.set_lean(id, seq, 0.0);
+    }
+
+    /// A road vehicle's contact (spec 18E T5, T4's events): nothing with
+    /// collisions off, a crash of kind *vehicle* in full collisions when it
+    /// hits hard, a bump when it brushes; a lorry's air only wobbles.
+    #[test]
+    fn vehicle_contacts_and_gusts() {
+        let mut off = Session::new(straight(6.0));
+        let a = off.add_rider("a", RiderProfile::default());
+        settle(&mut off);
+        put(&mut off, a, 100.0, 1.0, 8.0);
+        assert!(!off.vehicle_contact(a, 9.0, [12.0, 2.0], 1.0));
+        assert!(off.crash(a).is_none());
+        let mut s = on(straight(6.0));
+        let a = s.add_rider("a", RiderProfile::default());
+        let b = s.add_rider("b", RiderProfile::default());
+        settle(&mut s);
+        put(&mut s, a, 100.0, 1.0, 8.0);
+        put(&mut s, b, 300.0, 1.0, 8.0);
+        assert!(s.vehicle_contact(a, 9.0, [12.0, 2.0], 1.0), "a hard hit");
+        let crash = s.crash(a).expect("down");
+        assert_eq!(crash.kind, ContactKind::Vehicle);
+        // A brush at walking pace: a bump, still riding.
+        assert!(s.vehicle_contact(b, 0.5, [0.5, 0.3], -1.0));
+        assert!(s.crash(b).is_none());
+        // The air of a lorry: a wobble only, the speed unchanged.
+        let mut g = on(straight(6.0));
+        let c = g.add_rider("c", RiderProfile::default());
+        settle(&mut g);
+        put(&mut g, c, 100.0, 1.0, 8.0);
+        let gust = crate::traffic::Gust {
+            rider: c.0,
+            vehicle: 1,
+            lateral_n: 60.0,
+            drag_n: 5.0,
+        };
+        g.vehicle_gust(c, &gust);
+        let r = &g.riders[&c];
+        assert!(r.bump.is_some_and(|b| b.side > 0.0));
+        assert_eq!(r.state.speed, 8.0);
+        // Too weak to feel.
+        let mut h = on(straight(6.0));
+        let d = h.add_rider("d", RiderProfile::default());
+        settle(&mut h);
+        h.vehicle_gust(
+            d,
+            &crate::traffic::Gust {
+                lateral_n: 3.0,
+                ..gust
+            },
+        );
+        assert!(h.riders[&d].bump.is_none());
     }
 
     #[test]

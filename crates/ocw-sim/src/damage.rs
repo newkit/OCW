@@ -535,7 +535,8 @@ pub fn drivetrain_loss(drivetrain: f64) -> f64 {
 /// the road surface wet or icy under it).
 pub fn hardness(kind: ContactKind) -> f64 {
     match kind {
-        ContactKind::HeadOn | ContactKind::World(_) => 1.0,
+        // A road vehicle (T4, Q4) hits like a wall or worse.
+        ContactKind::HeadOn | ContactKind::World(_) | ContactKind::Vehicle => 1.0,
         ContactKind::RoadEdge => 0.8,
         ContactKind::Object => 0.6,
         ContactKind::RearEnd => 0.5,

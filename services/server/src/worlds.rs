@@ -182,7 +182,9 @@ pub fn load_course_at(
             .with_road_feel(road_feel)
             .with_leaves(Some(Arc::new(leaves)))
             .with_ground((ground.tile_count() > 0).then(|| Arc::new(ground)))
-            .with_woods(woods),
+            .with_woods(woods)
+            // The road traffic's rules (spec 18E T5): its `TRFC`.
+            .with_traffic_of(&world.package),
     );
     let change = v1::WorldChange {
         package_id: world.identity.id.clone(),
