@@ -1247,6 +1247,7 @@ impl GameServer {
             self.session.remove_rider(rider);
             tracing::info!(%rider, "rider left");
             self.refresh_voice_apart();
+            self.reset_traffic_without_humans();
         }
     }
 

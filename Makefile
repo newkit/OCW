@@ -281,6 +281,7 @@ test-unit: ## Run all unit and integration tests (cargo test --workspace; and th
 	$(CARGO) test --workspace
 	$(CARGO) test -p ocw-web --features webxr --lib webxr
 	scripts/test-world-patches.sh
+	scripts/test-fly-start.sh
 
 fmt: ## Format all code
 	$(CARGO) fmt --all
@@ -373,7 +374,7 @@ test-web-gpu: web ## Headless Chromium: the page's GPU choice (ocw-gpu.js rules)
 test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride (portrait and landscape: the safe areas, touch taps and a held side, the manifest, the wake lock; spec 3.2.3 TS4; the phone layout and the touch power buttons, spec 3.2, TS5), Safari on macOS with the desktop HUD unchanged; rides and draws (B7); into test-output/web/
 	scripts/test-web-webkit.py --out test-output/web
 
-test-web-log: web ## The page log (spec 14 Phase 10, 10G *The page log*; Playwright, make deps-webkit): WebKit as an iPhone 15 and Chromium as an Android phone – ?log=1 shows the panel before the wasm with the environment header and every line (the page's, the app's Rust lines, uncaught errors, rejections), Copy, Download, the ring buffer, the load before after a reload (and after a load killed without pagehide), five taps on the version stamp, "Show log" on the too-old, blocked-wasm and no-GPU screens; into test-output/web-log/
+test-web-log: web ## The page log (spec 14 Phase 10, 10G *The page log*; Playwright, make deps-webkit): WebKit as an iPhone 15 and Chromium as an Android phone – ?log=1 shows the panel before the wasm with the environment header and every line (the page's, the app's Rust lines, uncaught errors, rejections), Copy, Download, the ring buffer, the load before after a reload (and after a load killed without pagehide), five taps on the version stamp, "Show log" on the too-old, blocked-wasm and no-GPU screens, the module's download broken once (aborted, half the bytes: progress, "trying again (2/3)", it rides) and always (Start failed with Try again); into test-output/web-log/
 	scripts/test-web-log.py --out test-output/web-log
 
 test-web-bisect: web ## The bisect switches and the early page log (spec 14 Phase 10, 10G *Bisecting a phone's crash*; Playwright, make deps-webkit): WebKit as the reporting iPhone (430 x 932 at 3) and Chromium as an Android phone ride the Hills on WebGL 2 at Low with each switch (nosee, noarrays, plain, noshadow, nomsaa, nosky, noegui, novoice, noaudio, pipelines=serial, frames=N, ios=safe): it draws, the log has the pipeline compiles, the first frames' times and the memory samples, each early line at once in sessionStorage, the switched-off shaders never compile, no LiveKit SDK for a solo ride, a killed load's last sign of life; into test-output/web-bisect/

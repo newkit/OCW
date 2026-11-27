@@ -102,6 +102,9 @@ struct FreeRide {
     /// The junction locked last, until passed: (junction, its path
     /// distance, the exit taken).
     locked: Option<(Junction, f64, usize)>,
+    /// The package route the server rides when this client has no plan
+    /// for it (joined from a ride of its own, [`ClientCore::follow_server_course`]).
+    served: Option<String>,
 }
 
 pub struct ClientCore {
@@ -429,6 +432,7 @@ impl ClientCore {
                 turn_sent: None,
                 last_u_turn_s: None,
                 locked: None,
+                served: None,
             }),
             ..core
         }
@@ -832,6 +836,7 @@ impl ClientCore {
                 self.hearts_credited = w.hearts_credited;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
+                self.follow_server_course(&w);
                 self.collisions.on_welcome(&w);
                 self.traffic.on_welcome(&w);
                 // A new session: its server sends the vehicles again.
@@ -1750,6 +1755,50 @@ impl ClientCore {
         }))))
     }
 
+    /// A graph ride joins the server's course (spec 11.5, the browser's
+    /// `?together=1`): both ride the package's road graph, but the server
+    /// decides whether that is a free ride or one of its routes. A route
+    /// of this client's own that the server does not ride is dropped, so
+    /// the HUD says "Free ride" (or the server's route) as the desktop does
+    /// after a join, not "Vaduz - Malbun (off the route)".
+    fn follow_server_course(&mut self, w: &v1::Welcome) {
+        let Some(fr) = &mut self.free else { return };
+        if !w.free_ride {
+            return;
+        }
+        let ours = fr.plan.as_ref().map(|p| p.name.clone());
+        let theirs = Some(w.graph_route.clone()).filter(|n| !n.is_empty());
+        if ours == theirs {
+            fr.served = None;
+            return;
+        }
+        if fr.plan.take().is_some() {
+            fr.choice = None;
+            if let Some(own) = fr.own.take() {
+                fr.own = Some(Arc::new((*own).clone().with_plan(None)));
+            }
+        }
+        let (id, name) = match &theirs {
+            Some(r) => (r.clone(), r.clone()),
+            None => ("free-ride".to_owned(), "Free ride".to_owned()),
+        };
+        let v = self.route.points()[0];
+        let route = Route::from_points(
+            id.clone(),
+            name,
+            vec![v, [v[0] + 1.0, v[1], v[2]]],
+            false,
+            5.0,
+        )
+        .expect("two distinct points");
+        self.route = match self.route.geo_origin() {
+            Some(origin) => route.with_geo_origin(origin),
+            None => route,
+        };
+        self.event = EventClient::new(id);
+        fr.served = theirs;
+    }
+
     /// Route ride: whether the rider is on the route right now.
     pub fn on_route(&self) -> Option<bool> {
         let own = self.free.as_ref()?.own.as_ref()?;
@@ -1762,7 +1811,10 @@ impl ClientCore {
     /// "Rheintal (off the route)".
     pub fn route_status(&self) -> Option<String> {
         let fr = self.free.as_ref()?;
-        let plan = fr.plan.as_ref()?;
+        let Some(plan) = fr.plan.as_ref() else {
+            // The server's route, which this client has no plan for.
+            return fr.served.clone();
+        };
         let Some(own) = fr.own.as_ref() else {
             return Some(plan.name.clone());
         };
@@ -4949,6 +5001,54 @@ mod tests {
         // The same rider without a geographic origin: no GPS line.
         let c = ClientCore::free_ride(net, "Routed", RiderProfile::default()).with_route_plan(plan);
         assert_eq!(c.geo_origin(), None);
+    }
+
+    /// Regression (the public server, 2026-11-27): the browser joined a
+    /// free-ride server (`?together=1`) with its own route of the package
+    /// and kept saying "Vaduz - Malbun (off the route)"; it follows the
+    /// server's course like the desktop: a free ride, or the server's route.
+    #[test]
+    fn a_route_rider_joining_a_free_ride_server_rides_free() {
+        let free = Harness::free(0);
+        let net = free.client.free.as_ref().unwrap().net.clone();
+        let plan = grid_route(&net);
+        let client = ClientCore::free_ride(net.clone(), "Routed", RiderProfile::default())
+            .with_geo_origin((47.14, 9.52))
+            .with_route_plan(plan);
+        assert_eq!(client.course_name(), "Grid route");
+        let mut h = Harness::with(free.server, client);
+        h.ride(250.0, 2.0);
+        assert_eq!(h.client.course_name(), "Free ride");
+        assert_eq!(h.client.route_status(), None, "no route of its own");
+        assert_eq!(h.client.on_route(), None);
+        assert_eq!(
+            h.client.geo_origin(),
+            Some((47.14, 9.52)),
+            "the GPS line stays"
+        );
+        let mut view = ocw_render::RideView::new(Route::test_loop());
+        view.route_status = Some("Grid route (off the route)".into());
+        crate::view::fill(
+            &mut view,
+            &h.client,
+            h.time_s,
+            h.time_s,
+            0.0,
+            crate::view::Notices::default(),
+            false,
+        );
+        assert_eq!(view.route_status, None);
+        // A server riding a route this client has no plan for: its name.
+        let mut c = ClientCore::free_ride(net, "Free", RiderProfile::default());
+        let w = v1::Welcome {
+            rider_id: 7,
+            free_ride: true,
+            graph_route: "Lake Loop".into(),
+            ..Default::default()
+        };
+        c.follow_server_course(&w);
+        assert_eq!(c.course_name(), "Lake Loop");
+        assert_eq!(c.route_status().as_deref(), Some("Lake Loop"));
     }
 
     /// Route ride (spec §2.7, §2.2.1): the overlay shows the route's exit

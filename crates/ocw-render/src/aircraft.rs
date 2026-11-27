@@ -103,7 +103,7 @@ impl Plugin for AircraftPlugin {
                     .before(TransformSystems::Propagate),
             )
             .add_systems(Startup, spawn_credit)
-            .add_systems(Update, update_credit);
+            .add_systems(Update, (dock_credit, update_credit).chain());
     }
 }
 
@@ -130,6 +130,41 @@ fn spawn_credit(mut commands: Commands) {
     ));
 }
 
+/// The credit's widest line on a compact HUD (UI px): it wraps there, as
+/// wide as the compact elevation profile below it.
+fn credit_width(layout: Option<&crate::hud_fit::HudLayout>) -> Val {
+    match layout {
+        Some(l) if l.compact => px(crate::hud::profile_size(l.ui_px, true).x.max(120.0)),
+        _ => Val::Auto,
+    }
+}
+
+/// Puts the credit at the top of the HUD's bottom-left column, above the
+/// elevation profile (spec 18J; before, it stood at a fixed 40 px from the
+/// bottom and covered the profile): the column's children flow, so it
+/// never overlaps the profile or the GPS line, on any window size. Without
+/// a HUD it keeps its own place, bottom left.
+fn dock_credit(
+    mut commands: Commands,
+    layout: Option<Res<crate::hud_fit::HudLayout>>,
+    column: Query<Entity, With<crate::hud::HudBottomLeft>>,
+    mut credit: Query<(Entity, &mut Node, Has<ChildOf>), With<AirCredit>>,
+) {
+    let Ok(column) = column.single() else { return };
+    for (e, mut node, docked) in &mut credit {
+        if !docked {
+            node.position_type = PositionType::Relative;
+            node.bottom = Val::Auto;
+            node.left = Val::Auto;
+            commands.entity(column).insert_children(0, &[e]);
+        }
+        let width = credit_width(layout.as_deref());
+        if node.max_width != width {
+            node.max_width = width;
+        }
+    }
+}
+
 /// The credit text of a view (`None`: hidden).
 pub fn credit(view: Option<&AirView>) -> Option<&str> {
     view?.attribution.as_deref().filter(|a| !a.is_empty())
@@ -141,8 +176,10 @@ fn update_credit(
 ) {
     let want = view.as_deref().and_then(|v| credit(v.air.as_ref()));
     for (mut text, mut vis) in &mut q {
+        // Visible, not inherited: the ODbL credit stays while the HUD is
+        // hidden (`hud off`), at its place in the column.
         let shown = if want.is_some() {
-            Visibility::Inherited
+            Visibility::Visible
         } else {
             Visibility::Hidden
         };
@@ -882,6 +919,65 @@ fn ribbon(trails: &[&ocw_sim::air::Trail], eye: Vec3, focal: f32, tint: Vec3) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (the public server, 2026-11-27): the credit stood at a
+    /// fixed 40 px from the bottom, over the elevation profile. It flows
+    /// at the top of the bottom-left column now, above the profile and the
+    /// GPS line (so it overlaps neither, at any size), wraps to the compact
+    /// profile's width on a phone, and stays visible with the HUD hidden.
+    #[test]
+    fn the_credit_stands_above_the_elevation_profile() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(ocw_world::Route::test_loop()))
+            .add_systems(Startup, (crate::hud::spawn_hud, spawn_credit))
+            .add_systems(Update, (dock_credit, update_credit).chain());
+        app.update();
+        app.update();
+        let w = app.world_mut();
+        let credit = w
+            .query_filtered::<Entity, With<AirCredit>>()
+            .single(w)
+            .unwrap();
+        let column = w.get::<ChildOf>(credit).expect("docked").parent();
+        assert!(w.get::<crate::hud::HudBottomLeft>(column).is_some());
+        let kids: Vec<Entity> = w.get::<Children>(column).unwrap().iter().collect();
+        assert_eq!(kids.first(), Some(&credit), "the first: above the others");
+        assert!(
+            kids.iter()
+                .any(|k| w.get::<crate::hud::ProfilePanel>(*k).is_some()),
+            "in the profile's column"
+        );
+        let node = w.get::<Node>(credit).unwrap();
+        assert_eq!(node.position_type, PositionType::Relative, "it flows");
+        assert_eq!(node.max_width, Val::Auto);
+        assert_eq!(w.get::<Visibility>(credit), Some(&Visibility::Hidden));
+        // Live aircraft drawn: shown, also with the HUD hidden.
+        w.resource_mut::<RideView>().air = Some(AirView {
+            attribution: Some("Aircraft data: adsb.lol (ODbL)".into()),
+            ..Default::default()
+        });
+        // A phone: as wide as the compact profile.
+        w.insert_resource(crate::hud_fit::HudLayout {
+            compact: true,
+            ui_px: Vec2::new(390.0, 700.0),
+            ..Default::default()
+        });
+        app.update();
+        let w = app.world_mut();
+        assert_eq!(w.get::<Visibility>(credit), Some(&Visibility::Visible));
+        assert_eq!(
+            w.get::<Text>(credit).unwrap().0,
+            "Aircraft data: adsb.lol (ODbL)"
+        );
+        let want = crate::hud::profile_size(Vec2::new(390.0, 700.0), true).x;
+        assert_eq!(w.get::<Node>(credit).unwrap().max_width, px(want));
+        assert_eq!(
+            w.get::<ChildOf>(credit).unwrap().parent(),
+            column,
+            "docked once"
+        );
+    }
 
     /// The light dots are bright: an unlit material draws its base colour
     /// only, so that must be the lamp's colour, far above 1 (HDR) in its

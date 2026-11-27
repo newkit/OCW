@@ -66,9 +66,31 @@ while [ ! -f "$world" ]; do
   sleep 30
 done
 
+# The server's environment: only what it needs. Everything the machine has
+# (Fly's own variables, other secrets) is dropped by name (`env -u NAME`),
+# except the live aircraft's settings (spec 18J), which pass through when
+# set: OCW_ADSB_LOL_KEY (a Fly secret: `fly secrets set`) and
+# OCW_LIVE_AIR_OFFLINE. Only names are on the command line, never a value,
+# so the key is in no `ps` listing and no log. (setpriv's reset of the
+# environment cleared them too: the server never saw the key.)
+keep_env='OCW_ADSB_LOL_KEY OCW_LIVE_AIR_OFFLINE'
+set --
+for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u); do
+  case " $keep_env " in
+    *" $name "*) ;;
+    *) set -- "$@" -u "$name" ;;
+  esac
+done
+for name in $keep_env; do
+  if printenv "$name" >/dev/null; then
+    echo "passing $name to the server (its value is not shown)" >&2
+  fi
+done
+
 # shellcheck disable=SC2086  # OCW_SERVER_ARGS is a list of options
-exec setpriv --reuid=ocw --regid=ocw --clear-groups --reset-env -- \
-  env HOME=/data/home PATH=/usr/local/bin:/usr/bin:/bin RUST_LOG="${RUST_LOG:-info}" NO_COLOR=1 \
+exec env "$@" \
+  HOME=/data/home PATH=/usr/local/bin:/usr/bin:/bin RUST_LOG="${RUST_LOG:-info}" NO_COLOR=1 \
+  setpriv --reuid=ocw --regid=ocw --clear-groups -- \
   /usr/local/bin/ocw-server \
     --listen "$udp_ip:47800" \
     --webtransport "$udp_ip:47801" \

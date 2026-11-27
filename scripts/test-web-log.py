@@ -30,7 +30,14 @@ WebGL 2 – headless WebGPU is not a phone's). For each phone:
             the log has the cause;
   no-wasm   the .wasm blocked: "Start failed" offers Show log with the
             failed load in the log;
-  no-gpu    (Android) neither WebGPU nor WebGL 2: the error offers Show log.
+  no-gpu    (Android) neither WebGPU nor WebGL 2: the error offers Show log;
+  retry     the module's download (spec 10G *Module download*): the first
+            request of the .wasm aborted (Safari's "Load failed"), and once
+            cut to half its bytes (a partial copy): the page shows the
+            progress ("Downloading the app: x / y MB"), says "the download
+            broke off – trying again (2/3)" (in the log too), downloads it
+            again past the HTTP cache and rides; with every request aborted
+            (no-wasm) "Start failed" comes after three tries, with Try again.
 
   OUT/web-log-<time>-<phone>-<case>.png   screenshots (phone size)
   OUT/web-log-<time>-<phone>-<case>.txt   the log text as Copy / Download give it
@@ -362,6 +369,86 @@ def main():
         shot(pg, phone, case + "-log")
         ctx.close()
 
+    # Every text the loading screen showed (sampled every 50 ms).
+    SEEN = """
+window.__ocwSeen = [];
+setInterval(() => {
+  const s = document.getElementById("ocw-status");
+  const t = s && !s.hidden ? s.textContent : "";
+  if (t && window.__ocwSeen[window.__ocwSeen.length - 1] !== t) window.__ocwSeen.push(t);
+}, 50);
+// The cache mode of each request of the module (the retries go past the
+// HTTP cache: "reload").
+window.__ocwWasmCache = [];
+const __fetch = window.fetch;
+window.fetch = function (input, init) {
+  if (String(input).endsWith(".wasm")) window.__ocwWasmCache.push((init && init.cache) || "default");
+  return __fetch.call(this, input, init);
+};
+"""
+
+    def retry_case(browser, pw, phone, how):
+        """The first .wasm request broken (`abort`: a network error; `half`:
+        half the bytes, a damaged copy): the page tries again and rides."""
+        ctx, pg = context(browser, pw, phone, SEEN)
+        asked = []
+
+        def wasm(route):
+            asked.append(route.request.url)
+            if len(asked) > 1:
+                route.continue_()
+            elif how == "abort":
+                route.abort()
+            else:
+                body = route.fetch().body()
+                route.fulfill(status=200, headers={"content-type": "application/wasm"}, body=body[:len(body) // 2])
+
+        pg.route("**/*.wasm", wasm)
+        pg.goto(root + "?route=hills&bots=1&gpu=webgl2&quality=low")
+        wait_ride(pg, f"{phone} retry-{how}")
+        seen = pg.evaluate("window.__ocwSeen")
+        text = report(pg)
+        save_text(phone, "retry-" + how, text)
+        started = pg.evaluate("window.ocwFrames > 20 && document.getElementById('ocw-status').hidden")
+        check(f"{phone} retry-{how}: the ride starts after a broken download of the module", started,
+              {"seen": seen[-6:], "requests": len(asked)})
+        modes = pg.evaluate("window.__ocwWasmCache")
+        check(f"{phone} retry-{how}: the module was asked twice, the second time past the cache",
+              len(asked) == 2 and modes == ["default", "reload"], {"requests": len(asked), "cache": modes})
+        check(f"{phone} retry-{how}: the loading screen said it tries again (2/3)",
+              any("The download broke off – trying again (2/3)" in t for t in seen), seen[:8])
+        check(f"{phone} retry-{how}: the log says so", "trying again (2/3)" in text,
+              [ln for ln in text.split("\n") if "download" in ln][:4])
+        progress = [t for t in seen if re.search(r"Downloading the app: \d+\.\d / \d+\.\d MB", t)]
+        check(f"{phone} retry-{how}: the download's progress is shown (x / y MB)", progress, seen[:8])
+        check(f"{phone} retry-{how}: no Start failed", not any("Start failed" in t for t in seen), seen[-4:])
+        shot(pg, phone, "retry-" + how)
+        ctx.close()
+
+    def try_again_case(browser, pw, phone):
+        """Every .wasm request aborted: three tries, then "Start failed" with
+        Try again (a new load of the page)."""
+        ctx, pg = context(browser, pw, phone, SEEN)
+        asked = []
+
+        def wasm(route):
+            asked.append(1)
+            route.abort()
+
+        pg.route("**/*.wasm", wasm)
+        pg.goto(root + "?route=hills&bots=1&gpu=webgl2&quality=low")
+        try:
+            pg.wait_for_selector("#ocw-try-again", timeout=60000)
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"[{phone} try-again] wait: {e}")
+        seen = pg.evaluate("window.__ocwSeen")
+        status = pg.evaluate("document.getElementById('ocw-status').innerText")
+        check(f"{phone} try-again: three tries, then Start failed with Try again",
+              len(asked) == 3 and "Start failed" in status and "Try again" in status
+              and any("(3/3)" in t for t in seen), {"requests": len(asked), "status": status[:200]})
+        shot(pg, phone, "try-again")
+        ctx.close()
+
     phones = [c.strip() for c in a.cases.split(",") if c.strip()]
     with sync_playwright() as pw:
         for phone in phones:
@@ -383,6 +470,9 @@ def main():
                            root + "?route=hills&bots=1", "no WebAssembly SIMD")
                 offer_case(browser, pw, phone, "no-wasm", "", root + "?route=hills&bots=1&gpu=webgl2&quality=low",
                            "Start failed", block_wasm=True)
+                retry_case(browser, pw, phone, "abort")
+                retry_case(browser, pw, phone, "half")
+                try_again_case(browser, pw, phone)
                 if phone == "android":
                     offer_case(browser, pw, phone, "no-gpu", NO_GPU, root + "?route=hills&bots=1",
                                "neither WebGPU nor WebGL 2")

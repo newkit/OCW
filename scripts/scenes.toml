@@ -6207,3 +6207,21 @@ args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots"
 at = ["0.5=time 2026-07-15 21:40", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "3.9=time pause", "4=air.spot airliner 45 0", "4.1=air"]
 shot = 12
 pick = false
+
+[[scene]]
+name = "air-live-credit-hud"
+description = "The live aircraft's credit and the elevation profile in the lower left of the desktop HUD (spec 18J; v6.99): \"Aircraft data: adsb.lol (ODbL)\" stands above the profile, no longer over it; a free ride in Liechtenstein with Aircraft: live. Real time; needs the network"
+world = true
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "220", "--window", "1920x1080"]
+at = ["0.6=character --body b --hair bob --hair-colour #6B3A1F --skin 4", "0.8=traffic air live"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "air-live-credit-small"
+description = "The same on a small portrait window (the compact HUD of a phone, spec 18J; v6.99): the credit wraps at the compact profile's width above it; Aircraft: live in Liechtenstein. Real time; needs the network"
+world = true
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "220", "--window", "720x1400"]
+at = ["0.6=character --body a --hair short --hair-colour #D9B26F --skin 2 --beard 1", "0.8=traffic air live"]
+shot = 24
+pick = false

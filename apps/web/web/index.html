@@ -962,6 +962,149 @@
       return {go: true, died: last.died};
     }
 
+    // The app's module, downloaded by the page (spec 10G *Module download*;
+    // an iPhone, 2026-11-27: "Start failed: TypeError: Load failed" after
+    // 26 s of a silent wait – Safari's word for a download that broke off,
+    // 14.8 MB over a phone's connection): the progress on the loading
+    // screen, a broken download tried again twice (after 1 s and 4 s, the
+    // second and third time past the HTTP cache, so a partial copy is never
+    // used as the whole), then "Start failed" with Try again.
+    // (Functions only: ride() runs before the script's later `const`s.)
+    function mb(b) { return (b / 1e6).toFixed(1); }
+
+    // The module's sizes from the build's sizes.txt (raw and gzip bytes):
+    // the total when the server compresses it (Content-Length is then the
+    // compressed size, the body counts the unpacked bytes).
+    async function moduleSizes(wasmName) {
+      try {
+        const r = await fetch("sizes.txt", {cache: "no-store"});
+        if (!r.ok) return {};
+        const t = await r.text();
+        const n = wasmName.replace(/\./g, "\\.");
+        const raw = t.match(new RegExp(n + " raw: (\\d+) bytes"));
+        const gz = t.match(new RegExp(n + " gzip -9: (\\d+) bytes"));
+        return {raw: raw ? Number(raw[1]) : 0, gz: gz ? Number(gz[1]) : 0};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    // "Downloading the app: 6.2 / 14.8 MB" (the bytes over the network:
+    // exact without compression, else in proportion to the unpacked ones).
+    function downloadLine(got, sizes, exact) {
+      const total = exact || sizes.raw || 0;
+      if (!total) return `Downloading the app: ${mb(got)} MB …`;
+      const shown = exact || sizes.gz || sizes.raw;
+      const part = Math.min(got / total, 1);
+      return `Downloading the app: ${mb(part * shown)} / ${mb(shown)} MB …`;
+    }
+
+    // One download of the module as a Response for wasm-bindgen's init
+    // (it still compiles while the bytes arrive). `dl.broke` says why the
+    // download itself failed (a network error, too few bytes) – only then
+    // is it tried again; an error of the app is not.
+    async function downloadModule(url, attempt, sizes, dl) {
+      let r;
+      try {
+        // The second and third try past the HTTP cache (a partial copy is
+        // never taken for the whole one).
+        r = await fetch(url, attempt > 1 ? {cache: "reload"} : {});
+      } catch (e) {
+        dl.broke = String(e);
+        throw e;
+      }
+      if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+      const len = Number(r.headers.get("Content-Length")) || 0;
+      const exact = !r.headers.get("Content-Encoding") && len > 0 ? len : 0;
+      const reader = r.body.getReader();
+      let got = 0;
+      let shownAt = 0;
+      const show = (force) => {
+        const now = performance.now();
+        if (!force && now - shownAt < 200) return;
+        shownAt = now;
+        dl.line = downloadLine(got, sizes, exact);
+        status.hidden = false;
+        if (status.className !== "error") status.textContent = dl.line;
+      };
+      show(true);
+      const body = new ReadableStream({
+        async pull(ctl) {
+          let c;
+          try {
+            c = await reader.read();
+          } catch (e) {
+            dl.broke = String(e);
+            ctl.error(e);
+            return;
+          }
+          if (c.done) {
+            if (exact && got !== exact) {
+              dl.broke = `only ${got} of ${exact} bytes arrived`;
+              ctl.error(new TypeError(dl.broke));
+              return;
+            }
+            dl.got = got;
+            show(true);
+            ctl.close();
+            return;
+          }
+          got += c.value.byteLength;
+          ctl.enqueue(c.value);
+          show(false);
+        },
+        cancel(reason) {
+          return reader.cancel(reason);
+        },
+      });
+      return new Response(body, {status: 200, headers: {"Content-Type": "application/wasm"}});
+    }
+
+    // Starts the module (`ocw.default`), downloading it with
+    // `downloadModule` and trying a broken download again.
+    async function startModule(ocw, wasmUrl) {
+      const MODULE_TRIES = 3;
+      const name = wasmUrl.pathname.split("/").pop();
+      const sizes = await moduleSizes(name);
+      for (let attempt = 1; ; attempt++) {
+        const dl = {broke: null};
+        try {
+          // Bevy's event loop throws a control-flow exception once it
+          // runs: that is not an error.
+          await ocw.default({module_or_path: downloadModule(wasmUrl, attempt, sizes, dl)}).catch((e) => {
+            if (!String(e).includes("Using exceptions for control flow")) throw e;
+          });
+          if (dl.got) console.log(`ocw-web: ${name} downloaded (${mb(dl.got)} MB unpacked, try ${attempt})`);
+          return;
+        } catch (e) {
+          // A damaged copy (cut short without a network error): download
+          // it again too.
+          if (!dl.broke && typeof WebAssembly !== "undefined" && e instanceof WebAssembly.CompileError) {
+            dl.broke = "the downloaded module is damaged: " + e.message;
+          }
+          if (!dl.broke) throw e;
+          if (attempt >= MODULE_TRIES) {
+            throw new Error(`the download of the app broke off ${MODULE_TRIES} times (${dl.broke}) – the connection may be weak`);
+          }
+          const line = `The download broke off – trying again (${attempt + 1}/${MODULE_TRIES})`;
+          console.warn(`ocw-web: ${line}: ${name}: ${dl.broke}`);
+          status.hidden = false;
+          status.className = "";
+          status.textContent = line + " …";
+          await new Promise((res) => setTimeout(res, 1000 * attempt * attempt));
+        }
+      }
+    }
+
+    // "Start failed" with Try again (a new load of the page) and Rides.
+    function startFailed(e) {
+      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      console.error("Start failed: " + e);
+      status.hidden = false;
+      status.className = "error";
+      status.innerHTML = `<div>Start failed: ${esc(e)}<br><a href="${esc(location.href)}" id="ocw-try-again">Try again</a> · <a href="./">Rides</a></div>`;
+    }
+
     async function ride() {
     const death = afterDeath();
     if (!death.go) return;
@@ -995,7 +1138,8 @@
       performance.mark("ocw-import");
       try {
         if (gpu.xr) ocwXr.install();
-        const ocw = await import(gpu.xr ? "./ocw_web_webxr.js" : gpu.api === "webgl2" ? "./ocw_web_webgl2.js" : "./ocw_web.js");
+        const js = gpu.xr ? "./ocw_web_webxr.js" : gpu.api === "webgl2" ? "./ocw_web_webgl2.js" : "./ocw_web.js";
+        const ocw = await import(js);
         // window.ocw.console("teleport 3"), window.ocw.wasmMemory(): for tests.
         window.ocw = ocw;
         // Ride -> Join: a pasted link goes to the link field (spec §3.2.1).
@@ -1003,15 +1147,11 @@
           const t = e.clipboardData && e.clipboardData.getData("text");
           if (t && window.ocw && window.ocw.paste) window.ocw.paste(t);
         });
-        // Bevy's event loop throws a control-flow exception once it runs:
-        // that is not an error.
-        await ocw.default().catch((e) => {
-          if (!String(e).includes("Using exceptions for control flow")) throw e;
-        });
+        await startModule(ocw, new URL(js.replace(/\.js$/, "_bg.wasm"), location.href));
       } catch (e) {
         if (!String(e).includes("Using exceptions for control flow")) {
           if (watchdog) watchdog.fail("the WebGPU module did not start: " + e);
-          else fail("Start failed: " + e);
+          else startFailed(e);
         }
       }
       started = true;

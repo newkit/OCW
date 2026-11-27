@@ -510,6 +510,12 @@ struct HudGps;
 #[derive(Component)]
 pub(crate) struct ProfilePanel;
 
+/// The bottom-left column (the elevation profile, the GPS line, and above
+/// them the live aircraft's credit, [`crate::aircraft`]): its children
+/// flow, so nothing in it overlaps.
+#[derive(Component)]
+pub(crate) struct HudBottomLeft;
+
 #[derive(Component)]
 struct ProfileCaption;
 
@@ -552,7 +558,7 @@ const PROFILE_BASE: f64 = 0.08;
 #[derive(Component)]
 struct HudGpsText;
 
-fn spawn_hud(mut commands: Commands) {
+pub(crate) fn spawn_hud(mut commands: Commands) {
     // Bottom left: the elevation profile above the GPS line (the version
     // label is bottom right, the REC indicator top right).
     commands
@@ -567,6 +573,7 @@ fn spawn_hud(mut commands: Commands) {
                 ..default()
             },
             HudPanel,
+            HudBottomLeft,
             // The workout panel stays above it, or replaces it where it
             // has no other room (spec 3.2 Q1).
             crate::workout::YieldsToWorkout,
