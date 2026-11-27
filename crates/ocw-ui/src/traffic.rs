@@ -327,6 +327,10 @@ impl Plugin for TrafficPlugin {
         if !app.is_plugin_added::<crate::air::AirPlugin>() {
             app.add_plugins(crate::air::AirPlugin);
         }
+        // The UFOs (T9).
+        if !app.is_plugin_added::<crate::ufo::UfoPlugin>() {
+            app.add_plugins(crate::ufo::UfoPlugin);
+        }
     }
 }
 

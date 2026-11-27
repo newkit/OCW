@@ -33,6 +33,7 @@ pub mod clothing;
 pub mod computer;
 #[cfg(feature = "tools")]
 pub mod convert;
+pub mod cow;
 pub mod diff;
 pub mod export;
 #[cfg(feature = "tools")]

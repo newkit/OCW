@@ -57,6 +57,7 @@ pub mod timemachine;
 pub mod touch;
 pub mod traffic;
 pub mod trust;
+pub mod ufo;
 pub mod view_distance;
 pub mod weather;
 // The workshop scene and the garage (spec 14 Phase 4; both apps since

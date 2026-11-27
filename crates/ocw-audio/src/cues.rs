@@ -72,13 +72,16 @@ pub enum Cue {
     /// A vehicle closing in from behind (the proximity cue of 18B): a soft,
     /// low two-note tick, quieter than the riders' bell.
     VehicleBehind,
+    /// A UFO darting away (spec 18E T9): a falling sci-fi sweep over a
+    /// rushing whoosh.
+    UfoWhoosh,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 30] = [
+    pub const NAMES: [(&'static str, Cue); 31] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -104,6 +107,7 @@ impl Cue {
         ("air-horn", Cue::AirHorn),
         ("whoosh", Cue::PassWhoosh),
         ("vehicle-behind", Cue::VehicleBehind),
+        ("ufo-whoosh", Cue::UfoWhoosh),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -151,6 +155,7 @@ impl Cue {
             Cue::AirHorn => 0.7,
             Cue::PassWhoosh => 1.1,
             Cue::VehicleBehind => 0.36,
+            Cue::UfoWhoosh => 1.5,
             Cue::Test(_) => 0.8,
         }
     }
@@ -197,6 +202,7 @@ impl CueVoice {
                 Cue::Crack => Svf::new(900.0, 1.2, sample_rate),
                 Cue::Crash => Svf::new(3200.0, 1.5, sample_rate),
                 Cue::PassWhoosh => Svf::new(900.0, 0.8, sample_rate),
+                Cue::UfoWhoosh => Svf::new(1400.0, 0.9, sample_rate),
                 _ => Svf::new(2600.0, 2.0, sample_rate),
             },
         }
@@ -338,6 +344,19 @@ impl CueVoice {
                 band * 0.55 * env
             }
             Cue::VehicleBehind => tone(t, 0.0, 0.16, 392.0, 0.07) + tone(t, 0.16, 0.2, 330.0, 0.07),
+            // A sweep falling from 1.8 kHz to 200 Hz over a rushing noise:
+            // gone faster than the ear can follow.
+            Cue::UfoWhoosh => {
+                let x = t / 1.5;
+                let env = (x / 0.05).min(1.0) * (1.0 - x).max(0.0).powf(1.5);
+                // The sweep's phase: the integral of f(t) = 1800 e^{-k t}.
+                let k = (1800.0f32 / 200.0).ln() / 1.5;
+                let phase = 1800.0 / k * (1.0 - (-k * t).exp());
+                let sweep = (2.0 * PI * phase).sin();
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                env * (0.12 * sweep + 0.4 * band * (1.0 - x))
+            }
             // The tyre hits the hole's far edge: a low hollow thump (two
             // knocks: front and rear wheel), then the bike rattling.
             Cue::Pothole => {

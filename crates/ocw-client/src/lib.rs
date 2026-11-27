@@ -73,6 +73,7 @@ pub mod sky;
 pub mod strava;
 pub mod traffic;
 pub mod trainer;
+pub mod ufo;
 // The road vehicles near the rider (spec 18E T5).
 pub mod vehicles;
 pub mod view;

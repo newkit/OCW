@@ -63,7 +63,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 101] = [
+pub const ALL: [Slot; 105] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -196,6 +196,12 @@ pub const ALL: [Slot; 101] = [
     slot("light_nav_green", Tint::Fixed, 0x14C850, 0.0, 0.2),
     slot("light_white", Tint::Fixed, 0xF8F8F4, 0.0, 0.2),
     slot("light_glow", Tint::Fixed, 0xFFB347, 0.0, 0.3),
+    // The cow of the UFOs' beam scene (spec 18E T9): a white hide with
+    // brown patches (a Black Forest / Simmental look), its hooves and horns.
+    slot("hide", Tint::Fixed, 0xF1ECE2, 0.0, 0.8),
+    slot("hide_patch", Tint::Fixed, 0x7A4A2A, 0.0, 0.8),
+    slot("hoof", Tint::Fixed, 0x2A2420, 0.0, 0.6),
+    slot("horn_cow", Tint::Fixed, 0xD8CCB2, 0.0, 0.5),
 ];
 
 /// The vehicle slots that are lamps (18B): every `light_*` node of a

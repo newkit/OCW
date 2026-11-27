@@ -74,6 +74,7 @@ pub mod touch_hud;
 pub mod traffic;
 pub mod tunnel;
 pub mod tunnel_cut;
+pub mod ufo;
 pub mod unicorn;
 pub mod vegetation;
 pub mod voice;
@@ -205,6 +206,9 @@ pub struct RideView {
     /// The simulated aircraft (spec 14 Phase 18, T8; `None`: none drawn –
     /// `traffic.air off`, or no ride).
     pub air: Option<aircraft::AirView>,
+    /// The UFOs (spec 14 Phase 18, T9; `None`: none drawn – `traffic.ufo
+    /// off`, a race or event, or no ride).
+    pub ufo: Option<ufo::UfoView>,
 }
 
 /// The camera's pose on a guided path (spec §14 Phase 13 G5).
@@ -366,6 +370,7 @@ impl RideView {
             vehicle_cues: Vec::new(),
             vehicle_sound: false,
             air: None,
+            ufo: None,
         }
     }
 
@@ -592,6 +597,8 @@ impl Plugin for OcwRenderPlugins {
         .add_plugins((
             traffic::models::VehicleModelsPlugin,
             traffic::TrafficDebugPlugin,
+            // The UFOs, their beams, the cow and the crop circles (T9).
+            ufo::UfoPlugin,
         ));
     }
 }

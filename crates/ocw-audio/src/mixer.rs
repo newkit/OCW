@@ -65,6 +65,9 @@ pub enum MixerMsg {
     /// The road vehicles heard now (spec 14 Phase 18, T7; every frame
     /// while any is heard, once empty to fade them out).
     Vehicles(Vec<VehicleSound>),
+    /// The UFOs heard now (spec 14 Phase 18, T9; every frame while any is
+    /// heard, once empty to fade them out): their hum.
+    Ufos(Vec<AircraftSound>),
 }
 
 /// See the module docs.
@@ -87,6 +90,8 @@ pub struct Mixer {
     drone_sound: Option<DroneSound>,
     aircraft: AircraftSynth,
     vehicles: VehicleSynth,
+    /// The UFOs' hum (two voices of their own, never taken by aircraft).
+    ufos: AircraftSynth,
     /// Coefficient of the per-block smoothing.
     smooth: f32,
     /// Samples into the current block.
@@ -117,6 +122,7 @@ impl Mixer {
             drone_sound: None,
             aircraft: AircraftSynth::new(sr),
             vehicles: VehicleSynth::new(sr),
+            ufos: AircraftSynth::new(sr),
             smooth: smoothing(0.06, sr, BLOCK),
             phase: 0,
             rx: None,
@@ -146,6 +152,7 @@ impl Mixer {
             self.drone = DroneSynth::new(sr);
             self.aircraft = AircraftSynth::new(sr);
             self.vehicles = VehicleSynth::new(sr);
+            self.ufos = AircraftSynth::new(sr);
             self.smooth = smoothing(0.06, sr, BLOCK);
             self.voices.clear();
             self.placed.clear();
@@ -177,6 +184,7 @@ impl Mixer {
             MixerMsg::Drone(d) => self.drone_sound = d,
             MixerMsg::Aircraft(a) => self.aircraft.apply(&a),
             MixerMsg::Vehicles(v) => self.vehicles.apply(&v),
+            MixerMsg::Ufos(u) => self.ufos.apply(&u),
         }
     }
 
@@ -318,6 +326,10 @@ impl Mixer {
         let (vl, vr) = self.vehicles.sample();
         pl += vl;
         pr += vr;
+        // The UFOs' hum (T9).
+        let (ul, ur) = self.ufos.sample();
+        pl += ul;
+        pr += ur;
         for (v, [l, r], air) in &mut self.placed {
             let mut s = v.sample(sr);
             if let Some(f) = air {

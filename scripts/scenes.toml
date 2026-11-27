@@ -6126,3 +6126,58 @@ warmup = 12
 video = 16
 max_video_mb = 30
 pick = false
+
+# --- UFOs (spec 14 Phase 18, 18C, 18E T9) -------------------------------------
+
+[[scene]]
+name = "ufo-unicorn-dusk-video"
+description = "Video, 1080p: at dusk over the Rhine valley a curious UFO comes to the hovering unicorn (`ufo.visit`), circles it with its rim lights flashing in the mane's colours, follows it and darts away with a whoosh (spec 18C, Q7 (a), T9)"
+world = true
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 21:50", "0.5=weather clear", "0.5=traffic ufo often", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body b --hair ponytail --hair-colour #D8B26E --skin 4", "2=god.flight hover", "3=god on", "3.5=god.pose here here 40 here 12", "5=ufo.visit", "5.2=ufo"]
+warmup = 10
+video = 45
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "ufo-crop-circle-video"
+description = "Video, 1080p: a UFO hovers low over a field near the road at night, its beam glowing, while the rings of a crop circle form under it; then it darts away and the circle stays (`ufo.next circle`, `ufo.spot`; spec 18C, Q7 (c), T9)"
+world = true
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 23:00", "0.5=weather clear", "0.5=traffic ufo often", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair short --hair-colour #2B1B12 --skin 11 --beard 1", "2=god.flight hover", "3=god on", "4=ufo.next circle 4", "5=ufo.spot 100 50", "5.2=ufo"]
+warmup = 30
+video = 50
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "ufo-crop-circle-morning"
+description = "The crop circle the UFO left in the night, seen the next morning from the unicorn (the clock stepped 9 hours; it stays for the session; spec 18C, Q7 (c), T9)"
+world = true
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 23:00", "0.5=weather clear", "0.5=traffic ufo often", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body c --hair bun --hair-colour #8D5524 --skin 7", "2=god.flight hover", "3=god on", "4=ufo.next circle 4", "5=ufo.spot 110 55", "75=time +9h", "75.5=ufo"]
+warmup = 80
+video = 3
+pick = false
+
+[[scene]]
+name = "ufo-cow-beam-video"
+description = "Video, 1080p: a UFO comes down over a meadow, lifts a cow in its translucent beam, carries it a field further and sets it down again, unharmed, then darts away (`ufo.next cow`, `ufo.spot`; spec 18C, Q7 (c), T9)"
+world = true
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 21:40", "0.5=weather clear", "0.5=traffic ufo often", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair long --hair-colour #B3482A --skin 2 --glasses 1", "2=god.flight hover", "3=god on", "4=ufo.next cow 4", "5=ufo.spot 75 22", "5.2=ufo"]
+warmup = 7
+video = 56
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "ufo-night-sighting"
+description = "A UFO hovering over the fields far from the road on a clear night, its rim lights running round (`ufo.next night`; spec 18C, Q7 (b), T9)"
+world = true
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-16 00:30", "0.5=weather clear", "0.5=traffic ufo often", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body b --hair afro --hair-colour #1A1A1A --skin 14", "2=god.flight hover", "3=god on", "4=ufo.next night 4", "5=ufo.spot 250 20", "5.2=ufo"]
+warmup = 16
+video = 3
+pick = false

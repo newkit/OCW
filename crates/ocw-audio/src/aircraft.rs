@@ -26,6 +26,9 @@ pub enum Engine {
     Rotor,
     Glider,
     Burner,
+    /// A UFO's eerie hum (spec 18E T9): two slow, detuned low tones and a
+    /// wavering high one, like a theremin.
+    Ufo,
 }
 
 impl Engine {
@@ -38,6 +41,7 @@ impl Engine {
             Self::Rotor => 260.0,
             Self::Glider => 25.0,
             Self::Burner => 60.0,
+            Self::Ufo => 140.0,
         }
     }
 }
@@ -218,6 +222,21 @@ impl Voice {
             Engine::Burner => {
                 self.body.set(700.0, 0.6, sr);
                 0.35 * self.body.process(w).low + 0.1 * w
+            }
+            Engine::Ufo => {
+                // Two low tones beating slowly, a wavering high one.
+                self.phase[0] = (self.phase[0] + 92.0 * doppler / sr).fract();
+                self.phase[1] = (self.phase[1] + 93.7 * doppler / sr).fract();
+                self.phase[2] = (self.phase[2] + 0.31 / sr).fract();
+                let vib = (TAU * self.phase[2]).sin();
+                self.brown = (self.brown
+                    + (620.0 + 90.0 * vib) * doppler * (0.7 + 0.3 * power) / sr)
+                    .fract();
+                let low = (TAU * self.phase[0]).sin()
+                    + (TAU * self.phase[1]).sin()
+                    + 0.3 * (2.0 * TAU * self.phase[0]).sin();
+                let high = (TAU * self.brown).sin();
+                0.16 * low + 0.06 * high * (0.6 + 0.4 * vib) + 0.01 * w
             }
         };
         let y = self.air.process(x).low;

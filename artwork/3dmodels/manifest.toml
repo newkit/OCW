@@ -63,6 +63,14 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "creatures/cow-grazing.glb"
+kind = "creature"
+generator = "ocw_assets::cow::model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::cow (spec 14 Phase 18, 18E T9)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "creatures/unicorn-winged.glb"
 kind = "creature"
 generator = "ocw_assets::unicorn::model()"
