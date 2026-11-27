@@ -41,8 +41,8 @@ ride of the Hills route with ?log=1&gpu=webgl2&quality=low&SWITCH:
                now` refused, no photo asked); photos=1 takes one (1280 × 720
                RGBA, a second camera, read back on its frame 4, saved as a
                download), photos=1&photofix=small at 640 × 360,
-               photofix=screen the window's picture, photofix=once,nosave
-               read back on frame 1 and not saved; Android takes its photo
+               photofix=screen the window's picture, photofix=all (small,
+               once, nosave) read back on frame 1 and not saved; Android takes its photo
                (no iOS line); the photos' JPEGs are kept;
   killed       a load whose pagehide never comes (the browser killed it):
                the next load names its last sign of life (the pulse: time,
@@ -91,7 +91,7 @@ if (!navigator.gpu) {
 ALL = ["base", "nosee", "noarrays", "plain", "noshadow", "nomsaa", "nosky", "noegui", "novoice", "noaudio",
        "pipelines=serial", "frames=30", "frames=0", "ios=safe", "killed",
        "noshadow=0", "shadowmap=512&noshadow=0", "shadowmap=1024", "shadowfix=hw2x2,near&noshadow=0",
-       "photos=1", "photos=1&photofix=small", "photos=1&photofix=screen", "photos=1&photofix=once,nosave"]
+       "photos=1", "photos=1&photofix=small", "photos=1&photofix=screen", "photos=1&photofix=all"]
 # The shadow cases (v6.77): what the quality line says about the shadows.
 SHADOW_CASES = {
     "noshadow=0": "shadows 1024² × 1 over 70 m",
@@ -107,7 +107,7 @@ PHOTO_CASES = {
     "photos=1": "1280 × 720 Rgba8UnormSrgb, a second camera, captured on its frame 4",
     "photos=1&photofix=small": "640 × 360 Rgba8UnormSrgb, a second camera, captured on its frame 4",
     "photos=1&photofix=screen": "the window's picture (photofix=screen: no second camera)",
-    "photos=1&photofix=once,nosave": "1280 × 720 Rgba8UnormSrgb, a second camera, captured on its frame 1",
+    "photos=1&photofix=all": "640 × 360 Rgba8UnormSrgb, a second camera, captured on its frame 1",
 }
 ANDROID = ["base", "nosee", "noegui", "pipelines=serial", "ios=safe"]
 # Our shaders and the switch that keeps them from compiling.
@@ -261,9 +261,10 @@ def main():
         ride(pg, phone, case)
         if photo_wanted(phone, case):
             # The photographer arrives, shoots and the photo is read back.
-            done = "not saved (photofix=nosave)" if "nosave" in case else "photo-1.jpg"
+            done = "not saved (photofix=nosave)" if case.endswith("=all") else "photo-1.jpg"
             try:
-                pg.wait_for_function("(w) => window.ocwLog.report().includes(w)", arg=done, timeout=40000)
+                pg.wait_for_function("(w) => window.ocwLog.lines().some((l) => String(l).includes(w))", arg=done,
+                                     timeout=40000)
             except Exception as e:  # noqa: BLE001
                 lines.append(f"[{phone} {case}] photo: {e}")
             pg.wait_for_timeout(1000)
@@ -309,10 +310,10 @@ def main():
             check(f"{phone} {case}: the photo is captured as planned ({want})",
                   any(f"ride photo 1: {want}" in ln for ln in photo_lines)
                   and any("ride photo 1: captured" in ln for ln in photo_lines), photo_lines[:4])
-            if "small" in case:
+            if case.endswith(("small", "=all")):
                 check(f"{phone} {case}: captured at 640 × 360", any("captured 640 × 360" in ln for ln in photo_lines),
                       photo_lines[:4])
-            if "nosave" in case:
+            if case.endswith("=all"):
                 check(f"{phone} {case}: not encoded or saved", "not saved (photofix=nosave)" in log
                       and "photo-1.jpg" not in log, photo_lines[:4])
             else:
@@ -321,7 +322,8 @@ def main():
                       [d.suggested_filename for d in downloads])
             if case in PHOTO_CASES:
                 check(f"{phone} {case}: the log names the switches", "photos=1" in log
-                      and ("photofix=" not in case or "photofix=" + case.split("photofix=")[1] in log), "")
+                      and ("photofix=" not in case
+                           or "photofix=" + {"all": "small,once,nosave"}.get(case.split("photofix=")[1], case.split("photofix=")[1]) in log), "")
                 check(f"{phone} {case}: no iOS photos line with photos=1", IOS_PHOTOS_OFF not in log, "")
         check(f"{phone} {case}: a 'Script error.' gets its note", "details are hidden" in log, "")
         sdk = [u for u in fetched if "livekit-client" in u]
@@ -334,6 +336,8 @@ def main():
                 check(f"{phone} {case}: the log names the size", f"shadow map: {n}² at most" in log, "")
             if "shadowfix" in case:
                 check(f"{phone} {case}: the log names the fix", "shadowfix=hw2x2,near" in joined, joined)
+        elif case in PHOTO_CASES:
+            pass  # checked with the photos above
         elif case == "base":
             check(f"{phone} base: WebGL 2 paces the pipelines (4 per frame)", "4 pipeline(s) per frame" in joined, joined)
             check(f"{phone} base: the trees' shader compiles", any("see_through.wesl" in c for c in compiled),

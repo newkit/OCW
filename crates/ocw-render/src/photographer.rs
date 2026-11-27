@@ -1098,7 +1098,10 @@ mod tests {
         let f = |s: &str| capture_plan(phone, PhotoFix::parse(s).unwrap(), true);
         assert_eq!(f("bgra").format, TextureFormat::Bgra8UnormSrgb);
         assert_eq!(f("small").size, PhotoSize::SMALL);
-        assert!(PhotoSize::SMALL.width <= 640);
+        assert_eq!(
+            (PhotoSize::SMALL.width, PhotoSize::SMALL.height),
+            (640, 360)
+        );
         assert_eq!(f("once").frame, 1);
         assert!(f("screen").screen && f("screen").describe().contains("no second camera"));
     }
