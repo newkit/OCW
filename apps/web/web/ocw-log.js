@@ -16,6 +16,17 @@
 // iOS makes after it killed the page), so the next load shows the previous
 // page load's log.
 //
+// The early log (spec 14 Phase 10, 10G *Bisecting a phone's crash*; the
+// iPhone that lost the page 2 s into the first frames, 2026-11-27): for
+// the first EARLY_MS every line is written to sessionStorage at once
+// (synchronously – the last line before a kill survives), the first
+// FRAMES_LOGGED frames are logged with their time (and every long one
+// after), the memory is sampled every 100 ms (wasm, the JS heap where the
+// browser has performance.memory) and logged when it moved by 1 MB or a
+// second passed, and each sample goes to its own small key (KEY_PULSE): the
+// next load says when the page last showed a sign of life. The app's
+// pipeline compiles (name, ms) come as its own lines.
+//
 // The panel is built only when it is shown:
 //   ?log=1 in the address, or five quick taps on the version stamp (bottom
 //   right corner) or on the start page's build line; the panel's Hide ends
@@ -49,6 +60,9 @@
   var KEY_RUN = "ocw.log.run";
   var KEY_PREV = "ocw.log.prev";
   var KEY_SHOW = "ocw.log.show";
+  var KEY_PULSE = "ocw.log.pulse";
+  var EARLY_MS = 15000;
+  var FRAMES_LOGGED = 30;
   var t0 = (window.performance && performance.timeOrigin) || Date.now();
   var now = function () { return window.performance && performance.now ? performance.now() : Date.now() - t0; };
   var started = new Date(t0).toISOString();
@@ -135,6 +149,10 @@
     if (m) {
       lv = {ERROR: "E", WARN: "W", INFO: "I", DEBUG: "D", TRACE: "D"}[m[1]];
       text = "rs " + text.slice(m[0].length);
+      // Bevy's note when a pipeline was tried before a shader library it
+      // imports had loaded (spec 10G): it is tried again in a later frame
+      // (the app's "pipeline N ok" line follows), not an error.
+      if (/has an unresolved import/.test(text)) text += " [not yet loaded – tried again later, see the pipeline lines]";
     }
     if (text.length > LINE_MAX) text = text.slice(0, LINE_MAX) + " … (" + text.length + " characters)";
     var line = stamp(now()) + " " + lv + " " + scrub(text);
@@ -143,7 +161,8 @@
       dropped += lines.length - LIMIT;
       lines.splice(0, lines.length - LIMIT);
     }
-    dirty();
+    // The early log: at once (the page may be killed before a timer).
+    if (now() < EARLY_MS) { save(); pulse(); } else dirty();
     for (var i = 0; i < listeners.length; i++) { try { listeners[i](line); } catch (e) { /* the panel */ } }
   }
 
@@ -171,7 +190,14 @@
     }
     var where = e.filename ? " (" + e.filename + ":" + (e.lineno || 0) + ":" + (e.colno || 0) + ")" : "";
     var stack = e.error && e.error.stack ? "\n" + e.error.stack : "";
-    add("uncaught", "uncaught " + (e.message || str(e.error)) + where + stack);
+    // "Script error." without a file: the browser hides an error of a
+    // script from another origin. The page's own scripts load with
+    // crossorigin="anonymous" (their errors show in full), so it is most
+    // likely a script the browser itself put into the page (Firefox and
+    // Chrome for iOS inject their own), not the app.
+    var hidden = /^Script error\.?$/.test(e.message || "") && !e.filename
+      ? " (the details are hidden: a script of another origin – on Firefox / Chrome for iOS most likely the browser's own, not the app's)" : "";
+    add("uncaught", "uncaught " + (e.message || str(e.error)) + where + hidden + stack);
   }, true);
   addEventListener("unhandledrejection", function (e) {
     add("uncaught", "unhandled promise rejection: " + str(e.reason));
@@ -207,6 +233,51 @@
   }, 15000);
   function mb(b) { return Math.round(b / 1048576) + " MB"; }
 
+  // The early log's samples (every 100 ms for EARLY_MS) and frames.
+  function wasmBytes() {
+    try { if (window.ocw && window.ocw.wasmMemory) return window.ocw.wasmMemory() || 0; } catch (e) { /* not started */ }
+    return 0;
+  }
+  function jsHeap() {
+    var pm = window.performance && performance.memory;
+    return pm ? pm.usedJSHeapSize : 0;
+  }
+  var pulseTimer = 0;
+  // The last sign of life: one small key, written with every early line
+  // and sample (cheap: a few dozen bytes).
+  function pulse() {
+    if (!storage) return;
+    sset(KEY_PULSE, JSON.stringify({started: started, t: Math.round(now()), wasm: wasmBytes(), js: jsHeap(),
+      frames: window.ocwFrames || 0, last: lines.length ? lines[lines.length - 1].slice(0, 200) : ""}));
+  }
+  var sampled = {t: -1e9, wasm: 0, js: 0};
+  function sample() {
+    var t = now();
+    if (t > EARLY_MS) { clearInterval(pulseTimer); add("page", "early log ends (" + (EARLY_MS / 1000) + " s): lines are saved every 1.5 s from now on"); return; }
+    var wasm = wasmBytes(), js = jsHeap();
+    pulse();
+    var moved = Math.abs(wasm - sampled.wasm) >= 1048576 || Math.abs(js - sampled.js) >= 1048576;
+    if ((wasm || js) && (moved || t - sampled.t >= 1000)) {
+      sampled = {t: t, wasm: wasm, js: js};
+      add("page", "memory: wasm " + (wasm ? mb(wasm) : "-") + (js ? ", JS heap " + mb(js) : "") + ", frames " + (window.ocwFrames || 0));
+    }
+  }
+  pulseTimer = setInterval(sample, 100);
+  (function frames() {
+    if (!window.requestAnimationFrame) return;
+    var n = 0, last = 0;
+    var tick = function (ts) {
+      n++;
+      if (last) {
+        var dt = ts - last;
+        if (n <= FRAMES_LOGGED + 1 || dt >= 250) add("page", "frame " + (n - 1) + ": " + dt.toFixed(0) + " ms" + (n > FRAMES_LOGGED + 1 ? " (a long one)" : ""));
+      }
+      last = ts;
+      if (now() < EARLY_MS) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  })();
+
   // sessionStorage: this load's lines (at most every 1.5 s, at once when
   // the page is hidden or closed); the load before moves to KEY_PREV.
   var previous = null;
@@ -218,6 +289,13 @@
       var p = JSON.parse(raw);
       if (p && p.lines && p.lines.length) previous = p;
     } catch (e) { previous = null; }
+    // Its last sign of life (the early log's pulse), kept with it.
+    if (previous && !previous.pulse) {
+      try {
+        var q = JSON.parse(sget(KEY_PULSE) || "null");
+        if (q && q.started === previous.started) { previous.pulse = q; sset(KEY_PREV, JSON.stringify(previous)); }
+      } catch (e) { /* none */ }
+    }
   })();
   var saveTimer = 0, ended = "";
   function dirty() {
@@ -226,6 +304,7 @@
   function save(end) {
     if (!storage) return;
     if (end) ended = end;
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = 0; }
     var keep = lines;
     var chars = 0, from = keep.length;
     while (from > 0 && chars + keep[from - 1].length < STORE_MAX) { from--; chars += keep[from].length + 4; }
@@ -329,7 +408,9 @@
   function previousTitle() {
     return "--- the page load before: started " + previous.started + ", " + previous.lines.length + " lines"
       + (previous.dropped ? " (" + previous.dropped + " older ones dropped)" : "") + ", "
-      + (previous.ended || "ended without pagehide – the browser closed or killed the page (memory?), or it crashed") + " ---";
+      + (previous.ended || "ended without pagehide – the browser closed or killed the page (memory?), or it crashed")
+      + (previous.pulse ? "; last sign of life at +" + (previous.pulse.t / 1000).toFixed(1) + " s (wasm " + mb(previous.pulse.wasm)
+        + (previous.pulse.js ? ", JS heap " + mb(previous.pulse.js) : "") + ", frames " + previous.pulse.frames + ")" : "") + " ---";
   }
   function report() {
     return header().then(function (h) {
@@ -621,6 +702,7 @@
     state: function () {
       return JSON.stringify({lines: lines.length, dropped: dropped, shown: shown, built: !!panel, offered: offered,
         previous: previous ? previous.lines.length : 0, previous_ended: previous ? previous.ended : null,
+        previous_pulse: previous && previous.pulse ? previous.pulse : null, early_ms: EARLY_MS,
         rendered: body ? body.childNodes.length : 0, share: !!navigator.share, clipboard: !!(navigator.clipboard && navigator.clipboard.writeText)});
     },
   };

@@ -95,22 +95,34 @@ impl Default for SeeThroughFade {
 
 impl MaterialExtension for SeeThroughFade {
     fn vertex_shader() -> ShaderRef {
-        ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("see_through.wesl")).with_source("embedded"),
+        // `nosee=1` (10G): Bevy's standard shaders.
+        crate::switches::shader_or_default(
+            crate::switches::plain_trees(),
+            ShaderRef::Path(
+                AssetPath::from_path_buf(embedded_path!("see_through.wesl"))
+                    .with_source("embedded"),
+            ),
         )
     }
 
     fn fragment_shader() -> ShaderRef {
-        ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("see_through.wesl")).with_source("embedded"),
+        crate::switches::shader_or_default(
+            crate::switches::plain_trees(),
+            ShaderRef::Path(
+                AssetPath::from_path_buf(embedded_path!("see_through.wesl"))
+                    .with_source("embedded"),
+            ),
         )
     }
 
     /// The shadows of see-through crowns ([`with_crown_alpha`]).
     fn prepass_fragment_shader() -> ShaderRef {
-        ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("see_through_prepass.wesl"))
-                .with_source("embedded"),
+        crate::switches::shader_or_default(
+            crate::switches::plain_trees(),
+            ShaderRef::Path(
+                AssetPath::from_path_buf(embedded_path!("see_through_prepass.wesl"))
+                    .with_source("embedded"),
+            ),
         )
     }
 }

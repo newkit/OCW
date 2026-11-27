@@ -731,6 +731,37 @@ open the log on the reloaded page and send it – the crash is in the part
 *the page load before*. *Clear* empties both, *Hide* closes the panel (it
 stays open over reloads until then), *↕* makes it taller.
 
+**When the page is closed within seconds – finding the cause.** For the
+first 15 s the log writes every line to the tab at once and notes the
+render pipelines the app compiles (name and milliseconds), the first
+frames' times and the memory every 100 ms, so the page load before shows
+its **last sign of life** (time, memory, frames). Switches in the address
+each turn off one suspect; tap these links one by one on the phone (each
+in a new tab is best), ride each for a minute or until the page reloads:
+
+1. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&ios=safe> – everything below off at once
+2. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1> – nothing off (the fixed defaults)
+3. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&frames=0> – the app starts but draws nothing
+4. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&frames=30> – it stops drawing after 30 frames
+5. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&pipelines=serial> – one shader program compiled per frame
+6. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&nosee=1> – trees without their see-through shader
+7. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&noarrays=1> – road, ground and riders without their texture-array shaders
+8. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&plain=1> – no shader of ours at all
+9. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&noshadow=1> – no shadows
+10. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&nomsaa=1> – no multisampling
+11. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&nosky=1> – the simplest sky (no clouds, no night sky)
+12. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&noegui=1> – no console overlay (egui)
+13. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&novoice=1> – no voice
+14. <https://newkit.github.io/OCW/?route=hills&gpu=webgl2&quality=low&log=1&noaudio=1> – no game sound
+
+Send back, for each number: **"rides"** or **"closed"** (the page reloaded,
+or "This ride stopped … times"), and for the first one that closed the log
+of the reloaded page (it opens by itself): *Copy* or *Share* – the part
+*the page load before* with its title line (*last sign of life at …*) is
+what helps. `=0` turns a single switch on again, e.g.
+`…&ios=safe&nosee=0` is everything off but the trees' shader; `pipelines=N`
+compiles N per frame, `pipelines=all` all at once.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:

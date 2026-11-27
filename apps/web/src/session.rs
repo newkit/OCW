@@ -84,6 +84,9 @@ pub struct SessionConfig {
     /// Who reads the WebTransport connections (page option `net-worker`,
     /// 10G *B3 worker*): the network worker where it can.
     pub net_reader: crate::netconn::ReaderMode,
+    /// The address's bisect switches (spec 14 Phase 10, 10G *Bisecting a
+    /// phone's crash*: `nosee=1`, `ios=safe`, …).
+    pub bisect: crate::bisect::Bisect,
 }
 
 impl Default for SessionConfig {
@@ -106,6 +109,7 @@ impl Default for SessionConfig {
             access_token: None,
             voice_off: None,
             net_reader: Default::default(),
+            bisect: Default::default(),
         }
     }
 }

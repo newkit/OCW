@@ -76,8 +76,16 @@ pub struct NightSkyPlugin;
 
 impl Plugin for NightSkyPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LightPollution>()
-            .add_systems(Update, (spawn_night_sky, place_night_sky).chain());
+        app.init_resource::<LightPollution>();
+        // `nosky=1` (spec 14 Phase 10, 10G): no stars, moon or glow.
+        if app
+            .world()
+            .get_resource::<crate::switches::RenderSwitches>()
+            .is_some_and(|s| s.no_sky)
+        {
+            return;
+        }
+        app.add_systems(Update, (spawn_night_sky, place_night_sky).chain());
     }
 }
 

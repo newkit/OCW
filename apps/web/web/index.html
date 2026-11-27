@@ -10,8 +10,10 @@
        script, so it captures every line from here on – the console, the
        app's (Rust) lines, uncaught errors – before the wasm loads. ?log=1
        or five taps on the version stamp show it; an error screen offers
-       "Show log". -->
-  <script src="ocw-log.js"></script>
+       "Show log". Every script of the page loads with crossorigin="anonymous"
+       (spec 10G *Bisecting a phone's crash*): its errors keep their message
+       and stack in the log instead of the browser's bare "Script error.". -->
+  <script src="ocw-log.js" crossorigin="anonymous"></script>
   <title>Open Cycling World</title>
   <!-- The logo (artwork/logos/ocw.svg and its PNGs, copied by
        scripts/build-web.sh). -->
@@ -170,12 +172,12 @@
     #ocw-status a { color: #88c0d0; pointer-events: auto; }
   </style>
   <!-- The GPU choice and the WebGPU watchdog (B7, B8a). -->
-  <script src="ocw-gpu.js"></script>
+  <script src="ocw-gpu.js" crossorigin="anonymous"></script>
   <!-- Voice (B5): the shim the app talks to; LiveKit's JS SDK is loaded
        before the module unless the page configuration has no voice (B8a). -->
-  <script src="ocw-voice.js"></script>
+  <script src="ocw-voice.js" crossorigin="anonymous"></script>
   <!-- WebXR (14I W1): the immersive session; only the ?xr=1 build uses it. -->
-  <script src="ocw-xr.js"></script>
+  <script src="ocw-xr.js" crossorigin="anonymous"></script>
   <style>
     #ocw-xr-enter { position: fixed; left: 50%; bottom: 140px; transform: translateX(-50%);
       font: 600 20px system-ui, sans-serif; color: #10141a; background: #a3be8c; border: 0;
@@ -792,6 +794,7 @@
     const riding = ["route", "world", "server", "together"].some((k) => query.has(k));
     const loadScript = (src) => new Promise((ok) => {
       const el = document.createElement("script");
+      el.crossOrigin = "anonymous";
       el.src = src;
       el.onload = () => ok(true);
       el.onerror = () => { console.warn(`ocw-web: ${src} not loaded`); ok(false); };
@@ -808,8 +811,14 @@
       startPage();
     } else if (!together || await joinTogether()) {
       if (preview) previewBar();
-      // Voice (B5): LiveKit's SDK, unless this page has no voice (B8a).
-      if (config.voice !== "") await loadScript("livekit-client.umd.js");
+      // Voice (B5): LiveKit's SDK, unless this page has no voice (B8a) or
+      // the address turns it off (novoice=1, ios=safe; 10G). It is loaded
+      // only when a voice room is joined (ocw-voice.js): a solo ride never
+      // fetches or parses its 500 kB (the iPhone's start, 2026-11-27).
+      const bisectOn = (k) => { const v = query.get(k); return v !== null && !/^(0|off|false|no)$/.test(v); };
+      const noVoice = query.has("novoice") ? bisectOn("novoice") : query.get("ios") === "safe";
+      window.ocwVoiceSdk = config.voice !== "" && !noVoice ? "livekit-client.umd.js" : "";
+      if (noVoice) console.log("ocw-web: voice off for this visit (novoice / ios=safe): LiveKit's SDK is not loaded");
       await ride();
     }
 

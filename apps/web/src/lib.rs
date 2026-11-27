@@ -58,6 +58,7 @@
 
 pub mod account;
 pub mod audio;
+pub mod bisect;
 pub mod bridge;
 #[cfg(target_arch = "wasm32")]
 mod browser;
@@ -342,6 +343,10 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             },
             // Read below (B3; the origin after the route; a join link).
             ("server" | "cert-hash" | "join", _) => {}
+            // The bisect switches (10G), read below; the page log's
+            // `log=1` (ocw-log.js).
+            (k, _) if bisect::KEYS.contains(&k) => {}
+            ("log", _) => {}
             // Riding together on the public server (spec 11.5 *Join info*):
             // index.html fetched its join info into server=, cert-hash=.
             ("together", _) => {}
@@ -422,6 +427,7 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
     }
     config.world = world;
     config.remote = remote;
+    config.bisect = bisect::Bisect::from_pairs(&pairs, &mut warnings);
     (config, warnings)
 }
 
@@ -564,6 +570,15 @@ pub fn app_with_settings(
         });
     let record = config.record;
     let route = config.route.clone();
+    // The bisect switches (10G), before the render plugins read them.
+    let bisect = config.bisect;
+    let switches = bisect.render_switches(cfg!(feature = "webgl2"));
+    ocw_render::switches::install(&switches);
+    app.insert_resource(switches);
+    if let Some(s) = bisect.summary() {
+        // Once the log is set up (the plugins below).
+        app.add_systems(Startup, move || info!("bisect switches: {s}"));
+    }
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -631,7 +646,15 @@ pub fn app_with_settings(
     })));
     // The page's Web Audio output and the voice shim (B5).
     #[cfg(target_arch = "wasm32")]
-    app.insert_resource(audio::MakeAudioOut(Box::new(browser_audio::start)));
+    if !bisect.no_audio {
+        app.insert_resource(audio::MakeAudioOut(Box::new(browser_audio::start)));
+    }
+    // `novoice=1` (10G): no voice, and the page loaded no SDK.
+    if bisect.no_voice && !app.world().contains_resource::<voice::MakeVoiceBackend>() {
+        app.insert_resource(voice::MakeVoiceBackend(Box::new(|| {
+            voice::unavailable("voice is off for this visit (novoice=1)")
+        })));
+    }
     // No voice on this page (the page configuration, B8a): the Voice page
     // and `voice.status` say why.
     if let Some(why) = config.voice_off.clone()
