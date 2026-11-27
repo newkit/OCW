@@ -33,6 +33,7 @@
 
 pub mod demand;
 pub mod kin;
+pub mod package;
 pub mod plan;
 pub mod routing;
 pub mod rules;

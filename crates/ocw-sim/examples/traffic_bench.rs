@@ -4,8 +4,13 @@
 //! cargo run --release -p ocw-sim --example traffic_bench -- \
 //!     [--package FILE.ocwpkg] [--at X,Z] [--radius 1500] [--hour 17.5] \
 //!     [--level busy] [--minutes 10] [--max 500] [--seed 1] \
-//!     [--svg OUT.svg] [--ring OUT.svg]
+//!     [--svg OUT.svg] [--ring OUT.svg] [--class-rules]
 //! ```
+//!
+//! With `--package` the package's own rules drive the traffic (its
+//! `TRFC`: one-ways, limits, access, lanes, signals and signs; spec 18E
+//! T5), `--class-rules` the road class alone (T3's default) for a
+//! comparison; it also prints how much of the time vehicles stand.
 //!
 //! Without `--package` it runs on a synthetic 20 × 20 grid of 150 m
 //! blocks. It prints the vehicles, the step time (mean, 99th percentile,
@@ -33,6 +38,7 @@ struct Args {
     seed: u64,
     svg: Option<String>,
     ring: Option<String>,
+    class_rules: bool,
 }
 
 fn args() -> Args {
@@ -47,6 +53,7 @@ fn args() -> Args {
         seed: 1,
         svg: None,
         ring: None,
+        class_rules: false,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -66,6 +73,11 @@ fn args() -> Args {
             "--seed" => a.seed = val.parse().expect("seed"),
             "--svg" => a.svg = Some(val),
             "--ring" => a.ring = Some(val),
+            "--class-rules" => {
+                a.class_rules = true;
+                i += 1;
+                continue;
+            }
             other => panic!("unknown argument {other}"),
         }
         i += 2;
@@ -129,7 +141,7 @@ fn load(path: &str) -> RoadNetwork {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let pkg = ocw_world::WorldPackage::skeleton_from_bytes(&bytes).expect("package");
     let graph = pkg.graph.clone().expect("a road graph");
-    RoadNetwork::new(graph)
+    RoadNetwork::new(graph).with_traffic_of(&pkg)
 }
 
 /// The busiest junction (the most daily traffic of the roads meeting there).
@@ -176,7 +188,23 @@ fn main() {
         max_vehicles: a.max,
         ..TrafficConfig::default()
     };
-    let mut sim = TrafficSim::new(&net, Box::new(ClassRules), cfg);
+    let rules: Box<dyn ocw_sim::traffic::EdgeRules + Send + Sync> = if a.class_rules {
+        Box::new(ClassRules)
+    } else {
+        let r = ocw_sim::traffic::package::PackageRules::new(&net);
+        println!(
+            "rules: the package's ({}), {} junctions with signals, {} signed arrivals",
+            if r.from_data() {
+                "TRFC"
+            } else {
+                "implied by class"
+            },
+            r.signalled(),
+            r.controls()
+        );
+        Box::new(r)
+    };
+    let mut sim = TrafficSim::new(&net, rules, cfg);
     let center = a.at.unwrap_or_else(|| {
         if a.package.is_some() {
             busiest(&net, &sim)
@@ -195,6 +223,7 @@ fn main() {
     let mut changes = 0u64;
     let mut tracks: Vec<([f64; 2], f64)> = Vec::new();
     let mut near_counts = 0u64;
+    let (mut standing, mut sampled) = (0u64, 0u64);
     let warm = 3000;
     for t in 0..ticks + warm {
         let start = Instant::now();
@@ -209,6 +238,12 @@ fn main() {
                 .filter(|e| matches!(e, TrafficEvent::Change(_)))
                 .count() as u64;
             if t.is_multiple_of(50) {
+                for (_, v) in sim.speeds() {
+                    sampled += 1;
+                    if v < 0.3 {
+                        standing += 1;
+                    }
+                }
                 for v in sim.views(&net) {
                     let (dx, dz) = (v.xz[0] - center[0], v.xz[1] - center[1]);
                     if dx * dx + dz * dz < 300.0 * 300.0 {
@@ -249,6 +284,47 @@ fn main() {
         mean / vehicles.max(1.0)
     );
     println!("plan changes: {per_min:.2} per vehicle-minute");
+    println!(
+        "standing: {:.1} % of the vehicle-seconds; {} vehicles stand at the end",
+        100.0 * standing as f64 / sampled.max(1) as f64,
+        sim.speeds().iter().filter(|(_, v)| *v < 0.3).count()
+    );
+    // Where vehicles stand at the end: the five vertices with the most,
+    // and the control each arm has there.
+    let diag = ocw_sim::traffic::package::PackageRules::new(&net);
+    let mut at: std::collections::BTreeMap<u32, (usize, f64)> = Default::default();
+    for (vx, d, v) in sim.at_junctions(&net) {
+        if v < 0.3 {
+            let e = at.entry(vx.0).or_insert((0, f64::INFINITY));
+            e.0 += 1;
+            e.1 = e.1.min(d);
+        }
+    }
+    let mut top: Vec<(u32, (usize, f64))> = at.into_iter().collect();
+    top.sort_by_key(|t| std::cmp::Reverse(t.1.0));
+    for (vx, (n, d)) in top.iter().take(5) {
+        let p = net.graph().vertices[*vx as usize];
+        let arms: Vec<String> = net
+            .edges_at(VertexId(*vx))
+            .iter()
+            .map(|&e| {
+                let fwd = net.edge(e).to == VertexId(*vx);
+                use ocw_sim::traffic::EdgeRules as _;
+                format!(
+                    "{:?}/{:?}/lanes {:?}",
+                    net.edge(e).class,
+                    diag.node_control(&net, VertexId(*vx), e, fwd),
+                    sim.rule(e).lanes
+                )
+            })
+            .collect();
+        println!(
+            "  {n} standing before vertex {vx} at ({:.0}, {:.0}), nearest {d:.0} m: {}",
+            p[0],
+            p[1],
+            arms.join(", ")
+        );
+    }
     if let Some(out) = &a.svg {
         write_map(out, &net, &sim, bubble, &tracks);
         println!("wrote {out}");

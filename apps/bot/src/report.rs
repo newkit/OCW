@@ -89,6 +89,14 @@ pub struct RiderReport {
     /// Snapshot interval, jitter and age on arrival (spec §14 Phase 10 B3).
     #[serde(default)]
     pub timing: Option<ocw_server::timing::TimingSummary>,
+    /// Road traffic (spec 14 Phase 18, 18E T5): the `TrafficUpdate`s and
+    /// their bytes, and the most vehicles near the rider at once.
+    #[serde(default)]
+    pub traffic_updates: u64,
+    #[serde(default)]
+    pub traffic_bytes: u64,
+    #[serde(default)]
+    pub traffic_max_vehicles: u32,
 }
 
 impl RiderReport {
@@ -157,6 +165,8 @@ pub struct Expect {
     pub max_over_budget_share: f64,
     /// Mean tick work as a share of the 20 ms budget.
     pub max_mean_tick_share: f64,
+    /// The session has road traffic: every rider must get vehicles.
+    pub traffic: bool,
 }
 
 impl Default for Expect {
@@ -173,6 +183,7 @@ impl Default for Expect {
             max_late_share: 0.01,
             max_over_budget_share: 0.001,
             max_mean_tick_share: 0.25,
+            traffic: false,
         }
     }
 }
@@ -400,8 +411,25 @@ pub fn verdict(server: &ServerReport, bots: &[BotReport], expect: &Expect) -> Ve
                 r.prediction_error_max_m
             ));
         }
+        if expect.traffic && r.traffic_max_vehicles == 0 {
+            problems.push(format!(
+                "no road vehicles ({} traffic updates)",
+                r.traffic_updates
+            ));
+        }
+        let traffic = if r.traffic_updates > 0 {
+            let s = (r.closed_at_s - r.joined_at_s.unwrap_or(0.0)).max(1.0);
+            format!(
+                ", road traffic: {} updates, {:.0} B/s, up to {} vehicles near",
+                r.traffic_updates,
+                r.traffic_bytes as f64 / s,
+                r.traffic_max_vehicles
+            )
+        } else {
+            String::new()
+        };
         let detail = format!(
-            "{} snapshots ({} stale), max gap {:.2} s, saw {} riders, rode {:.0} m, prediction mean {:.3} m / max {:.2} m, rtt ≤ {:.0} ms",
+            "{} snapshots ({} stale), max gap {:.2} s, saw {} riders, rode {:.0} m, prediction mean {:.3} m / max {:.2} m, rtt ≤ {:.0} ms{traffic}",
             r.snapshots,
             r.stale_snapshots,
             r.max_snapshot_gap_s,

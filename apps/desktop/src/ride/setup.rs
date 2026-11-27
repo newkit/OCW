@@ -116,7 +116,9 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
                 // Riding off the road after a unicorn landing (spec §14
                 // Phase 13A): the home package's ground.
                 .with_ground(ground.clone())
-                .with_woods(woods),
+                .with_woods(woods)
+                // The road traffic's rules (spec 18E T5): its `TRFC`.
+                .with_traffic_of(pkg),
         )
     });
     // `--world` alone: the package's first route, else a free ride.
