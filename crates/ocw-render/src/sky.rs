@@ -80,6 +80,10 @@ pub struct SkySettings {
     /// mode (`sky.fog new`: the sky's horizon colour, the glow towards a low
     /// sun, far tiles beyond a limited view hidden).
     pub legacy_fog: bool,
+    /// How much of the land haze the fog over the land takes at a low sun
+    /// (0 … 1, `sky.haze`; spec 4.6.3, v6.72): 1 by default, 0 the look
+    /// before (the sky's warm horizon colour over the far hills).
+    pub land_haze: f32,
 }
 
 impl Default for SkySettings {
@@ -90,6 +94,7 @@ impl Default for SkySettings {
             lights: LightsMode::Auto,
             fog_override: None,
             legacy_fog: true,
+            land_haze: 1.0,
         }
     }
 }
@@ -246,6 +251,7 @@ type CameraParts = (
     Entity,
     Option<&'static mut DistanceFog>,
     Option<&'static mut Exposure>,
+    Option<&'static mut AtmosphereSettings>,
 );
 /// Lamp mesh, white and red lamp materials.
 type LampAssets = (
@@ -380,6 +386,15 @@ fn apply_sky(
         ),
         None => light.fog_srgb,
     };
+    // Over the land a low sun's haze is darker and bluer than the sky's
+    // horizon (spec 4.6.3, v6.72): only in a clear, unlimited view – a
+    // limited view and the weather's fog keep the sky's colour, the land
+    // fades into them.
+    let land = match settings.fog_override {
+        Some(_) => 0.0,
+        None => land_haze_share(settings.land_haze, share, weather_vis, grey),
+    };
+    let base_fog = ocw_sky::light::land_fog_srgb(base_fog, sky.sky.sun.elevation_deg, land);
     let darkness = cl.map_or(0.0, |c| c.darkness);
     // A flash lights the rain and the haze too.
     let fog_srgb = flashed(greyed(base_fog, grey, darkness), flash);
@@ -438,7 +453,16 @@ fn apply_sky(
         })
         .flatten();
     let glow_colour = glow.map_or(Color::NONE, |c| Color::linear_rgba(c[0], c[1], c[2], 1.0));
-    for (e, fog, cam_exposure) in &mut cameras {
+    // The atmosphere's own haze over the land (its aerial perspective)
+    // reaches less far at a low sun (v6.72): the far hills keep more of
+    // their colour.
+    let aerial_m = ocw_sky::light::land_aerial_m(sky.sky.sun.elevation_deg, land);
+    for (e, fog, cam_exposure, atmosphere_settings) in &mut cameras {
+        if let Some(mut a) = atmosphere_settings
+            && (a.aerial_view_lut_max_distance - aerial_m).abs() > 50.0
+        {
+            a.aerial_view_lut_max_distance = aerial_m;
+        }
         if let Some(mut fog) = fog {
             fog.color = srgb(fog_srgb);
             if fog.directional_light_color != glow_colour {
@@ -453,6 +477,24 @@ fn apply_sky(
             }
         }
     }
+}
+
+/// The weather's visibility (m) from which the land haze is all there, and
+/// below which it is gone (mist, fog, rain: the weather's own colour).
+pub const LAND_HAZE_VIS_M: (f32, f32) = (8_000.0, 20_000.0);
+
+/// How much of the land haze the fog takes (0 … 1): the setting `k`,
+/// none where the fog has the sky's horizon colour for a limited view
+/// (`horizon_share`, [`crate::quality::horizon_fog_share`]), fading out
+/// with the weather's visibility (`weather_vis_m`, [`LAND_HAZE_VIS_M`])
+/// and under an overcast sky (`grey`, the clouds' grey).
+pub fn land_haze_share(k: f32, horizon_share: f32, weather_vis_m: Option<f32>, grey: f32) -> f32 {
+    let (lo, hi) = LAND_HAZE_VIS_M;
+    let by_weather = weather_vis_m.map_or(1.0, |v| ((v - lo) / (hi - lo)).clamp(0.0, 1.0));
+    k.clamp(0.0, 1.0)
+        * (1.0 - horizon_share.clamp(0.0, 1.0))
+        * by_weather
+        * (1.0 - grey.clamp(0.0, 1.0))
 }
 
 /// Broken heaps: the sun is either out or behind a cloud (the shade at the
@@ -999,6 +1041,22 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("sky.haze")
+            .about("The land haze at a low sun (0 – 1; 1 the default: the fog over the land darker and bluer than the sky's horizon, 0 the look before v6.72); without an argument: what runs")
+            .arg(Arg::new("k").value_parser(clap::value_parser!(f32))),
+        |world, m| {
+            let mut s = world.resource_mut::<SkySettings>();
+            if let Some(k) = m.get_one::<f32>("k") {
+                if !(0.0..=1.0).contains(k) {
+                    return Err(format!("sky.haze takes 0 – 1, not {k}"));
+                }
+                s.land_haze = *k;
+            }
+            Ok(format!("land haze {:.2}", s.land_haze))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("sky.lights")
             .about("Bike lights: auto (dusk to dawn), on or off (setting display.bike_lights)")
             .arg(Arg::new("mode").value_parser(["auto", "on", "off"])),
@@ -1070,6 +1128,75 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-4
+    }
+
+    fn lum_lin(srgb: [f32; 3]) -> f32 {
+        let c = Color::srgb(srgb[0], srgb[1], srgb[2]).to_linear();
+        0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue
+    }
+
+    /// Regression (spec 4.6.3, v6.72, the Hornisgrinde at 18:15 in October):
+    /// looking into a low sun the far hills glowed gold like sand – the
+    /// sky's warm horizon colour was the fog over the land. Now the fully
+    /// fogged far land stays well below the sky's brightness at the horizon
+    /// and bluer, with the simple sky (the WebGL 2 path) and with the
+    /// atmosphere's fog alike; the day, the night, a limited view, the
+    /// weather's fog and an overcast sky keep the fog they had.
+    #[test]
+    fn far_land_at_sunset_is_darker_and_bluer_than_the_sky() {
+        let clear = land_haze_share(1.0, 0.0, Some(40_000.0), 0.0);
+        assert_eq!(clear, 1.0);
+        let br = |c: [f32; 3]| {
+            let l = Color::srgb(c[0], c[1], c[2]).to_linear();
+            l.blue / l.red.max(1e-4)
+        };
+        for el in [-1.0, 0.0, 1.0, 2.5, 4.0, 6.0, 8.0] {
+            let light = ocw_sky::light::light(el, ocw_sky::light::DEFAULT_NIGHT_FLOOR);
+            for sky in [light.fog_srgb, ocw_sky::light::atmosphere_fog_srgb(el)] {
+                let land = ocw_sky::light::land_fog_srgb(sky, el, clear);
+                // The fully fogged far land: at most 55 % of the sky's
+                // brightness at the horizon …
+                assert!(
+                    lum_lin(land) <= 0.55 * lum_lin(sky),
+                    "{el}°: land {land:?} sky {sky:?}"
+                );
+                // … not black (a haze, not a silhouette cut out) …
+                assert!(lum_lin(land) >= 0.4 * lum_lin(sky), "{el}°: {land:?}");
+                // … and bluer than the horizon.
+                assert!(br(land) > br(sky) * 1.2, "{el}°: {land:?} vs {sky:?}");
+                // A forest half fogged at sunset: darker than under the old
+                // fog, and no longer brighter than the sky's horizon / 2.
+                let forest = [0.10f32, 0.14, 0.08];
+                let half = mix_linear(forest, land, 0.5);
+                let before = mix_linear(forest, sky, 0.5);
+                assert!(lum_lin(half) < lum_lin(before) * 0.8, "{el}°");
+                assert!(lum_lin(half) < 0.5 * lum_lin(sky), "{el}°");
+            }
+        }
+        // The day, the deep twilight and the night keep the sky's colour.
+        for el in [25.0, 45.0, 70.0, -6.0, -12.0, -30.0] {
+            let sky = ocw_sky::light::light(el, ocw_sky::light::DEFAULT_NIGHT_FLOOR).fog_srgb;
+            assert_eq!(ocw_sky::light::land_fog_srgb(sky, el, clear), sky, "{el}°");
+        }
+        // A limited view (Medium, Low: the land fades into the sky), the
+        // weather's fog and rain, an overcast sky, `sky.haze 0`: no land
+        // haze.
+        assert_eq!(land_haze_share(1.0, 1.0, None, 0.0), 0.0);
+        assert_eq!(land_haze_share(1.0, 0.0, Some(300.0), 0.0), 0.0);
+        assert_eq!(land_haze_share(1.0, 0.0, Some(5_000.0), 0.0), 0.0);
+        assert_eq!(land_haze_share(1.0, 0.0, None, 1.0), 0.0);
+        assert_eq!(land_haze_share(0.0, 0.0, None, 0.0), 0.0);
+        let s = land_haze_share(1.0, 0.0, Some(14_000.0), 0.3);
+        assert!(s > 0.0 && s < 0.6, "{s}");
+        let sky = ocw_sky::light::light(3.0, 0.1).fog_srgb;
+        assert_eq!(ocw_sky::light::land_fog_srgb(sky, 3.0, 0.0), sky);
+        // The atmosphere's haze over the land reaches 12 km at a low sun,
+        // its 32 km by day, at night and without the land haze.
+        use ocw_sky::light::{AERIAL_M, LAND_AERIAL_M, land_aerial_m};
+        assert_eq!(land_aerial_m(3.0, 1.0), LAND_AERIAL_M);
+        for (el, k) in [(45.0, 1.0), (-12.0, 1.0), (3.0, 0.0)] {
+            assert_eq!(land_aerial_m(el, k), AERIAL_M, "{el} {k}");
+        }
     }
 
     #[test]

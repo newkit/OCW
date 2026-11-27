@@ -282,6 +282,8 @@ pub struct SeasonFx {
     /// Grass green (0 dormant – 1 lush) and dried (summer straw).
     pub green: f32,
     pub dry: f32,
+    /// How brown the high pastures are (`ocw_sky::season::Grass::high_brown`).
+    pub high_brown: f32,
     /// Leaves lying on the ground under broadleaves (0 – 1).
     pub litter: f32,
     /// Freshly fallen, still coloured (autumn).
@@ -294,10 +296,16 @@ pub struct SeasonFx {
 }
 
 impl SeasonFx {
+    /// How brown the grass is ([`crate::season::brown_grass`]).
+    pub fn brown(&self) -> f32 {
+        crate::season::brown_grass(self.green, self.dry, self.high_brown)
+    }
+
     /// Without a season: summer.
     pub const SUMMER: SeasonFx = SeasonFx {
         green: 1.0,
         dry: 0.0,
+        high_brown: 0.0,
         litter: 0.2,
         autumn: 0.0,
         fall: 0.0,
@@ -320,6 +328,7 @@ impl SeasonFx {
         Self {
             green: g.green,
             dry: g.dry,
+            high_brown: g.high_brown,
             litter: litter.clamp(0.0, 1.0),
             autumn: (k * f.autumn * (0.4 + fallen)).clamp(0.0, 1.0),
             // The same leaf fall as the physics of wet leaves (4.6.2 Q6).
@@ -641,6 +650,12 @@ pub fn soil_srgb(region: FloraRegion, h: f32) -> [f32; 3] {
     }
 }
 
+/// How alpine the grass at a place is for its russet
+/// ([`crate::season::russet_share`] by the region's tree line).
+fn russet(p: &Place) -> f32 {
+    crate::season::russet_share(p.alt_m, p.region.tree_line_m())
+}
+
 /// The colour of a bit (linear): `h` its own shade hash (0 … 1).
 pub fn colour(k: Kind, p: &Place, s: &SeasonFx, h: f32) -> [f32; 3] {
     let shade = 0.85 + 0.3 * h;
@@ -679,9 +694,16 @@ pub fn colour(k: Kind, p: &Place, s: &SeasonFx, h: f32) -> [f32; 3] {
                 _ => lin3([0.30, 0.46, 0.17]),
             };
             let c = crate::season::grass_colour(base, s.green, s.dry);
+            // Above the tree line dormant and dry tufts are russet, like
+            // the turf around them (spec 4.6.3, v6.72).
+            let c = crate::season::alpine_grass(c, s.brown(), russet(p), h);
             return c.map(|v| v * shade);
         }
-        Kind::Stalks => mix3([0.74, 0.64, 0.42], [0.52, 0.42, 0.29], h),
+        Kind::Stalks => {
+            let straw = lin3(mix3([0.74, 0.64, 0.42], [0.52, 0.42, 0.29], h));
+            let c = crate::season::alpine_grass(straw, 1.0, russet(p), h);
+            return c.map(|v| v * shade);
+        }
         Kind::Fern => mix3([0.24, 0.44, 0.15], [0.56, 0.36, 0.16], 1.0 - s.green),
         Kind::Shrub => match p.region {
             FloraRegion::Tenerife => [0.44, 0.48, 0.34],

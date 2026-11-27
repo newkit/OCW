@@ -1223,8 +1223,10 @@ pub fn colour_map_seasonal(
                 .then(|| if crop.summer_crop() { 1.0 } else { 0.0 });
             if let (Some(day), Some(y)) = (season, pkg.height(x, z)) {
                 colour = match summer {
-                    Some(m) => crate::season::ground_colour_with(class, colour, y, day, m),
-                    None => crate::season::ground_colour(class, colour, y, day),
+                    Some(m) => {
+                        crate::season::ground_colour_with(class, colour, y, day, m, tree_line)
+                    }
+                    None => crate::season::ground_colour(class, colour, y, day, tree_line),
                 };
             }
             colour = crate::season::plantation_ground(crop, colour);
@@ -1280,7 +1282,18 @@ pub fn colour_map_seasonal(
                 && class != LandClass::Water
             {
                 let (u, v) = ((c as f64 + 0.5) / n as f64, (r as f64 + 0.5) / n as f64);
-                colour = crate::region_look::far_colour_alpine(colour, Some(sat.at(u, v)), alpine);
+                let russet = match (season, alt) {
+                    (Some(day), Some(h)) if crate::ground::turns_alpine(class) => {
+                        crate::season::russet_amount(day, h, tree_line)
+                    }
+                    _ => 0.0,
+                };
+                colour = crate::region_look::far_colour_alpine(
+                    colour,
+                    Some(sat.at(u, v)),
+                    alpine,
+                    russet,
+                );
             }
             let (gc, gr) = (
                 i64::from(tile.key.x) * n as i64 + c as i64,
@@ -2788,7 +2801,14 @@ mod tests {
             );
             for t in map.data[..cells * cells * 4].chunks(4) {
                 let c = [t[0], t[1], t[2]].map(|v| f32::from(v) / 255.0);
-                assert!(!crate::region_look::is_sand(c), "day {doy}: {c:?}");
+                // Russet dormant turf (v6.72; a hue under 30°, red-brown)
+                // is not sand.
+                let russet =
+                    c[0] > c[1] && c[0] > c[2] && (c[1] - c[2]) / (c[0] - c[2]).max(1e-6) < 0.5;
+                assert!(
+                    !crate::region_look::is_sand(c) || russet,
+                    "day {doy}: {c:?}"
+                );
             }
         }
         // The near ground: the meadow's corners have scree and rock.

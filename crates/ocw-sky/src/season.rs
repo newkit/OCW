@@ -74,6 +74,16 @@ pub struct Phenology {
     /// Meadows dry out (straw) in hot dry summers between these daily
     /// mean temperatures (°C), times [`Climate::summer_dry`].
     pub dry_c: (f64, f64),
+    /// High pastures (above the tree line) dry out at these lower daily
+    /// mean temperatures (°C), by [`Climate::summer_dry`]: thin soil,
+    /// sun and wind, no summer rain above the clouds (Las Cañadas, 2 100
+    /// m: dry from June to October at 14 – 18 °C; spec 4.6.3, v6.72).
+    pub high_dry_c: (f64, f64),
+    /// High pastures turn dormant after the first frosts, earlier than the
+    /// lowland meadows ([`Phenology::grass_dormant_cdd`]): mat-grass and
+    /// fescue turf at the Port d'Envalira is brown by early October (CDD
+    /// about 690 there, where the meadows' 700 – 1 100 still left it green).
+    pub high_dormant_cdd: (f64, f64),
 }
 
 /// Calibrated on the Alpine Rhine valley: beech budburst in Vaduz about
@@ -94,6 +104,8 @@ pub const PHENOLOGY: Phenology = Phenology {
     grass_up_gdd: (25.0, 140.0),
     grass_dormant_cdd: (700.0, 1100.0),
     dry_c: (19.0, 23.5),
+    high_dry_c: (10.0, 14.5),
+    high_dormant_cdd: (250.0, 600.0),
 };
 
 /// The share of trees that are deciduous broadleaves or larches, by
@@ -714,6 +726,12 @@ pub struct Grass {
     pub green: f32,
     /// Dried out by summer heat (0 – 1).
     pub dry: f32,
+    /// How brown a high pasture (above the tree line) is besides the
+    /// meadows' dormancy (0 – 1; spec 4.6.3, v6.72): dormant after the first
+    /// frosts ([`Phenology::high_dormant_cdd`]) or dried in a dry summer at
+    /// lower temperatures than the lowland meadows
+    /// ([`Phenology::high_dry_c`]).
+    pub high_brown: f32,
 }
 
 /// The kinds of field crops.
@@ -958,6 +976,8 @@ pub struct SeasonRamps {
     pub grass_up: Ramp,
     pub grass_dormant: Ramp,
     pub dry: Ramp,
+    /// How brown the high pastures are ([`Grass::high_brown`]).
+    pub high_brown: Ramp,
     /// Degree-day sums near the rider (crops).
     pub gdd: Linear,
     pub cdd: Linear,
@@ -1135,6 +1155,7 @@ impl SeasonDay {
                 |h| c.summer_dry * ramp(f64::from(self.state(h).temp_c), p.dry_c),
                 rider_alt_m,
             ),
+            high_brown: Ramp::fit(|h| high_brown(&c, &self.state(h)), rider_alt_m),
             gdd: Linear::fit(|h| f64::from(self.state(h).gdd), rider_alt_m),
             cdd: Linear::fit(|h| f64::from(self.state(h).cdd), rider_alt_m),
         }
@@ -1259,6 +1280,16 @@ fn foliage_k(p: &Phenology, leaf: LeafType, s: &State, k: f64, ka: f64) -> Folia
 }
 
 /// The meadow grass in state `s`.
+/// [`Grass::high_brown`].
+fn high_brown(c: &Climate, s: &State) -> f64 {
+    let p = &c.phenology;
+    // A dry-summer climate (`summer_dry` 0.6 and more: the Canaries) dries
+    // the high turf fully, a short dryness (Andorra's 0.15) a little.
+    let dry = (c.summer_dry / 0.6).min(1.0) * ramp(f64::from(s.temp_c), p.high_dry_c);
+    let dormant = ramp(f64::from(s.cdd), p.high_dormant_cdd);
+    dry.max(dormant)
+}
+
 pub fn grass(c: &Climate, s: &State) -> Grass {
     let p = &c.phenology;
     let up = ramp(f64::from(s.gdd), p.grass_up_gdd);
@@ -1266,6 +1297,7 @@ pub fn grass(c: &Climate, s: &State) -> Grass {
     Grass {
         green: (up * (1.0 - down)) as f32,
         dry: (c.summer_dry * ramp(f64::from(s.temp_c), p.dry_c)) as f32,
+        high_brown: high_brown(c, s) as f32,
     }
 }
 
@@ -1418,6 +1450,29 @@ mod tests {
     use super::*;
 
     const VADUZ: f64 = 455.0;
+
+    /// The high pastures turn brown (spec 4.6.3, v6.72): dry in dry
+    /// summers (Las Cañadas in August), dormant after the first frosts
+    /// (the Port d'Envalira in early October, where the meadows' dormancy
+    /// still left them green); Andorra's and the Alps' high turf stays
+    /// green in July.
+    #[test]
+    fn high_pastures_turn_brown_in_autumn_and_dry_summers() {
+        let canaries = SeasonModel::for_place(28.27, -16.64);
+        let aug = canaries.day(225.0).grass(2300.0);
+        assert!(aug.high_brown > 0.6, "{aug:?}");
+        let pyrenees = SeasonModel::for_place(42.54, 1.60);
+        let oct = pyrenees.day(281.0).grass(2420.0);
+        assert!(oct.high_brown > 0.9 && oct.green > 0.9, "{oct:?}");
+        let july = pyrenees.day(195.0).grass(2400.0);
+        assert!(july.high_brown < 0.1 && july.green > 0.85, "{july:?}");
+        let alps = SeasonModel::for_place(47.14, 9.52);
+        assert!(alps.day(200.0).grass(2000.0).high_brown < 0.05);
+        // The shader's ramp follows it.
+        let r = canaries.day(225.0).ramps(2300.0, None);
+        let fitted = (r.high_brown.a + r.high_brown.b * 2300.0).clamp(0.0, 1.0);
+        assert!((fitted - aug.high_brown).abs() < 0.08, "{fitted} {aug:?}");
+    }
 
     #[test]
     fn species_timing_moves_spring_and_autumn_apart() {

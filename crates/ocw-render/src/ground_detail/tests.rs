@@ -933,3 +933,40 @@ fn road_leaves_are_the_physics_leaves() {
         }
     }
 }
+
+/// Regression (spec 4.6.3, v6.72): near the road the tufts and stalks above
+/// the tree line are russet like the turf around them in October, not the
+/// lowland meadow's straw; green in July; the valley's unchanged.
+#[test]
+fn alpine_tufts_and_stalks_are_russet_when_dormant() {
+    let srgb = |c: [f32; 3]| {
+        let s = Color::linear_rgb(c[0], c[1], c[2]).to_srgba();
+        [s.red, s.green, s.blue]
+    };
+    let at = |alt_m: f64| Place {
+        region: FloraRegion::Pyrenees,
+        class: LandClass::Meadow,
+        alt_m,
+        broadleaf: 0.1,
+        surface: RoadSurface::Asphalt,
+        sidewalk: false,
+    };
+    let model = ocw_sky::season::SeasonModel::for_place(42.54, 1.60);
+    let oct = model.day(281.0);
+    let high = SeasonFx::of(Some(&oct), 2420.0);
+    assert!(high.brown() > 0.6, "{high:?}");
+    for k in [Kind::Tuft, Kind::Stalks] {
+        for h in [0.1, 0.5, 0.9] {
+            let c = srgb(colour(k, &at(2420.0), &high, h));
+            assert!(c[0] / c[1] > 1.25 && c[0] > c[2] * 1.6, "{k:?} {h}: {c:?}");
+        }
+    }
+    // The valley's stalks as before (no tree line near): straw.
+    let low = SeasonFx::of(Some(&oct), 1100.0);
+    let stalk = srgb(colour(Kind::Stalks, &at(1100.0), &low, 0.5));
+    assert!(stalk[0] / stalk[1] < 1.3, "{stalk:?}");
+    // July up there: green tufts.
+    let july = SeasonFx::of(Some(&model.day(195.0)), 2420.0);
+    let tuft = srgb(colour(Kind::Tuft, &at(2420.0), &july, 0.5));
+    assert!(tuft[1] > tuft[0], "{tuft:?}");
+}
