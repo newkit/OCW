@@ -76,6 +76,8 @@ pub struct AudioFeed {
     weather: WeatherParams,
     heard_strikes: BTreeSet<u32>,
     watch: CueWatch,
+    /// Aircraft were heard in the last message (spec 14 Phase 18, T8).
+    aircraft_heard: bool,
 }
 
 /// The mix from the settings (`audio.master` … `audio.mute`) and the
@@ -159,6 +161,7 @@ impl AudioFeed {
             out.push(m);
         }
         self.weather(f, &mut out);
+        self.aircraft(f.view, &mut out);
         let now = Instant::now();
         out.extend(self.cues(f).into_iter().map(|(c, at)| match at {
             Some(p) => MixerMsg::SpatialCue(c, p, now),
@@ -207,6 +210,53 @@ impl AudioFeed {
         self.others_sent_empty = empty;
         self.others_playing = frame.voices.iter().map(|v| v.id).collect();
         Some(MixerMsg::Others(frame))
+    }
+
+    /// The aircraft heard (spec 14 Phase 18, T8): the loudest two of the
+    /// view's, each from where its sound now arriving left it; sent every
+    /// frame while any is heard, once empty to fade them out.
+    fn aircraft(&mut self, view: Option<&RideView>, out: &mut Vec<MixerMsg>) {
+        use ocw_audio::aircraft::{AircraftSound, Engine, loudest};
+        use ocw_sim::air::AirKind;
+        let sounds = view
+            .and_then(|v| v.air.as_ref())
+            .map(|a| {
+                loudest(
+                    a.heard
+                        .iter()
+                        .filter_map(|h| {
+                            let speed =
+                                (h.vel[0].powi(2) + h.vel[1].powi(2) + h.vel[2].powi(2)).sqrt();
+                            let (engine, power) = match h.kind {
+                                AirKind::Airliner => (
+                                    Engine::Jet,
+                                    if h.on_ground && speed < 1.0 { 0.4 } else { 1.0 },
+                                ),
+                                AirKind::SmallPlane => (Engine::Prop, h.rotor),
+                                AirKind::Helicopter => (Engine::Rotor, h.rotor),
+                                AirKind::Glider => (Engine::Glider, (speed / 30.0).min(1.0)),
+                                AirKind::Balloon if h.burner => (Engine::Burner, 1.0),
+                                AirKind::Balloon => return None,
+                            };
+                            AircraftSound::placed(
+                                h.id,
+                                engine,
+                                a.listener,
+                                a.listener_forward,
+                                h.pos,
+                                h.vel,
+                                power,
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
+        if sounds.is_empty() && !self.aircraft_heard {
+            return;
+        }
+        self.aircraft_heard = !sounds.is_empty();
+        out.push(MixerMsg::Aircraft(sounds));
     }
 
     /// The weather's sounds (spec §14 Phase 9, S4): rain, hail, drizzle,
