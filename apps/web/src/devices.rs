@@ -433,6 +433,7 @@ impl WebDevices {
                 link: d.state.link(),
                 remembered: remembered(&d.id),
                 heart_rate: None,
+                trainer: None,
             })
             .collect();
         for r in &self.remembered.devices {
@@ -445,6 +446,7 @@ impl WebDevices {
                     link: Link::Idle,
                     remembered: true,
                     heart_rate: None,
+                    trainer: None,
                 });
             }
         }

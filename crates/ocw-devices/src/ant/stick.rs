@@ -21,6 +21,10 @@
 //!   exclusion list: each find is reported, put on the list, and the
 //!   channel opened again, so each round finds the next sensor (up to
 //!   [`MAX_LIST`] per profile).
+//! - An FE-C trainer ([`StickCore::command`]) gets the SIM / ERG commands
+//!   as acknowledged messages on its channel, one at a time while it is
+//!   tracked, each answered by `EVENT_TRANSFER_TX_COMPLETED` / `_FAILED`
+//!   ([`super::fec::FecControl`]).
 //! - An unplugged stick ends every channel (`Failed { NoStick }`,
 //!   `Disconnected`); once it is back, every sensor gets a channel again.
 
@@ -29,11 +33,12 @@ use std::time::Duration;
 
 use super::channel::{Channel, ChannelConfig, ChannelEvent, ChannelState, MAX_LIST};
 use super::codec::{self, Decoder, Incoming, Message, code, id, lib_config};
+use super::fec::{FecControl, FecDecoder};
 use super::hr::HrDecoder;
 use super::power::PowerDecoder;
 use super::{AntDeviceId, AntProfile, ChannelId, NetworkKey, RECONNECT_DELAY};
 use crate::ble::FoundDevice;
-use crate::{DeviceEvent, FailReason};
+use crate::{DeviceCommand, DeviceEvent, FailReason};
 
 /// Who asked for a sensor (the service's device handles).
 pub type UserId = u64;
@@ -102,6 +107,8 @@ struct Slot {
 enum Pages {
     Hr(HrDecoder),
     Power(PowerDecoder),
+    /// An FE-C trainer: its data pages and its control queue.
+    Fec(FecDecoder, FecControl),
 }
 
 #[derive(Debug, Clone)]
@@ -243,6 +250,9 @@ impl StickCore {
         for s in &mut self.sensors {
             s.channel = None;
             s.reopen_at = None;
+            if let Pages::Fec(_, c) = &mut s.pages {
+                c.lost();
+            }
             let was = s.connected;
             s.connected = false;
             if tell && s.told != Some(reason) {
@@ -279,6 +289,7 @@ impl StickCore {
         let pages = match device.profile {
             AntProfile::HeartRate => Pages::Hr(HrDecoder::new()),
             AntProfile::BikePower => Pages::Power(PowerDecoder::new()),
+            AntProfile::FitnessEquipment => Pages::Fec(FecDecoder::new(), FecControl::new()),
         };
         self.sensors.push(Sensor {
             user,
@@ -296,6 +307,91 @@ impl StickCore {
         }
         out.extend(self.assign(now));
         out
+    }
+
+    /// A command for a sensor's handle: an FE-C trainer takes SIM / ERG
+    /// (pages 49 – 51, 55); other sensors ignore it.
+    pub fn command(&mut self, user: UserId, cmd: DeviceCommand, now: Duration) -> Vec<Output> {
+        if let Some(s) = self.sensors.iter_mut().find(|s| s.user == user)
+            && let Pages::Fec(_, c) = &mut s.pages
+        {
+            c.on_command(cmd);
+            self.pump_control(now);
+        }
+        Vec::new()
+    }
+
+    /// The control queue of the FE-C trainer of `user` (tests, the log).
+    pub fn fec_control(&self, user: UserId) -> Option<&FecControl> {
+        self.sensors
+            .iter()
+            .find(|s| s.user == user)
+            .and_then(|s| match &s.pages {
+                Pages::Fec(_, c) => Some(c),
+                _ => None,
+            })
+    }
+
+    /// Sends each tracked FE-C trainer's next control page (one in flight
+    /// per trainer).
+    fn pump_control(&mut self, now: Duration) {
+        if self.phase != Phase::Ready {
+            return;
+        }
+        let mut msgs = Vec::new();
+        for s in &mut self.sensors {
+            let (Pages::Fec(_, c), Some(n), true) = (&mut s.pages, s.channel, s.connected) else {
+                continue;
+            };
+            let tracking = self
+                .slots
+                .get(usize::from(n))
+                .and_then(Option::as_ref)
+                .is_some_and(|sl| !sl.retiring && sl.channel.state() == ChannelState::Tracking);
+            if tracking && let Some(p) = c.next(now) {
+                msgs.push(Message::acknowledged(n, p));
+            }
+        }
+        for m in msgs {
+            self.send(m);
+        }
+    }
+
+    /// The stick's answer to an acknowledged message (an FE-C control
+    /// page): transferred, failed, or refused (one already in progress).
+    /// `true`: it was one (the channel's own state machine does not see
+    /// it: a refused data message is not a failed channel command).
+    fn transfer_result(&mut self, inc: &Incoming) -> bool {
+        let (ch, ok) = match *inc {
+            Incoming::Event {
+                channel,
+                code: code::EVENT_TRANSFER_TX_COMPLETED,
+            } => (channel, true),
+            Incoming::Event {
+                channel,
+                code: code::EVENT_TRANSFER_TX_FAILED,
+            } => (channel, false),
+            Incoming::Response {
+                to: id::ACKNOWLEDGED_DATA,
+                code: code::RESPONSE_NO_ERROR,
+                ..
+            } => return true,
+            Incoming::Response {
+                channel,
+                to: id::ACKNOWLEDGED_DATA,
+                code: c,
+            } => {
+                tracing::debug!(channel, code = c, "the ANT stick refused a control page");
+                (channel, false)
+            }
+            _ => return false,
+        };
+        if let Some(s) = self.sensors.iter_mut().find(|s| s.channel == Some(ch))
+            && let Pages::Fec(_, c) = &mut s.pages
+        {
+            c.on_result(ok);
+        }
+        true
     }
 
     /// The handle is gone: its channel is closed and freed.
@@ -456,6 +552,7 @@ impl StickCore {
             out.extend(self.on_message(&m, now));
         }
         self.pump(now);
+        self.pump_control(now);
         out
     }
 
@@ -535,6 +632,9 @@ impl StickCore {
             }
             (_, Phase::Ready) => {}
             _ => return Vec::new(),
+        }
+        if self.transfer_result(&inc) {
+            return Vec::new();
         }
         let Some(n) = m.channel() else {
             return Vec::new();
@@ -626,6 +726,10 @@ impl StickCore {
                 if !s.connected {
                     s.connected = true;
                     s.told = None;
+                    // A trainer found (again): the latest SIM / ERG target.
+                    if let Pages::Fec(_, c) = &mut s.pages {
+                        c.reconnected();
+                    }
                     out.push(ev(DeviceEvent::Connected {
                         kind: s.device.profile.kind(),
                     }));
@@ -661,15 +765,45 @@ impl StickCore {
                             }));
                         }
                     }
+                    Pages::Fec(d, c) => {
+                        let before = d.status;
+                        if let Some(r) = d.on_page(&payload, now) {
+                            out.push(ev(DeviceEvent::Power {
+                                watts: r.watts,
+                                cadence_rpm: r.cadence_rpm,
+                                timestamp: now,
+                            }));
+                        }
+                        let st = d.status;
+                        if st.user_config_required {
+                            c.user_config_required(now);
+                        }
+                        if (st.power_calibration_required || st.resistance_calibration_required)
+                            && st != before
+                        {
+                            tracing::info!(
+                                device = %s.device,
+                                power = st.power_calibration_required,
+                                resistance = st.resistance_calibration_required,
+                                "the FE-C trainer asks for a calibration"
+                            );
+                        }
+                    }
                 }
             }
             ChannelEvent::Lost => {
+                if let Pages::Fec(_, c) = &mut s.pages {
+                    c.lost();
+                }
                 if s.connected {
                     s.connected = false;
                     out.push(ev(DeviceEvent::Disconnected));
                 }
             }
             ChannelEvent::Closed => {
+                if let Pages::Fec(_, c) = &mut s.pages {
+                    c.lost();
+                }
                 // The search timed out: search again after a pause.
                 if s.connected {
                     s.connected = false;
@@ -834,6 +968,7 @@ impl StickCore {
             }
         }
         out.extend(self.assign(now));
+        self.pump_control(now);
         out
     }
 }
@@ -850,7 +985,7 @@ pub fn response(m: &Message, c: u8) -> Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ant::sim::{SimKind, SimRadio, SimSensor};
+    use crate::ant::sim::{SimKind, SimLoad, SimRadio, SimSensor};
 
     const STEP: Duration = Duration::from_millis(20);
 
@@ -1183,5 +1318,162 @@ mod tests {
         let bpm = hr(&b.events(1));
         assert_eq!(bpm.last(), Some(&0.0), "{bpm:?}");
         assert_eq!(bpm.iter().filter(|b| **b == 0.0).count(), 1, "once");
+    }
+
+    fn watts(e: &[DeviceEvent]) -> Vec<f64> {
+        e.iter()
+            .filter_map(|e| match e {
+                DeviceEvent::Power { watts, .. } => Some(*watts),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn sim_cmd(grade: f64, mass_kg: f64) -> DeviceCommand {
+        DeviceCommand::SetSimulation(crate::SimulationParameters {
+            grade,
+            wind_speed_mps: 0.0,
+            crr: 0.004,
+            cw_kg_per_m: 0.2,
+            mass_kg,
+            wind_grade: grade,
+        })
+    }
+
+    const FEC: u16 = 5005;
+
+    fn trainer_bench() -> Bench {
+        let mut radio = SimRadio::new(Some(NetworkKey::TEST));
+        radio.add(SimSensor::fe_c_trainer(FEC, 180.0, 90.0));
+        let mut b = Bench::new(Some(NetworkKey::TEST), radio);
+        b.run(Duration::from_millis(200));
+        b.core.add_sensor(
+            3,
+            AntDeviceId::new(AntProfile::FitnessEquipment, FEC, 5),
+            b.now,
+        );
+        b.run(Duration::from_secs(2));
+        b
+    }
+
+    #[test]
+    fn a_ride_on_an_fe_c_trainer_in_erg_and_sim() {
+        use crate::ant::fec;
+        let mut b = trainer_bench();
+        let e = b.events(3);
+        assert_eq!(
+            e[0],
+            DeviceEvent::Connected {
+                kind: "smart trainer (ANT+ FE-C)"
+            }
+        );
+        // Before any target: the rider's own 180 W, with the cadence.
+        let w = watts(&e);
+        assert!(w.len() >= 4, "page 25 about 2.7 a second: {e:?}");
+        assert!(w.iter().all(|w| (*w - 180.0).abs() < 1.0), "{w:?}");
+        assert!(e.iter().any(|e| matches!(
+            e,
+            DeviceEvent::Power {
+                cadence_rpm: Some(c),
+                ..
+            } if *c == 90.0
+        )));
+        // The trainer asked for the user configuration (page 25's bit):
+        // the defaults went, and it stopped asking.
+        let tr = b.radio.trainer(FEC).unwrap();
+        assert_eq!(tr.user_kg, Some(fec::DEFAULT_USER_KG));
+        // ERG 250 W: the power follows the target.
+        b.core
+            .command(3, DeviceCommand::SetTargetPower(250.0), b.now);
+        b.run(Duration::from_secs(6));
+        let w = watts(&b.events(3));
+        assert!((w.last().unwrap() - 250.0).abs() < 2.0, "{w:?}");
+        assert_eq!(b.radio.trainer(FEC).unwrap().load, SimLoad::Erg(250.0));
+        // SIM: 6 % for a rider of 80 kg – the user configuration, the wind
+        // and the track pages, then the power the climb costs.
+        b.core.command(3, sim_cmd(0.06, 80.0), b.now);
+        b.run(Duration::from_secs(8));
+        let tr = b.radio.trainer(FEC).unwrap();
+        assert_eq!(
+            tr.load,
+            SimLoad::Sim {
+                grade_pct: 6.0,
+                crr: 0.004
+            }
+        );
+        assert_eq!(tr.user_kg, Some(80.0 - fec::BIKE_KG));
+        assert_eq!(tr.wind_coefficient, 0.4, "2 × cw");
+        let v = tr.pace(180.0);
+        let climb = tr.load_power(180.0, v);
+        assert!(climb > 400.0, "{climb}");
+        let w = watts(&b.events(3));
+        assert!(
+            (w.last().unwrap() - climb).abs() < climb * 0.02,
+            "{w:?} {climb}"
+        );
+        // Downhill −2 %: no power needed.
+        b.core.command(3, sim_cmd(-0.02, 80.0), b.now);
+        b.run(Duration::from_secs(8));
+        let w = watts(&b.events(3));
+        assert!(*w.last().unwrap() < 30.0, "{w:?}");
+        // The whole ride: one page at a time, never refused.
+        assert_eq!(b.radio.busy_refusals, 0);
+        assert_eq!(b.core.fec_control(3).unwrap().given_up, 0);
+    }
+
+    #[test]
+    fn failed_transfers_are_retried_and_the_newest_target_wins() {
+        use crate::ant::fec;
+        let mut b = trainer_bench();
+        b.events(3);
+        // The next two transfers fail: the page is sent again, the third
+        // attempt goes through.
+        b.radio.trainer_mut(FEC).unwrap().fail_acks = 2;
+        let before = b.core.fec_control(3).unwrap().sent;
+        b.core
+            .command(3, DeviceCommand::SetTargetPower(210.0), b.now);
+        b.run(Duration::from_secs(3));
+        assert_eq!(b.core.fec_control(3).unwrap().sent - before, 3);
+        let tr = b.radio.trainer(FEC).unwrap();
+        assert_eq!(tr.load, SimLoad::Erg(210.0));
+        let erg: Vec<_> = tr
+            .received
+            .iter()
+            .filter(|p| p[0] == fec::PAGE_TARGET_POWER)
+            .collect();
+        assert_eq!(erg, [&fec::target_power(210.0)]);
+        // Three targets at once: the first goes, the newest replaces the
+        // one in between.
+        for w in [220.0, 230.0, 240.0] {
+            b.core.command(3, DeviceCommand::SetTargetPower(w), b.now);
+        }
+        b.run(Duration::from_secs(3));
+        let tr = b.radio.trainer(FEC).unwrap();
+        let erg: Vec<_> = tr
+            .received
+            .iter()
+            .filter(|p| p[0] == fec::PAGE_TARGET_POWER)
+            .copied()
+            .collect();
+        assert_eq!(
+            erg,
+            [
+                fec::target_power(210.0),
+                fec::target_power(220.0),
+                fec::target_power(240.0)
+            ]
+        );
+        assert_eq!(b.radio.busy_refusals, 0);
+        // Out of range: the page fails, the trainer is lost; back in range
+        // it gets the latest target again.
+        b.radio.set_present(FEC, false);
+        b.core
+            .command(3, DeviceCommand::SetTargetPower(300.0), b.now);
+        b.run(Duration::from_secs(3));
+        assert!(b.events(3).contains(&DeviceEvent::Disconnected));
+        b.radio.set_present(FEC, true);
+        b.run(Duration::from_secs(3));
+        assert!(matches!(b.events(3)[0], DeviceEvent::Connected { .. }));
+        assert_eq!(b.radio.trainer(FEC).unwrap().load, SimLoad::Erg(300.0));
     }
 }

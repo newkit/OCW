@@ -1060,6 +1060,7 @@ mod tests {
                 link: Link::Connected("Wahoo KICKR".into()),
                 remembered: true,
                 heart_rate: None,
+                trainer: None,
             }],
             ..Default::default()
         };

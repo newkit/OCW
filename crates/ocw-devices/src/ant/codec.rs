@@ -63,6 +63,8 @@ pub mod code {
     pub const CHANNEL_ID_NOT_SET: u8 = 0x18;
     pub const INVALID_MESSAGE: u8 = 0x28;
     pub const INVALID_NETWORK_NUMBER: u8 = 0x29;
+    /// An acknowledged message while the last is still being sent.
+    pub const TRANSFER_IN_PROGRESS: u8 = 0x1F;
 }
 
 /// Channel types (assign channel).

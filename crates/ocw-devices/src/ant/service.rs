@@ -363,7 +363,9 @@ impl<T: AntTransport> Service<T> {
                     Err(TryRecvError::Empty) => break,
                 }
             }
-            // Each sensor's handle: gone or shut down → its channel goes.
+            // Each sensor's handle: gone or shut down → its channel goes;
+            // SIM / ERG go to the stick core (an FE-C trainer takes them,
+            // other sensors ignore them).
             let core = &mut self.core;
             self.users.retain(|u| {
                 loop {
@@ -372,9 +374,7 @@ impl<T: AntTransport> Service<T> {
                             core.remove_sensor(u.id);
                             return false;
                         }
-                        // SIM / ERG: FE-C trainers will take them (spec 14
-                        // Phase 17, the next steps); sensors ignore them.
-                        Ok(_) => {}
+                        Ok(cmd) => out.extend(core.command(u.id, cmd, now)),
                         Err(TryRecvError::Empty) => return true,
                     }
                 }
@@ -779,6 +779,34 @@ mod tests {
             matches!(e, DeviceEvent::Connected { .. })
         });
         assert!(stick.connect("hci0/dev_AA", "x").is_err());
+        stick.shutdown();
+    }
+
+    #[test]
+    fn an_fe_c_trainer_takes_erg_through_its_handle() {
+        let sim = SimTransport::new(
+            Some(NetworkKey::TEST),
+            vec![SimSensor::fe_c_trainer(5005, 150.0, 88.0)],
+        );
+        let stick = AntStick::start(sim.clone(), Some(NetworkKey::TEST));
+        let h = AntDevice::new(&stick, "ant:17:5005:5", "ANT+ trainer 5005")
+            .start()
+            .unwrap();
+        wait_for(&h.events, "connected", |e| {
+            *e == DeviceEvent::Connected {
+                kind: AntProfile::FitnessEquipment.kind(),
+            }
+        });
+        // The routed ERG command reaches the trainer, its power follows.
+        h.commands
+            .send(DeviceCommand::SetTargetPower(260.0))
+            .unwrap();
+        wait_for(
+            &h.events,
+            "260 W",
+            |e| matches!(e, DeviceEvent::Power { watts, .. } if (*watts - 260.0).abs() < 3.0),
+        );
+        assert_eq!(sim.radio(|r| r.busy_refusals), 0, "one at a time");
         stick.shutdown();
     }
 }

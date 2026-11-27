@@ -195,6 +195,10 @@ pub struct Entry {
     /// whether this one gives the heart rate (*Use for heart rate*);
     /// `None` otherwise.
     pub heart_rate: Option<bool>,
+    /// With two or more trainers (a BLE and an ANT+ FE-C one, spec 14
+    /// Phase 17, 17E): whether this one is the trainer in use (*Use as
+    /// trainer*); `None` otherwise.
+    pub trainer: Option<bool>,
 }
 
 impl Entry {
@@ -219,6 +223,9 @@ impl Entry {
         }
         if self.heart_rate == Some(true) {
             parts.push("HR in use".into());
+        }
+        if self.trainer == Some(true) {
+            parts.push("in use".into());
         }
         if self.remembered {
             parts.push("remembered".into());
@@ -637,6 +644,12 @@ fn device_rows(e: &Entry, info: &DevicesInfo) -> Vec<Row> {
         r.value = Some(if used { "yes" } else { "no" }.into());
         out.push(r);
     }
+    // Two trainers: the rider picks one (17E, the Q6 (c) rule).
+    if let Some(used) = e.trainer {
+        let mut r = Row::action("Use as trainer", format!("devices.trainer {}", e.id));
+        r.value = Some(if used { "yes" } else { "no" }.into());
+        out.push(r);
+    }
     if matches!(e.link, Link::Idle | Link::Failed(_)) {
         let line = match info.scan {
             // The browser connects only from its chooser.
@@ -715,6 +728,7 @@ mod tests {
             link,
             remembered,
             heart_rate: None,
+            trainer: None,
         }
     }
 
@@ -1003,6 +1017,7 @@ mod tests {
             link: Link::Connected("heart-rate sensor (ANT+)".into()),
             remembered: true,
             heart_rate: used,
+            trainer: None,
         }
     }
 
@@ -1041,6 +1056,62 @@ mod tests {
         };
         assert!(
             !rows(Page::Device(0), &one)
+                .iter()
+                .any(|r| r.label == "Use for heart rate")
+        );
+    }
+
+    /// A BLE and an ANT+ FE-C trainer (spec 14 Phase 17, 17E): the list
+    /// says which is in use, the other's page offers *Use as trainer*.
+    #[test]
+    fn two_trainers_offer_the_choice_and_the_fe_c_one_says_ant() {
+        let trainer = |id: &str, name: &str, kind: &str, used| Entry {
+            id: id.into(),
+            name: name.into(),
+            role: Role::Trainer,
+            rssi: None,
+            link: Link::Connected(kind.into()),
+            remembered: true,
+            heart_rate: None,
+            trainer: Some(used),
+        };
+        let info = DevicesInfo {
+            entries: vec![
+                trainer(
+                    "hci0/dev_00_00_00_00_00_01",
+                    "Wahoo KICKR 0001",
+                    "smart trainer (FTMS)",
+                    false,
+                ),
+                trainer(
+                    "ant:17:5005:5",
+                    "ANT+ trainer 5005",
+                    "smart trainer (ANT+ FE-C)",
+                    true,
+                ),
+            ],
+            ..Default::default()
+        };
+        let r = rows(Page::Devices, &info);
+        assert_eq!(
+            r[2].value.as_deref(),
+            Some("trainer, ANT+, connected, in use, remembered")
+        );
+        assert_eq!(
+            r[1].value.as_deref(),
+            Some("trainer, connected, remembered")
+        );
+        let d = rows(Page::Device(0), &info);
+        let use_it = d.iter().find(|r| r.label == "Use as trainer").unwrap();
+        assert_eq!(use_it.value.as_deref(), Some("no"));
+        assert_eq!(
+            use_it.confirm,
+            Some(Activate::Command(
+                "devices.trainer hci0/dev_00_00_00_00_00_01".into()
+            ))
+        );
+        assert!(
+            !rows(Page::Device(0), &info)
                 .iter()
                 .any(|r| r.label == "Use for heart rate")
         );

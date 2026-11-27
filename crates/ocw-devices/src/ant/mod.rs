@@ -1,6 +1,6 @@
 //! ANT+ sensors through an ANT USB stick (spec 3.4.1, 14 Phase 17):
-//! heart-rate straps first, bike power meters on the same base; FE-C
-//! trainers plug in later as one more profile.
+//! heart-rate straps first, bike power meters and FE-C trainers on the
+//! same base.
 //!
 //! Layers (as [`crate::ble`]):
 //! - [`codec`] (pure): the ANT serial messages (sync, length, id, data,
@@ -11,6 +11,9 @@
 //! - [`hr`] (pure): the ANT+ heart-rate pages (toggle bit, legacy straps,
 //!   beat time / count, R-R intervals, staleness, manufacturer / product /
 //!   battery pages); [`power`] (pure): the bike-power page 0x10;
+//!   [`fec`] (pure): the FE-C trainer pages – data pages 16 / 25 and the
+//!   control pages 49 / 50 / 51 / 55, sent as acknowledged messages one
+//!   at a time;
 //! - [`stick`] (pure): the stick core – reset, capabilities, network key,
 //!   extended data once; channels handed out to sensors and the scan,
 //!   messages routed by channel number, reconnects. Driven by bytes and a
@@ -36,6 +39,7 @@
 
 pub mod channel;
 pub mod codec;
+pub mod fec;
 pub mod hr;
 pub mod power;
 pub mod sim;
@@ -155,16 +159,20 @@ pub enum AntProfile {
     HeartRate,
     /// Bike power (device type 11, period 8182): the power-only page.
     BikePower,
+    /// Fitness equipment, FE-C (device type 17, period 8192): a smart
+    /// trainer, data pages 16 / 25 and control (SIM / ERG).
+    FitnessEquipment,
 }
 
 impl AntProfile {
-    pub const ALL: [Self; 2] = [Self::HeartRate, Self::BikePower];
+    pub const ALL: [Self; 3] = [Self::HeartRate, Self::BikePower, Self::FitnessEquipment];
 
     /// The ANT+ device type.
     pub fn device_type(self) -> u8 {
         match self {
             Self::HeartRate => 120,
             Self::BikePower => 11,
+            Self::FitnessEquipment => 17,
         }
     }
 
@@ -172,11 +180,13 @@ impl AntProfile {
         Self::ALL.into_iter().find(|p| p.device_type() == t & 0x7F)
     }
 
-    /// The channel period (1/32768 s): 8070 ≈ 4.06 Hz, 8182 ≈ 4.00 Hz.
+    /// The channel period (1/32768 s): 8070 ≈ 4.06 Hz, 8182 ≈ 4.00 Hz,
+    /// 8192 = 4 Hz.
     pub fn period(self) -> u16 {
         match self {
             Self::HeartRate => 8070,
             Self::BikePower => 8182,
+            Self::FitnessEquipment => 8192,
         }
     }
 
@@ -185,6 +195,7 @@ impl AntProfile {
         match self {
             Self::HeartRate => "heart-rate sensor (ANT+)",
             Self::BikePower => "power meter (ANT+)",
+            Self::FitnessEquipment => "smart trainer (ANT+ FE-C)",
         }
     }
 
@@ -193,6 +204,7 @@ impl AntProfile {
         match self {
             Self::HeartRate => "ANT+ heart rate",
             Self::BikePower => "ANT+ power",
+            Self::FitnessEquipment => "ANT+ trainer",
         }
     }
 
@@ -202,6 +214,9 @@ impl AntProfile {
         match self {
             Self::HeartRate => Profile::HeartRate,
             Self::BikePower => Profile::CyclingPower,
+            // A trainer, as a BLE FTMS one (it replaces the virtual
+            // trainer and takes SIM / ERG).
+            Self::FitnessEquipment => Profile::FitnessMachine,
         }
     }
 }
@@ -423,7 +438,12 @@ mod tests {
         let p = AntDeviceId::parse("ant:11:777:5").unwrap();
         assert_eq!(p.profile, AntProfile::BikePower);
         assert_eq!(AntDeviceId::parse("ant:120:0:1"), None);
-        assert_eq!(AntDeviceId::parse("ant:17:5:1"), None, "FE-C: later");
+        let t = AntDeviceId::parse("ant:17:5:5").unwrap();
+        assert_eq!(t.profile, AntProfile::FitnessEquipment);
+        assert_eq!(t.name(), "ANT+ trainer 5");
+        assert_eq!(t.found(None).profiles, [Profile::FitnessMachine]);
+        assert_eq!(t.profile.period(), 8192);
+        assert_eq!(AntDeviceId::parse("ant:18:5:1"), None);
         assert_eq!(AntDeviceId::parse("hci0/dev_AA"), None);
         assert!(AntDeviceId::is_ant("ant:120:1:1"));
         let f = id.found(Some(-55));
