@@ -5988,10 +5988,10 @@ shot = 9
 
 [[scene]]
 name = "air-tfn-approach"
-description = "Video: an airliner on the 3° glide slope to Tenerife North (runway 30, the wind from the north-west) passes the hovering unicorn at 220 m, gear down, over La Laguna (spec 18C, T8)"
+description = "Video: an airliner on the 3° glide slope to Tenerife North (runway 30, the wind from the north-west) passes the hovering unicorn at 120 m, gear down, over La Laguna (spec 18C, T8)"
 world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0"]
-at = ["0.5=time 2026-07-15 10:00", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "1=character --hair long --hair-colour auburn --glasses 1", "2=god.flight hover", "3=god on", "4=air.spot arrival 220 12", "4.2=air"]
+at = ["0.5=time 2026-07-15 10:00", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "1=character --hair long --hair-colour auburn --glasses 1", "2=god.flight hover", "3=god on", "4=air.spot arrival 120 11", "4.2=air"]
 video = 14
 warmup = 5
 pick = false
@@ -6016,9 +6016,19 @@ pick = false
 
 [[scene]]
 name = "air-dusk-lights"
-description = "Dusk at Tenerife North: an arriving airliner's navigation lights (red left, green right, white tail), the red beacon and the strobes, seen from the unicorn beside the glide slope (spec 18C, T8)"
+description = "Dusk at Tenerife: the nearest airliner's navigation lights (red left, green right, white tail), the red beacon and the strobes, seen from the unicorn beside its path (spec 18C, T8)"
 world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0"]
-at = ["0.5=time 2026-07-15 21:40", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=air.spot arrival 90 5"]
+at = ["0.5=time 2026-07-15 21:25", "0.5=weather clear wind=6 dir=300", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=air.spot airliner 80 6", "4.1=air"]
 shot = 10
+pick = false
+
+[[scene]]
+name = "air-contrails-timelapse"
+description = "Video, the clock ten times faster: airliners crossing the Black Forest on a cold, humid morning draw persistent contrails that widen and drift with the wind aloft (spec 18C, T8)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-11-27 10:30", "0.5=weather clear clouds=0.2 type=cirrus temp=1 humidity=0.9 wind=8 dir=250", "0.5=hud off", "0.5=hud.profile off", "1=character --hair long --hair-colour #3B2A20", "2=god.flight hover", "3=god on", "4=god.pose here here 900 160 28", "4.5=time speed 10"]
+video = 12
+warmup = 6
 pick = false

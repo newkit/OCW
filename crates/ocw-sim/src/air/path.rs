@@ -241,33 +241,35 @@ fn densify(v: Vec<Vertex>, step: f64) -> Vec<Vertex> {
 /// Lifts the free vertices to `clearance` over the relief, with ramps of
 /// at most `grade` before and after.
 fn clear(v: &mut [Vertex], relief: &Relief, clearance: f64, grade: f64) {
-    for x in v.iter_mut() {
-        if !x.fixed && !x.ground {
-            let floor = relief.max_at(x.pos[0], x.pos[2]) + clearance;
-            if x.pos[1] < floor {
-                x.pos[1] = floor;
+    let free = |x: &Vertex| !x.fixed && !x.ground;
+    // The floor of each free vertex, ramped so that the flight climbs
+    // ahead of high ground (backwards) and descends after it (forwards);
+    // the planned climbs and descents themselves are left as they are.
+    let mut floor: Vec<f64> = v
+        .iter()
+        .map(|x| {
+            if free(x) {
+                relief.max_at(x.pos[0], x.pos[2]) + clearance
+            } else {
+                f64::NEG_INFINITY
             }
-        }
-    }
-    // Climb ahead of the high ground (backwards), descend after it.
+        })
+        .collect();
     for i in (0..v.len().saturating_sub(1)).rev() {
-        if v[i].fixed || v[i].ground {
-            continue;
-        }
-        let d = len2(sub(v[i + 1].pos, v[i].pos));
-        let need = v[i + 1].pos[1] - grade * d;
-        if !v[i + 1].fixed && v[i].pos[1] < need {
-            v[i].pos[1] = need;
+        if free(&v[i]) {
+            let d = len2(sub(v[i + 1].pos, v[i].pos));
+            floor[i] = floor[i].max(floor[i + 1] - grade * d);
         }
     }
     for i in 1..v.len() {
-        if v[i].fixed || v[i].ground {
-            continue;
+        if free(&v[i]) {
+            let d = len2(sub(v[i].pos, v[i - 1].pos));
+            floor[i] = floor[i].max(floor[i - 1] - grade * d);
         }
-        let d = len2(sub(v[i].pos, v[i - 1].pos));
-        let need = v[i - 1].pos[1] - grade * d;
-        if !v[i - 1].fixed && v[i].pos[1] < need {
-            v[i].pos[1] = need;
+    }
+    for (x, f) in v.iter_mut().zip(floor) {
+        if x.pos[1] < f {
+            x.pos[1] = f;
         }
     }
 }

@@ -49,7 +49,7 @@ pub struct AirView {
 }
 
 /// Never smaller than this on the screen (px).
-pub const MIN_PX: f32 = 2.5;
+pub const MIN_PX: f32 = 3.0;
 /// The light dots' size on the screen (px).
 pub const DOT_PX: f32 = 2.2;
 
@@ -738,10 +738,25 @@ fn contrails(
     let day = ((sun + 6.0) / 10.0).clamp(0.08, 1.0);
     let warm = (1.0 - (sun / 12.0).clamp(0.0, 1.0)) * (sun > -4.0) as u8 as f32;
     let tint = Vec3::new(1.0, 1.0 - 0.25 * warm, 1.0 - 0.45 * warm) * day;
+    let (pos, col, idx) = ribbon(&trails, eye, focal, tint);
+    if let Some(mut m) = meshes.get_mut(&mesh) {
+        let n = pos.len();
+        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+        m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; n]);
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+        m.insert_indices(Indices::U32(idx));
+    }
+}
+
+/// The trails' ribbon (positions, colours, triangles): two vertices per
+/// point, facing the camera at `eye` (`focal` px per radian).
+type Ribbon = (Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<u32>);
+
+fn ribbon(trails: &[&ocw_sim::air::Trail], eye: Vec3, focal: f32, tint: Vec3) -> Ribbon {
     let mut pos = Vec::new();
     let mut col = Vec::new();
     let mut idx = Vec::new();
-    for tr in trails {
+    for tr in trails.iter().filter(|t| t.points.len() >= 2) {
         let life = tr.kind.lifetime_s() as f32;
         let pts: Vec<(Vec3, f32)> = tr
             .points
@@ -754,21 +769,23 @@ fn contrails(
             })
             .collect();
         for (i, &(p, age)) in pts.iter().enumerate() {
-            let next = pts.get(i + 1).map_or(p - (pts[i - 1].0 - p), |n| n.0);
+            let next = pts
+                .get(i + 1)
+                .map_or_else(|| p - (pts[i - 1].0 - p), |n| n.0);
             let prev = if i > 0 { pts[i - 1].0 } else { p - (next - p) };
             let tangent = (next - prev).normalize_or(Vec3::X);
             let to_cam = (eye - p).normalize_or(Vec3::Y);
             let side = tangent.cross(to_cam).normalize_or(Vec3::Y);
             let grow = if tr.kind == Contrail::Persistent {
-                0.22
+                0.12
             } else {
-                0.6
+                0.5
             };
             let dist = eye.distance(p);
             let w = (3.0 + grow * age).max(1.6 * dist / focal);
             let fade = (1.0 - age / life).clamp(0.0, 1.0);
             let start = (age / 1.2).clamp(0.0, 1.0);
-            let alpha = 0.75 * fade.powf(1.3) * start;
+            let alpha = 0.7 * fade.powf(1.6) * start;
             let base = pos.len() as u32;
             pos.push((p + side * w * 0.5).to_array());
             pos.push((p - side * w * 0.5).to_array());
@@ -780,13 +797,7 @@ fn contrails(
             }
         }
     }
-    if let Some(mut m) = meshes.get_mut(&mesh) {
-        let n = pos.len();
-        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-        m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; n]);
-        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
-        m.insert_indices(Indices::U32(idx));
-    }
+    (pos, col, idx)
 }
 
 #[cfg(test)]
@@ -832,6 +843,29 @@ mod tests {
             Quat::IDENTITY,
         );
         assert!((q * Vec3::Y).y > 0.999);
+    }
+
+    #[test]
+    fn the_ribbon_covers_every_trail_point() {
+        use ocw_sim::air::{Trail, TrailPoint};
+        let tr = Trail {
+            kind: Contrail::Persistent,
+            points: (0..5)
+                .map(|i| TrailPoint {
+                    pos: [f64::from(i) * -500.0, 10_000.0, 0.0],
+                    age_s: f64::from(i) * 2.0 + 0.3,
+                })
+                .collect(),
+        };
+        let (pos, col, idx) = ribbon(&[&tr], Vec3::new(0.0, 0.0, 5000.0), 1000.0, Vec3::ONE);
+        assert_eq!(pos.len(), 10);
+        assert_eq!(col.len(), 10);
+        assert_eq!(idx.len(), 4 * 6);
+        assert!(idx.iter().all(|&i| (i as usize) < pos.len()));
+        // Wider and fainter with age.
+        let w = |i: usize| Vec3::from(pos[2 * i]).distance(Vec3::from(pos[2 * i + 1]));
+        assert!(w(4) > w(0));
+        assert!(col[8][3] < col[2][3]);
     }
 
     #[test]

@@ -53,7 +53,10 @@ fn world_space(world: &World) -> Option<(u64, Box<dyn FnOnce() -> AirSpace>)> {
         );
         return Some((key, Box::new(move || AirSpace::from_package(&home))));
     }
-    let origin = crate::client(world)?.geo_origin()?;
+    // A route without a place (the test routes): the default place's sky.
+    let origin = crate::client(world)?
+        .geo_origin()
+        .unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
     let key = mix(origin.0.to_bits() ^ origin.1.to_bits().rotate_left(17));
     Some((
         key,
@@ -268,7 +271,16 @@ fn register_commands(app: &mut App) {
                     };
                     d(a).total_cmp(&d(b))
                 })
-                .ok_or(format!("no {what} flying now"))?;
+                .ok_or_else(|| {
+                    let mut kinds: Vec<&str> = flights.iter().map(|f| f.mission.key()).collect();
+                    kinds.sort_unstable();
+                    kinds.dedup();
+                    format!(
+                        "no {what} flying now ({} flights: {})",
+                        flights.len(),
+                        kinds.join(", ")
+                    )
+                })?;
             let at = f.state(now + ahead);
             let dir = {
                 let l = at.vel[0].hypot(at.vel[2]).max(1e-6);

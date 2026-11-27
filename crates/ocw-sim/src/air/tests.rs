@@ -382,6 +382,17 @@ fn approaches_and_departures_follow_the_runway() {
                     && (100.0..9000.0).contains(&along)
                     && s.pos[1] < rw.elevation_m + 700.0
                     && t - f.start_s < 400.0;
+                if f.mission == Mission::Arrival
+                    && (-23_000.0..-17_000.0).contains(&along)
+                    && across.abs() < 3000.0
+                    && !s.ground
+                {
+                    let speed = s.vel[0].hypot(s.vel[2]);
+                    assert!(
+                        (70.0..120.0).contains(&speed),
+                        "intercept at {speed:.1} m/s, {along:.0} m out"
+                    );
+                }
                 if on_final || on_climb || s.ground {
                     assert!(
                         across.abs() < 5.0,
@@ -400,6 +411,11 @@ fn approaches_and_departures_follow_the_runway() {
                     }
                 }
                 if on_final {
+                    let speed = s.vel[0].hypot(s.vel[2]);
+                    assert!(
+                        (65.0..90.0).contains(&speed),
+                        "final at {speed:.1} m/s, {along:.0} m out"
+                    );
                     // The 3° glide slope.
                     let slope = (s.pos[1] - rw.elevation_m - 15.0) / -along;
                     assert!((slope - 3f64.to_radians().tan()).abs() < 0.003, "{slope}");
@@ -540,4 +556,35 @@ fn a_world_without_aerodromes_has_the_nearby_airports() {
         "{names:?}"
     );
     assert!(s.generator_count() > 6);
+}
+
+#[test]
+fn tenerife_has_arrivals_in_the_evening() {
+    let s = AirSpace::new((28.3, -16.6), None, Relief::default(), |_, _| None);
+    let w = WeatherState {
+        wind_mps: 6.0,
+        wind_from_deg: 300.0,
+        ..Default::default()
+    };
+    // 2026-07-15 21:40 WEST = 20:40 UTC.
+    let t = DAY0 + 20.0 * 3600.0 + 40.0 * 60.0;
+    let mut none = 0;
+    for seed in 0..40u64 {
+        let mut sky = AirSky::default();
+        let n = sky
+            .flights(
+                &s,
+                &AirInputs {
+                    viewer: [15_000.0, 500.0, -20_000.0],
+                    ..inputs(&w, seed, t)
+                },
+            )
+            .iter()
+            .filter(|f| f.mission == Mission::Arrival && f.alive(t + 5.0))
+            .count();
+        if n == 0 {
+            none += 1;
+        }
+    }
+    assert!(none <= 2, "{none} of 40 sessions without an arrival");
 }
