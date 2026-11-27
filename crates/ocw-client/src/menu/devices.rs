@@ -1425,6 +1425,7 @@ mod tests {
             link: Link::Idle,
             remembered: false,
             heart_rate: None,
+            trainer: None,
         });
         let d = rows(Page::Device(0), &info);
         assert!(d.iter().any(|r| r.label == "Connect"
