@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Before / after of a world's load in WebKit (spec 14 Phase 10, 10G, v6.99):
+# Before / after of a world's load in WebKit (spec 14 Phase 10, 10G, v7.00):
 # the page build in target/web as it is ("old"), then `make web` ("new"),
 # each loading Andorra, Tenerife and Liechtenstein as the reporting iPhone
 # (scripts/web-load-memory.sh). DATA: the folder with the packages

@@ -120,10 +120,10 @@ fn report(path: &str, route: Option<&str>) {
     // A phone (v5.42): the per-tile parts along the course only, cut while
     // the base is decoded from its chunks (as the browser does).
     // `OCW_PHONE=phone|saver|minimal` (any other value: phone): the rings
-    // of that memory mode. The browser's base (v6.99, 10G): without the
+    // of that memory mode. The browser's base (v7.00, 10G): without the
     // road traffic's section, the chunks one at a time as they come;
     // `OCW_BASE_ALL=1` decodes TRFC too, `OCW_HOLD_CHUNKS=1` holds every
-    // chunk first (the driver before v6.99).
+    // chunk first (the driver before v7.00).
     let phone = std::env::var("OCW_PHONE").ok();
     let s = if let Some(mode) = phone {
         let mut opts = WorldOptions::new("memory-report");

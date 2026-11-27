@@ -134,7 +134,7 @@ TOO_OLD = ("This browser is too old for Open Cycling World – please update "
 # The phone cases: the device, the insets (top, right, bottom, left) and
 # the page's APIs.
 # The world case's bound (MB of wasm memory up to the ride's start, 10G,
-# v6.99): Liechtenstein measured 156 MB in WebKit at 430 × 932 (164 MB before;
+# v7.00): Liechtenstein measured 156 MB in WebKit at 430 × 932 (164 MB before;
 # most of it is the renderer's start, the base adds ~10 MB).
 WORLD_BUDGET_MB = 180.0
 STAGE_RE = re.compile(r"world load: (.*?) – wasm (\d+) MB, heap (\d+) MB \(peak (\d+) MB\)")

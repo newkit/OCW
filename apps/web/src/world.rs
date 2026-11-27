@@ -404,7 +404,7 @@ pub fn course_tiles(
 ) -> Option<BTreeSet<TileKey>> {
     // From the graph alone: a `RoadNetwork` (its junctions, adjacency)
     // took Tenerife's heap 100 – 170 MB higher for a moment while the
-    // base was decoded (10G, v6.99); the ride builds its own afterwards.
+    // base was decoded (10G, v7.00); the ride builds its own afterwards.
     let graph = pkg.graph.as_deref()?;
     let (points, r) = match wanted_route(pkg, opts) {
         Some(route) => (route_points(graph, route, 200.0)?, rings),

@@ -216,7 +216,7 @@ LOGIC = r"""
         && s3 === null && new URL(s2.href).searchParams.get("quality") === "low"
         && new URL(s2.href).searchParams.get("world") === "liechtenstein", JSON.stringify([s1, s2, s3]));
   const qs = (s) => new URLSearchParams(s);
-  // The death notes say what changes on the device (10G, v6.99): on an
+  // The death notes say what changes on the device (10G, v7.00): on an
   // iPhone with WebGL 2 the shadows are off already – no "smallest shadows".
   const ni = G.memoryStepNote("minimal", F.iphone, qs("world=europe/andorra&memory=minimal"));
   const ns = G.memoryStepNote("saver", F.iphone, qs("world=europe/andorra&memory=saver"));
