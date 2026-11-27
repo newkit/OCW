@@ -1,10 +1,17 @@
-//! Road vehicles in the frame (spec 14 Phase 18, 18E T5): the view type
-//! the client fills ([`VehicleView`] in [`RideView::vehicles`]) and a
-//! **debug view** – one plain box per vehicle in its class's size and a
-//! colour from its look seed, with red brake lamps – behind the dev
-//! switch [`TrafficDebug`] (`OCW_TRAFFIC_BOXES=1` in the environment, or
-//! the console command `traffic.boxes on`). The real models with LOD, lights and sound are
-//! milestone T7, which replaces these boxes.
+//! Road vehicles in the frame (spec 14 Phase 18, 18E T5, T7): the view
+//! type the client fills ([`VehicleView`] in [`RideView::vehicles`]), the
+//! vehicles drawn with their models ([`models`]: instanced, levels of
+//! detail within the quality's budget ([`lod`]), lamps ([`lamps`]), the
+//! colours of the region ([`look`]), turning wheels, the trailer, spray),
+//! and a **debug view** – one plain box per vehicle in its class's size
+//! and a colour from its look seed, with red brake lamps – instead of the
+//! models behind the dev switch [`TrafficDebug`] (`OCW_TRAFFIC_BOXES=1` in
+//! the environment, or the console command `traffic.boxes on`).
+
+pub mod lamps;
+pub mod lod;
+pub mod look;
+pub mod models;
 
 use std::collections::BTreeMap;
 
@@ -32,6 +39,39 @@ pub struct VehicleView {
     pub speed: f64,
     /// Braking or standing: the brake lamps are lit.
     pub braking: bool,
+    /// The indicator set: turning at the next junction or pulling out.
+    pub indicator: Indicator,
+}
+
+/// What a vehicle did to the local rider (the server's T4 events, spec
+/// 18E T7), numbered by the client.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VehicleCue {
+    /// Rising: a new cue has a higher number.
+    pub seq: u64,
+    pub vehicle: u32,
+    pub kind: VehicleCueKind,
+    /// The client time it came (s).
+    pub at_s: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VehicleCueKind {
+    /// A short honk (mostly polite, some realism, lunatics; Q8).
+    Honk,
+    /// It finished passing the rider.
+    Passed,
+    /// It closes in from behind, reaching the rider in `seconds`.
+    Approaching { seconds: f64 },
+}
+
+/// A vehicle's indicator (spec 18E T7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Indicator {
+    #[default]
+    Off,
+    Left,
+    Right,
 }
 
 impl VehicleView {
@@ -90,7 +130,8 @@ impl Default for TrafficDebug {
     }
 }
 
-/// Draws [`RideView::vehicles`] as boxes while [`TrafficDebug::boxes`].
+/// Draws [`RideView::vehicles`] as boxes while [`TrafficDebug::boxes`],
+/// else with their models ([`models::VehicleModelsPlugin`]).
 pub struct TrafficDebugPlugin;
 
 impl Plugin for TrafficDebugPlugin {
@@ -101,7 +142,7 @@ impl Plugin for TrafficDebugPlugin {
             .console_command(ConsoleCommand::new(
                 Permission::User,
                 clap::Command::new("traffic.boxes")
-                    .about("Road vehicles as debug boxes (spec 18E T5; the models come with T7)")
+                    .about("Road vehicles as debug boxes instead of their models (spec 18E T5, T7)")
                     .arg(
                         clap::Arg::new("on")
                             .value_parser(["on", "off"])
@@ -117,13 +158,26 @@ fn boxes_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Stri
         world.resource_mut::<TrafficDebug>().boxes = v == "on";
     }
     let n = world.resource::<RideView>().vehicles.len();
+    let d = world
+        .get_resource::<models::TrafficDrawStats>()
+        .cloned()
+        .unwrap_or_default();
     Ok(format!(
-        "traffic boxes: {} ({n} vehicles near the rider)",
+        "traffic boxes: {} ({n} vehicles near the rider; models drawn: {} near, {} lod1, {} boxes, {} not drawn; {} with headlights, {} braking, {} indicating, {} spot lights, {} spray plumes)",
         if world.resource::<TrafficDebug>().boxes {
             "on"
         } else {
             "off"
-        }
+        },
+        d.near,
+        d.lod1,
+        d.boxes,
+        d.culled,
+        d.head,
+        d.brake,
+        d.blinking,
+        d.spots,
+        d.spray
     ))
 }
 
@@ -269,6 +323,7 @@ mod tests {
             lane: 0,
             speed: 0.0,
             braking: false,
+            indicator: Indicator::Off,
         };
         // Facing −Z: no turn; +X (east): a quarter turn clockwise seen
         // from above (−π/2 about +Y).
@@ -306,6 +361,7 @@ mod tests {
             lane: 0,
             speed: 10.0,
             braking: true,
+            indicator: Indicator::Off,
         };
         app.world_mut().resource_mut::<RideView>().vehicles = vec![car];
         app.update();

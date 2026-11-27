@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use ocw_protocol::v1;
 use ocw_protocol::vehicles::{change_from_wire, spawn_from_wire};
-use ocw_render::traffic::VehicleView;
+use ocw_render::traffic::{Indicator, VehicleCue, VehicleCueKind, VehicleView};
 use ocw_sim::traffic::{Curves, EdgeRule, Motion, PlanFollower, Tick, lateral_offset, world};
 use ocw_world::RoadNetwork;
 
@@ -29,6 +29,25 @@ use ocw_world::RoadNetwork;
 pub const BLEND_S: f64 = 0.3;
 /// A correction larger than this is taken at once (m).
 pub const SNAP_M: f64 = 25.0;
+/// Indicators go on this far before a turn (m; or 4 s at the speed).
+pub const INDICATE_M: f64 = 40.0;
+/// A cue is in the view this long after it came (s).
+pub const CUE_KEEP_S: f64 = 3.0;
+
+/// The side of a turn from heading `h1` into `h2` (x, z unit vectors):
+/// more than 30° to either side sets the indicator.
+pub fn turn_side(h1: [f64; 2], h2: [f64; 2]) -> Indicator {
+    // The right of h1 (the lanes' convention: `[-h.z, h.x]`).
+    let right = [-h1[1], h1[0]];
+    let side = h2[0] * right[0] + h2[1] * right[1];
+    if side > 0.5 {
+        Indicator::Right
+    } else if side < -0.5 {
+        Indicator::Left
+    } else {
+        Indicator::Off
+    }
+}
 
 /// What the client has of one vehicle besides its follower.
 #[derive(Debug, Clone, Copy, Default)]
@@ -61,6 +80,8 @@ pub struct VehicleStats {
     pub snapped: u64,
     /// Updates for another graph, ignored.
     pub foreign: u64,
+    /// The vehicles' cues received (honks, passes, closing in; T7).
+    pub cues: u64,
 }
 
 struct Inner {
@@ -82,6 +103,10 @@ pub struct ClientVehicles {
     /// A route course's road as the traffic's network (the server makes
     /// the same: `ocw_sim::traffic::world::route_network`).
     route_net: Option<(String, Arc<RoadNetwork>)>,
+    /// The vehicles' cues for this rider (honks, passes, one closing in),
+    /// numbered, with the client time they came; kept [`CUE_KEEP_S`].
+    cues: Vec<VehicleCue>,
+    cue_seq: u64,
 }
 
 impl Default for ClientVehicles {
@@ -91,6 +116,8 @@ impl Default for ClientVehicles {
             inner: None,
             stats: VehicleStats::default(),
             route_net: None,
+            cues: Vec::new(),
+            cue_seq: 0,
         }
     }
 }
@@ -160,6 +187,52 @@ impl Inner {
             h,
             lateral,
         ))
+    }
+
+    /// The indicator of follower `i` (spec 18E T7): pulling out to pass
+    /// or back in (T4's shift), else a turn of more than ~30° at the end
+    /// of its step within [`INDICATE_M`] (or 4 s at its speed).
+    fn indicator(&self, i: usize) -> Indicator {
+        let f = &self.followers[i];
+        if f.ended {
+            return Indicator::Off;
+        }
+        let (towards_centre, towards_kerb) = if self.net.keep_left {
+            (Indicator::Right, Indicator::Left)
+        } else {
+            (Indicator::Left, Indicator::Right)
+        };
+        if (f.shift_to - f.shift).abs() > 0.05 {
+            return if f.shift_to > f.shift {
+                towards_centre
+            } else {
+                towards_kerb
+            };
+        }
+        let (Some(st), Some(next)) = (f.route.get(f.pos.step), f.route.get(f.pos.step + 1)) else {
+            return Indicator::Off;
+        };
+        let len = ocw_sim::traffic::kin::step_len(&self.net, st);
+        if len - f.pos.s > INDICATE_M.max(4.0 * f.v) {
+            return Indicator::Off;
+        }
+        let dir = |e: u32, forward: bool, at_end: bool| {
+            let g = self.net.geometry(e as usize);
+            let l = g.length();
+            let d = 2.0f64.min(l);
+            // Along the driving direction at the step's end or start.
+            let (a, b) = match (forward, at_end) {
+                (true, true) => (l - d, l),
+                (true, false) => (0.0, d),
+                (false, true) => (d, 0.0),
+                (false, false) => (l, l - d),
+            };
+            let (p, q) = (g.point_at(a), g.point_at(b));
+            ocw_world::network::unit([q[0] - p[0], q[2] - p[2]])
+        };
+        let h1 = dir(st.edge, st.forward, true);
+        let h2 = dir(next.edge, next.forward, false);
+        turn_side(h1, h2)
     }
 
     fn xz(&mut self, i: usize) -> Option<[f64; 2]> {
@@ -248,6 +321,25 @@ impl ClientVehicles {
         }
         if u.reset {
             self.stats.resets += 1;
+        }
+        self.cues.retain(|c| now_s - c.at_s <= CUE_KEEP_S);
+        for c in &u.cues {
+            let kind = match v1::TrafficCueKind::try_from(c.kind) {
+                Ok(v1::TrafficCueKind::Honk) => VehicleCueKind::Honk,
+                Ok(v1::TrafficCueKind::Passed) => VehicleCueKind::Passed,
+                Ok(v1::TrafficCueKind::Approaching) => VehicleCueKind::Approaching {
+                    seconds: f64::from(c.seconds),
+                },
+                _ => continue,
+            };
+            self.cue_seq += 1;
+            self.stats.cues += 1;
+            self.cues.push(VehicleCue {
+                seq: self.cue_seq,
+                vehicle: c.vehicle,
+                kind,
+                at_s: now_s,
+            });
         }
         let fresh = u.reset
             || self
@@ -358,6 +450,7 @@ impl ClientVehicles {
                 continue;
             };
             let b = inner.blends.get(&id).map_or([0.0; 2], |x| x.at(now_s));
+            let indicator = inner.indicator(i);
             out.push(VehicleView {
                 id,
                 class,
@@ -368,9 +461,20 @@ impl ClientVehicles {
                 lane,
                 speed: v,
                 braking,
+                indicator,
             });
         }
         out
+    }
+
+    /// The vehicles' cues of the last [`CUE_KEEP_S`] at client time
+    /// `now_s` (oldest first).
+    pub fn cues(&self, now_s: f64) -> Vec<VehicleCue> {
+        self.cues
+            .iter()
+            .filter(|c| now_s - c.at_s <= CUE_KEEP_S)
+            .copied()
+            .collect()
     }
 
     /// The followers' positions (x, z) at traffic tick `tick`, without
@@ -392,5 +496,59 @@ impl ClientVehicles {
     pub fn followers_tick(&self) -> Option<Tick> {
         let m = self.inner.as_ref()?.lock().ok()?;
         m.followers.iter().map(|f| f.tick).max()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turns_set_the_indicator_by_side() {
+        let north = [0.0, -1.0];
+        let east = [1.0, 0.0];
+        let west = [-1.0, 0.0];
+        // Driving north (−z) the right is +x (the lanes' convention).
+        assert_eq!(turn_side(north, east), Indicator::Right);
+        assert_eq!(turn_side(north, west), Indicator::Left);
+        assert_eq!(turn_side(north, north), Indicator::Off);
+        // A gentle bend of 20°: no indicator.
+        let a = 20f64.to_radians();
+        assert_eq!(turn_side(north, [a.sin(), -a.cos()]), Indicator::Off);
+        // 45°: yes.
+        let a = 45f64.to_radians();
+        assert_eq!(turn_side(north, [a.sin(), -a.cos()]), Indicator::Right);
+    }
+
+    #[test]
+    fn cues_are_numbered_and_kept_a_while() {
+        let mut c = ClientVehicles::default();
+        let net = Arc::new(world::route_network(&ocw_world::Route::test_loop()));
+        let u = v1::TrafficUpdate {
+            reset: true,
+            step_ms: 20,
+            graph_hash: net.fingerprint(),
+            cues: vec![
+                v1::TrafficCue {
+                    vehicle: 4,
+                    kind: v1::TrafficCueKind::Approaching as i32,
+                    seconds: 3.5,
+                },
+                v1::TrafficCue {
+                    vehicle: 4,
+                    kind: v1::TrafficCueKind::Passed as i32,
+                    seconds: 0.0,
+                },
+            ],
+            ..Default::default()
+        };
+        c.on_update(&u, Some(&net), 0.0, 10.0);
+        let cues = c.cues(10.5);
+        assert_eq!(cues.len(), 2);
+        assert!(cues[1].seq > cues[0].seq);
+        assert_eq!(cues[0].kind, VehicleCueKind::Approaching { seconds: 3.5 });
+        assert_eq!(c.stats().cues, 2);
+        // Gone after CUE_KEEP_S.
+        assert!(c.cues(10.0 + CUE_KEEP_S + 0.1).is_empty());
     }
 }

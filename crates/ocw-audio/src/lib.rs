@@ -12,6 +12,8 @@
 //!   voices and the group layer, and their synthesis;
 //! - [`weather`]: rain, hail, drizzle, gusts, wet tyres and thunder (spec
 //!   §14 Phase 9, S4);
+//! - [`vehicles`]: the road vehicles – tyres and engines by class and
+//!   speed with Doppler, the eight nearest heard (spec 14 Phase 18, T7);
 //! - [`aircraft`]: the simulated aircraft – jets, propellers, rotors, a
 //!   glider's whistle, a balloon's burner (spec 14 Phase 18, T8);
 //! - [`cues`]: one-shot sounds (UI, countdown, finish, workout steps, gear
@@ -43,4 +45,5 @@ pub mod ride;
 pub mod schedule;
 pub mod spatial;
 pub mod unlock;
+pub mod vehicles;
 pub mod weather;

@@ -23,7 +23,9 @@ use ocw_audio::weather::{self, ThunderSound, WeatherParams};
 use ocw_core::RiderId;
 use ocw_render::RideView;
 use ocw_render::menu::MenuView;
+use ocw_render::traffic::VehicleCueKind;
 use ocw_render::tunnel::Tunnels;
+use ocw_sim::traffic::VehicleClass;
 use web_time::Instant;
 
 use crate::client::ClientCore;
@@ -63,6 +65,8 @@ struct CueWatch {
     contacts: ContactWatch,
     /// The last road bump played (its `seq`, spec Phase 8 Q12).
     road_bump: u64,
+    /// The last vehicle cue played (its `seq`, spec 18E T7).
+    vehicle_cue: u64,
     /// A buckled wheel's rub phase (spec §14 Phase 12E).
     rub: f64,
 }
@@ -78,6 +82,9 @@ pub struct AudioFeed {
     watch: CueWatch,
     /// Aircraft were heard in the last message (spec 14 Phase 18, T8).
     aircraft_heard: bool,
+    /// Road vehicles were heard in the last message, and which (T7).
+    vehicles_heard: bool,
+    vehicles_playing: Vec<u32>,
 }
 
 /// The mix from the settings (`audio.master` … `audio.mute`) and the
@@ -162,6 +169,7 @@ impl AudioFeed {
         }
         self.weather(f, &mut out);
         self.aircraft(f.view, &mut out);
+        self.vehicles(f.view, &mut out);
         let now = Instant::now();
         out.extend(self.cues(f).into_iter().map(|(c, at)| match at {
             Some(p) => MixerMsg::SpatialCue(c, p, now),
@@ -257,6 +265,46 @@ impl AudioFeed {
         }
         self.aircraft_heard = !sounds.is_empty();
         out.push(MixerMsg::Aircraft(sounds));
+    }
+
+    /// The road vehicles heard (spec 14 Phase 18, T7): the eight loudest
+    /// near the own rider's head, with `traffic.sound` on; quieter under
+    /// rain and wind. Sent every frame while any is heard, once empty to
+    /// fade them out.
+    fn vehicles(&mut self, view: Option<&RideView>, out: &mut Vec<MixerMsg>) {
+        use ocw_audio::vehicles::{VehicleSound, select};
+        let sounds = view
+            .filter(|v| v.vehicle_sound && !v.vehicles.is_empty())
+            .and_then(|v| {
+                let me = v.local()?;
+                let listener = others::listener(v.track(me.id), &me.state);
+                let wet = v.weather.as_ref().is_some_and(|w| w.ground.wetness() > 0.3);
+                let mask = vehicle_mask(v);
+                Some(select(
+                    v.vehicles
+                        .iter()
+                        .filter_map(|c| {
+                            VehicleSound::placed(
+                                c.id,
+                                vehicle_kind(c.class),
+                                &listener,
+                                [c.pos[0], c.pos[1] + 0.6, c.pos[2]],
+                                [c.heading[0] * c.speed, 0.0, c.heading[1] * c.speed],
+                                wet,
+                                mask,
+                            )
+                        })
+                        .collect(),
+                    &self.vehicles_playing,
+                ))
+            })
+            .unwrap_or_default();
+        if sounds.is_empty() && !self.vehicles_heard {
+            return;
+        }
+        self.vehicles_heard = !sounds.is_empty();
+        self.vehicles_playing = sounds.iter().map(|s| s.id).collect();
+        out.push(MixerMsg::Vehicles(sounds));
     }
 
     /// The weather's sounds (spec §14 Phase 9, S4): rain, hail, drizzle,
@@ -370,6 +418,33 @@ impl AudioFeed {
                 cues.push(Cue::Hoof);
             }
         }
+        // What the vehicles did (spec 18E T7): a honk and the whoosh of a
+        // pass where the vehicle is, the soft cue of one closing in from
+        // behind; once each, with `traffic.sound` on.
+        if let Some(r) = f.view {
+            for c in &r.vehicle_cues {
+                if c.seq <= watch.vehicle_cue {
+                    continue;
+                }
+                watch.vehicle_cue = c.seq;
+                if !r.vehicle_sound {
+                    continue;
+                }
+                let v = r.vehicles.iter().find(|v| v.id == c.vehicle);
+                let heavy =
+                    v.is_some_and(|v| matches!(v.class, VehicleClass::Lorry | VehicleClass::Bus));
+                let cue = match c.kind {
+                    VehicleCueKind::Honk if heavy => Cue::AirHorn,
+                    VehicleCueKind::Honk => Cue::Horn,
+                    VehicleCueKind::Passed => Cue::PassWhoosh,
+                    VehicleCueKind::Approaching { .. } => {
+                        placed.push((Cue::VehicleBehind, None));
+                        continue;
+                    }
+                };
+                placed.push((cue, v.and_then(|v| vehicle_place(r, v))));
+            }
+        }
         // Over road damage (spec Phase 8 Q12): the own wheel's thump or
         // tick, once per bump.
         if let Some(seen) = f.client.and_then(|c| c.road_bumps().last())
@@ -402,6 +477,45 @@ fn contact_place(view: &RideView, id: RiderId) -> Option<Placement> {
     let listener = others::listener(view.track(me.id), &me.state);
     let (pos, velocity) = others::on_track(view.track(id), &other.state, CONTACT_HEIGHT_M);
     Some(spatial::place(&listener, pos, velocity))
+}
+
+/// The sound class of a road vehicle.
+pub fn vehicle_kind(c: VehicleClass) -> ocw_audio::vehicles::Kind {
+    use ocw_audio::vehicles::Kind;
+    match c {
+        VehicleClass::Car => Kind::Car,
+        VehicleClass::Van => Kind::Van,
+        VehicleClass::Lorry => Kind::Lorry,
+        VehicleClass::Bus => Kind::Bus,
+        VehicleClass::Motorbike => Kind::Motorbike,
+        VehicleClass::Tractor => Kind::Tractor,
+    }
+}
+
+/// How much of the vehicles is heard under the weather (spec 18A:
+/// everything quieter under wind and rain): 1 on a calm dry day, down to
+/// 0.45 in a downpour with a gale.
+pub fn vehicle_mask(view: &RideView) -> f64 {
+    view.weather.as_ref().map_or(1.0, |w| {
+        let rain = if w.state.precipitating() {
+            (f64::from(w.state.precip_mm_h) / 8.0).min(1.0)
+        } else {
+            0.0
+        };
+        let wind = (f64::from(w.wind_mps) / 15.0).min(1.0);
+        (1.0 - 0.35 * rain - 0.2 * wind).clamp(0.45, 1.0)
+    })
+}
+
+/// Where a vehicle's horn or whoosh is heard by the own rider.
+fn vehicle_place(view: &RideView, v: &ocw_render::traffic::VehicleView) -> Option<Placement> {
+    let me = view.local()?;
+    let listener = others::listener(view.track(me.id), &me.state);
+    Some(spatial::place(
+        &listener,
+        [v.pos[0], v.pos[1] + 0.8, v.pos[2]],
+        [v.heading[0] * v.speed, 0.0, v.heading[1] * v.speed],
+    ))
 }
 
 /// Height of a contact's sound above the road (m): the bikes' wheels and

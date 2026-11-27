@@ -36,6 +36,9 @@ pub const JUNCTION_LOOKAHEAD_S: f64 = 10.0;
 pub const GHOST_LATERAL_M: f64 = 1.0;
 /// Dead-end warnings start this far before the end (spec §2.2.2).
 pub const DEAD_END_WARNING_M: f64 = 1000.0;
+/// The arrow for a vehicle closing in from behind shows at most this long
+/// after its cue (s; the cue comes 4 s before it reaches the rider).
+pub const VEHICLE_BEHIND_S: f64 = 4.0;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NetStats {
@@ -2196,6 +2199,18 @@ impl ClientCore {
         self.vehicles.view(self.server_tick_now(now_s), now_s)
     }
 
+    /// What the vehicles did to the rider lately (spec 18E T7): honks only
+    /// where the session's drivers honk (mostly polite, some realism,
+    /// lunatics; Q8).
+    pub fn vehicle_cues(&self, now_s: f64) -> Vec<ocw_render::traffic::VehicleCue> {
+        let honks = self.traffic.road().honks();
+        self.vehicles
+            .cues(now_s)
+            .into_iter()
+            .filter(|c| honks || c.kind != ocw_render::traffic::VehicleCueKind::Honk)
+            .collect()
+    }
+
     /// The session's traffic as the server sent it (spec 14 Phase 18).
     pub fn traffic(&self) -> &crate::traffic::TrafficClient {
         &self.traffic
@@ -2343,6 +2358,27 @@ impl ClientCore {
             return None;
         }
         crate::aids::proximity_direction(&self.others_near()).map(|a| a as f32)
+    }
+
+    /// The proximity cue's arrow for a vehicle closing in from behind
+    /// (spec 18B, 18E T7; with the proximity cue on, collisions on or
+    /// off): pointing back while it is under [`VEHICLE_BEHIND_S`] away.
+    pub fn vehicle_behind_arrow(&self, now_s: f64) -> Option<f32> {
+        if !self.proximity_cue || self.own_down() || !self.aids_allowed() {
+            return None;
+        }
+        self.vehicles
+            .cues(now_s)
+            .iter()
+            .rev()
+            .find_map(|c| match c.kind {
+                ocw_render::traffic::VehicleCueKind::Approaching { seconds }
+                    if now_s - c.at_s <= seconds.min(VEHICLE_BEHIND_S) =>
+                {
+                    Some(std::f32::consts::PI)
+                }
+                _ => None,
+            })
     }
 
     /// The "last moment" warning setting (`ride.hit_warning`, on by

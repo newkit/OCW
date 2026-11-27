@@ -244,6 +244,11 @@ mod tests {
             step_ms: 20,
             graph_hash: 0x1234_5678_9ABC_DEF0,
             server_tick: 77,
+            cues: vec![v1::TrafficCue {
+                vehicle: 42,
+                kind: v1::TrafficCueKind::Honk as i32,
+                seconds: 0.0,
+            }],
         };
         let bytes = encode(&server_message(v1::server_message::Msg::Traffic(u)));
         let Ok(v1::server_message::Msg::Traffic(back)) = decode_server(&bytes) else {

@@ -62,13 +62,23 @@ pub enum Cue {
     /// Over an open crack or into an alligator area (Phase 8 Q12): a dull
     /// tick of the tyre and a faint rattle.
     Crack,
+    /// A car's short honk (spec 18E T7; mostly polite, some realism,
+    /// lunatics): two slightly detuned reeds.
+    Horn,
+    /// A lorry's or bus's air horn: lower and longer.
+    AirHorn,
+    /// A vehicle passing close: the air pushed aside, rising and falling.
+    PassWhoosh,
+    /// A vehicle closing in from behind (the proximity cue of 18B): a soft,
+    /// low two-note tick, quieter than the riders' bell.
+    VehicleBehind,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 26] = [
+    pub const NAMES: [(&'static str, Cue); 30] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -90,6 +100,10 @@ impl Cue {
         ("pothole", Cue::Pothole),
         ("dip", Cue::Dip),
         ("crack", Cue::Crack),
+        ("horn", Cue::Horn),
+        ("air-horn", Cue::AirHorn),
+        ("whoosh", Cue::PassWhoosh),
+        ("vehicle-behind", Cue::VehicleBehind),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -133,6 +147,10 @@ impl Cue {
             Cue::Dip => 0.16,
             Cue::Crack => 0.09,
             Cue::Shutter => 0.45,
+            Cue::Horn => 0.32,
+            Cue::AirHorn => 0.7,
+            Cue::PassWhoosh => 1.1,
+            Cue::VehicleBehind => 0.36,
             Cue::Test(_) => 0.8,
         }
     }
@@ -178,6 +196,7 @@ impl CueVoice {
                 Cue::Dip => Svf::new(420.0, 0.9, sample_rate),
                 Cue::Crack => Svf::new(900.0, 1.2, sample_rate),
                 Cue::Crash => Svf::new(3200.0, 1.5, sample_rate),
+                Cue::PassWhoosh => Svf::new(900.0, 0.8, sample_rate),
                 _ => Svf::new(2600.0, 2.0, sample_rate),
             },
         }
@@ -289,6 +308,36 @@ impl CueVoice {
                 band * 1.1 * (click(0.0) + click(0.16)) + tone(t, 0.0, 0.04, 1800.0, 0.06)
             }
             Cue::Proximity => bell(t, 0.0, 0.5, 1318.5, 0.12),
+            // Two reeds a little apart (a car horn's major third, ~420 and
+            // ~510 Hz, rich in harmonics), on and off sharply.
+            Cue::Horn => {
+                let env = (t / 0.01).min(1.0) * ((0.32 - t) / 0.02).clamp(0.0, 1.0);
+                let reed = |f: f32| {
+                    let x = (f * t).fract();
+                    // A clipped saw: bright and brassy.
+                    ((2.0 * x - 1.0) * 1.6).clamp(-1.0, 1.0)
+                };
+                0.09 * env * (reed(420.0) + reed(512.0))
+            }
+            // An air horn: a low chord with a slow onset.
+            Cue::AirHorn => {
+                let env = (t / 0.06).min(1.0) * ((0.7 - t) / 0.08).clamp(0.0, 1.0);
+                let reed = |f: f32| {
+                    let x = (f * t).fract();
+                    ((2.0 * x - 1.0) * 1.3).clamp(-1.0, 1.0)
+                };
+                0.08 * env * (reed(185.0) + reed(233.0) + 0.6 * reed(277.0))
+            }
+            // Noise swelling as the vehicle comes level and fading as it
+            // goes, its band falling (the air's Doppler).
+            Cue::PassWhoosh => {
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                let x = t / 1.1;
+                let env = (x * std::f32::consts::PI).sin().powi(2) * (1.0 - x).powf(0.5);
+                band * 0.55 * env
+            }
+            Cue::VehicleBehind => tone(t, 0.0, 0.16, 392.0, 0.07) + tone(t, 0.16, 0.2, 330.0, 0.07),
             // The tyre hits the hole's far edge: a low hollow thump (two
             // knocks: front and rear wheel), then the bike rattling.
             Cue::Pothole => {
