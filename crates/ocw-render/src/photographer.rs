@@ -11,6 +11,9 @@
 //! 2560 × 1440, with the world camera's fog, exposure and atmosphere,
 //! without the HUD, name tags or the corner stamp (UI is only drawn on
 //! the window's camera), the captured image into [`PhotoCaptures`].
+//! The camera stops drawing once its frame is read back; on WebGL 2 the
+//! target is RGBA, the canvas's format; `photofix=…` changes the capture
+//! for tests on a phone ([`capture_plan`]; spec 14 Phase 10, 10G).
 //!
 //! The person's camera lens is exactly at the pose's eye and everything
 //! of the figure is behind it (behind the photo camera's near plane), so
@@ -61,6 +64,62 @@ impl PhotoSize {
         width: PHOTO_W / 2,
         height: PHOTO_H / 2,
     };
+    /// `photofix=small` (spec 14 Phase 10, 10G): 640 × 360, a sixteenth
+    /// of the pixels (~1 MB a target).
+    pub const SMALL: Self = Self {
+        width: PHOTO_W / 4,
+        height: PHOTO_H / 4,
+    };
+}
+
+/// The frame of its camera a photo is captured on: the first frames warm
+/// up its exposure and shadows.
+pub const CAPTURE_FRAME: u32 = 4;
+/// The photo camera's life (frames); it stops drawing once its frame is
+/// captured.
+pub const CAMERA_FRAMES: u32 = 30;
+
+/// How a photo is taken (spec 2.11; 14 Phase 10, 10G).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapturePlan {
+    pub size: PhotoSize,
+    /// The target's format: on WebGL 2 RGBA, the canvas's format (BGRA is
+    /// not a native WebGL 2 format, and a target of another format than
+    /// the window's needs its own blit pipeline); else BGRA as the
+    /// desktop's swap chain.
+    pub format: TextureFormat,
+    /// Captured on this frame of the photo camera.
+    pub frame: u32,
+    /// No photo camera: the window's own picture (`photofix=screen`).
+    pub screen: bool,
+}
+
+/// The capture for `size` under the `photofix=` switches, on WebGL 2 or not.
+pub fn capture_plan(size: PhotoSize, fix: crate::switches::PhotoFix, on_gl: bool) -> CapturePlan {
+    CapturePlan {
+        size: if fix.small { PhotoSize::SMALL } else { size },
+        format: if on_gl && !fix.bgra {
+            TextureFormat::Rgba8UnormSrgb
+        } else {
+            TextureFormat::Bgra8UnormSrgb
+        },
+        frame: if fix.once { 1 } else { CAPTURE_FRAME },
+        screen: fix.screen,
+    }
+}
+
+impl CapturePlan {
+    /// For the log: "1280 × 720 Rgba8UnormSrgb, a second camera, captured
+    /// on its frame 4".
+    pub fn describe(&self) -> String {
+        if self.screen {
+            return "the window's picture (photofix=screen: no second camera)".into();
+        }
+        format!(
+            "{} × {} {:?}, a second camera, captured on its frame {}",
+            self.size.width, self.size.height, self.format, self.frame
+        )
+    }
 }
 /// The flash's light at full brightness (lm) and reach (m).
 pub const FLASH_LM: f32 = 4.0e6;
@@ -853,25 +912,56 @@ struct PhotoCamera {
 }
 
 /// Starts the requested photos, captures them a few frames later (the
-/// camera's first frames warm up its exposure and shadows), cleans up.
+/// camera's first frames warm up its exposure and shadows; the camera
+/// stops drawing once its frame is captured), cleans up. Each step is
+/// logged: the page log of a phone shows how far a photo got (spec 14
+/// Phase 10, 10G: the first photo closed the page on an iPhone).
 fn take_photos(world: &mut World) {
     let requests = std::mem::take(&mut world.resource_mut::<PhotoRequests>().0);
     let size = world
         .get_resource::<PhotoSize>()
         .copied()
         .unwrap_or_default();
+    let fix = world
+        .get_resource::<crate::switches::RenderSwitches>()
+        .map(|s| s.photo_fix)
+        .unwrap_or_default();
+    let on_gl = world
+        .get_resource::<crate::webgl::OnWebGl>()
+        .is_some_and(|g| g.0);
+    let plan = capture_plan(size, fix, on_gl);
     if !requests.is_empty() && world.get_resource::<Assets<Image>>().is_some() {
         let follow = world
             .query_filtered::<Entity, With<FollowCamera>>()
             .iter(world)
             .next();
         for r in requests {
+            info!("ride photo {}: {}", r.id, plan.describe());
+            if plan.screen {
+                let id = r.id;
+                world
+                    .spawn((
+                        Screenshot::primary_window(),
+                        crate::photo_preview::PhotoShot,
+                    ))
+                    .observe(
+                        move |ev: On<ScreenshotCaptured>, mut out: ResMut<PhotoCaptures>| {
+                            info!(
+                                "ride photo {id}: captured {} × {}",
+                                ev.image.width(),
+                                ev.image.height()
+                            );
+                            out.0.push((id, ev.image.clone()));
+                        },
+                    );
+                continue;
+            }
             let image = world
                 .resource_mut::<Assets<Image>>()
                 .add(Image::new_target_texture(
-                    size.width,
-                    size.height,
-                    TextureFormat::Bgra8UnormSrgb,
+                    plan.size.width,
+                    plan.size.height,
+                    plan.format,
                     None,
                 ));
             let eye = v3(r.eye);
@@ -905,6 +995,7 @@ fn take_photos(world: &mut World) {
                 let exposure = world.get::<bevy::camera::Exposure>(f).cloned();
                 let atmosphere = world.get::<AtmosphereSettings>(f).cloned();
                 let msaa = world.get::<Msaa>(f).cloned();
+                let filter = world.get::<bevy::light::ShadowFilteringMethod>(f).copied();
                 let mut e = world.entity_mut(cam);
                 if let Some(c) = fog {
                     e.insert(c);
@@ -918,6 +1009,10 @@ fn take_photos(world: &mut World) {
                 if let Some(c) = msaa {
                     e.insert(c);
                 }
+                // The same filter as the window's: the same pipelines.
+                if let Some(c) = filter {
+                    e.insert(c);
+                }
             }
         }
     }
@@ -927,9 +1022,22 @@ fn take_photos(world: &mut World) {
         .map(|(e, p)| (e, p.frames, p.asked, p.image.clone(), p.id))
         .collect();
     for (e, frames, asked, image, id) in cams {
-        if frames >= 4 && !asked {
+        // Captured last frame: nothing more to draw.
+        if asked
+            && let Some(mut cam) = world.get_mut::<Camera>(e)
+            && cam.is_active
+        {
+            cam.is_active = false;
+        }
+        if frames >= plan.frame && !asked {
+            info!("ride photo {id}: reading back frame {frames}");
             world.spawn(Screenshot::image(image)).observe(
                 move |ev: On<ScreenshotCaptured>, mut out: ResMut<PhotoCaptures>| {
+                    info!(
+                        "ride photo {id}: captured {} × {}",
+                        ev.image.width(),
+                        ev.image.height()
+                    );
                     out.0.push((id, ev.image.clone()));
                 },
             );
@@ -937,7 +1045,7 @@ fn take_photos(world: &mut World) {
                 p.asked = true;
             }
         }
-        if frames >= 30 {
+        if frames >= CAMERA_FRAMES {
             world.entity_mut(e).despawn();
         } else if let Some(mut p) = world.get_mut::<PhotoCamera>(e) {
             p.frames += 1;
@@ -966,6 +1074,139 @@ mod tests {
         for h in HELMETS {
             assert!(model.node(h).is_some(), "{h} is a node of the rider model");
         }
+    }
+
+    /// The capture under the `photofix=` switches (spec 10G): WebGL 2
+    /// renders in RGBA (the canvas's format) unless `bgra`; `small` is
+    /// 640 × 360, `once` captures on the second frame, `screen` uses no
+    /// camera.
+    #[test]
+    fn the_capture_plan_follows_the_switches() {
+        use crate::switches::PhotoFix;
+        let phone = PhotoSize::PHONE;
+        let p = capture_plan(phone, PhotoFix::default(), false);
+        assert_eq!(p.size, phone);
+        assert_eq!(p.format, TextureFormat::Bgra8UnormSrgb, "desktop as before");
+        assert_eq!(p.frame, CAPTURE_FRAME);
+        assert!(!p.screen);
+        let gl = capture_plan(phone, PhotoFix::default(), true);
+        assert_eq!(gl.format, TextureFormat::Rgba8UnormSrgb);
+        assert!(
+            gl.describe()
+                .contains("1280 × 720 Rgba8UnormSrgb, a second camera")
+        );
+        let f = |s: &str| capture_plan(phone, PhotoFix::parse(s).unwrap(), true);
+        assert_eq!(f("bgra").format, TextureFormat::Bgra8UnormSrgb);
+        assert_eq!(f("small").size, PhotoSize::SMALL);
+        assert_eq!(
+            (PhotoSize::SMALL.width, PhotoSize::SMALL.height),
+            (640, 360)
+        );
+        assert_eq!(f("once").frame, 1);
+        assert!(f("screen").screen && f("screen").describe().contains("no second camera"));
+    }
+
+    fn photo_app(fix: &str, gl: bool) -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(Assets::<Image>::default())
+            .insert_resource(crate::webgl::OnWebGl(gl))
+            .insert_resource(PhotoSize::PHONE)
+            .insert_resource(crate::switches::RenderSwitches {
+                photo_fix: crate::switches::PhotoFix::parse(fix).unwrap(),
+                ..default()
+            })
+            .init_resource::<PhotoRequests>()
+            .init_resource::<PhotoCaptures>()
+            .add_systems(Update, take_photos);
+        app.world_mut()
+            .resource_mut::<PhotoRequests>()
+            .0
+            .push(PhotoRequest {
+                id: 1,
+                eye: [0.0, 2.0, 0.0],
+                look: [0.0, 0.0, -1.0],
+            });
+        app
+    }
+
+    fn photo_cams(app: &mut App) -> Vec<(bool, u32)> {
+        app.world_mut()
+            .query::<(&Camera, &PhotoCamera)>()
+            .iter(app.world())
+            .map(|(c, p)| (c.is_active, p.frames))
+            .collect()
+    }
+
+    fn screenshots(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&Screenshot>()
+            .iter(app.world())
+            .count()
+    }
+
+    /// One photo: a camera into a target of the plan's size and format,
+    /// read back on its frame, then it stops drawing (before v6.86 it drew
+    /// 30 frames), gone after [`CAMERA_FRAMES`].
+    #[test]
+    fn a_photo_camera_draws_until_its_frame_is_read_back() {
+        for (fix, gl, frame, w, format) in [
+            ("", true, CAPTURE_FRAME, 1280, TextureFormat::Rgba8UnormSrgb),
+            (
+                "",
+                false,
+                CAPTURE_FRAME,
+                1280,
+                TextureFormat::Bgra8UnormSrgb,
+            ),
+            ("small,once", true, 1, 640, TextureFormat::Rgba8UnormSrgb),
+        ] {
+            let mut app = photo_app(fix, gl);
+            app.update();
+            let handle = app
+                .world_mut()
+                .query::<&PhotoCamera>()
+                .single(app.world())
+                .unwrap()
+                .image
+                .clone();
+            let images = app.world().resource::<Assets<Image>>();
+            let image = images.get(&handle).unwrap();
+            assert_eq!(image.width(), w, "{fix}");
+            assert_eq!(image.texture_descriptor.format, format, "{fix}");
+            for _ in 0..frame {
+                assert_eq!(screenshots(&mut app), 0, "{fix}");
+                app.update();
+            }
+            assert_eq!(
+                screenshots(&mut app),
+                1,
+                "{fix}: read back on frame {frame}"
+            );
+            assert!(photo_cams(&mut app)[0].0, "drawn in the frame read back");
+            app.update();
+            assert!(!photo_cams(&mut app)[0].0, "{fix}: no more frames drawn");
+            for _ in 0..CAMERA_FRAMES {
+                app.update();
+            }
+            assert!(photo_cams(&mut app).is_empty(), "{fix}: cleaned up");
+        }
+    }
+
+    /// `photofix=screen`: no second camera, the window's picture.
+    #[test]
+    fn photofix_screen_takes_the_window_picture() {
+        let mut app = photo_app("screen", true);
+        app.update();
+        assert!(photo_cams(&mut app).is_empty());
+        let shots: Vec<bool> = app
+            .world_mut()
+            .query::<(&Screenshot, Has<crate::photo_preview::PhotoShot>)>()
+            .iter(app.world())
+            .map(|(_, p)| p)
+            .collect();
+        assert_eq!(shots, [true]);
+        assert!(app.world().resource::<Assets<Image>>().is_empty());
     }
 
     #[test]

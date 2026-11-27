@@ -17,12 +17,16 @@
 //!   target).
 //! - Browsers without Web Bluetooth (Firefox, Safari, iOS; spec §14
 //!   Phase 10 Q1) ride with virtual power and say so.
+//! - ANT+ sensors (spec 14 Phase 17 A5) come through the page's stick over
+//!   WebUSB (`crate::ant`): found by *Find ANT+ sensors*
+//!   ([`WebDevices::start_ant_scan`]), connected by id, then devices like
+//!   the Bluetooth ones (an ANT+ power meter replaces the virtual trainer).
 //! - A device is remembered (this origin's `localStorage`) once it
 //!   connected, as the desktop writes `devices.toml` then (spec §3.2.1
 //!   *Devices*); [`WebDevices::menu_info`] fills the shared Devices page.
 
 use ocw_client::client::ClientCore;
-use ocw_client::menu::devices::{BridgeInfo, DevicesInfo, Entry, Link, Role, Scan};
+use ocw_client::menu::devices::{AntInfo, BridgeInfo, DevicesInfo, Entry, Link, Role, Scan};
 use ocw_client::trainer::{TrainerControl, TrainerMode};
 use ocw_client::workout::WorkoutSession;
 use ocw_core::RiderProfile;
@@ -30,7 +34,14 @@ use ocw_devices::ble::web::{DeviceKind, Remembered, RememberedDevice};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender};
 
+use ocw_devices::ble::FoundDevice;
 use ocw_devices::{DeviceCommand, DeviceEvent, DeviceHandle};
+
+/// A search for ANT+ sensors through the page's stick.
+struct AntScan {
+    found: Mutex<Receiver<FoundDevice>>,
+    until_s: f64,
+}
 
 /// What the browser offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +129,12 @@ pub struct WebDevices {
     /// The sensor bridge as the Devices page shows it (spec 14 Phase 10,
     /// 10D.2; set by the page each frame).
     pub bridge_info: BridgeInfo,
+    /// ANT+ over WebUSB as the Devices pages show it (spec 14 Phase 17 A5;
+    /// set by the page each frame, `crate::ant::frame`).
+    pub ant_info: Option<AntInfo>,
+    /// The ANT+ sensors the last search found (newest last).
+    pub ant_found: Vec<FoundDevice>,
+    ant_scan: Option<AntScan>,
 }
 
 impl WebDevices {
@@ -139,7 +156,105 @@ impl WebDevices {
                 state: String::new(),
                 supported: true,
             },
+            ant_info: None,
+            ant_found: Vec::new(),
+            ant_scan: None,
         }
+    }
+
+    /// A line for the console and the Devices page (from the page side).
+    pub fn say_line(&mut self, line: String) {
+        Self::say(&mut self.messages, &mut self.recent, line);
+    }
+
+    /// A search for ANT+ sensors started (its finds on `found`).
+    pub fn start_ant_scan(
+        &mut self,
+        found: Receiver<FoundDevice>,
+        now_s: f64,
+        seconds: f64,
+    ) -> String {
+        self.ant_found.clear();
+        self.ant_scan = Some(AntScan {
+            found: Mutex::new(found),
+            until_s: now_s + seconds,
+        });
+        let line = format!("looking for ANT+ sensors for {seconds:.0} s ...");
+        self.recent.push_message(line.clone());
+        line
+    }
+
+    /// The search was stopped.
+    pub fn end_ant_scan(&mut self) {
+        self.ant_scan = None;
+    }
+
+    pub fn ant_scanning(&self) -> bool {
+        self.ant_scan.is_some()
+    }
+
+    /// Seconds the search still runs.
+    pub fn ant_scan_left(&self, now_s: f64) -> Option<u32> {
+        self.ant_scan
+            .as_ref()
+            .map(|s| (s.until_s - now_s).max(0.0).ceil() as u32)
+    }
+
+    /// The search's finds; its end says how many.
+    pub fn poll_ant_scan(&mut self, now_s: f64) {
+        let Some(scan) = &self.ant_scan else { return };
+        let mut ended = now_s >= scan.until_s;
+        let mut new = Vec::new();
+        {
+            let rx = scan.found.lock().expect("not poisoned");
+            loop {
+                match rx.try_recv() {
+                    Ok(d) => new.push(d),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        ended = true;
+                        break;
+                    }
+                }
+            }
+        }
+        for d in new {
+            let name = d.name.clone().unwrap_or_else(|| d.id.clone());
+            let known = self.ant_found.iter().any(|f| f.id == d.id);
+            ocw_devices::ble::merge_found(&mut self.ant_found, d);
+            if !known {
+                Self::say(
+                    &mut self.messages,
+                    &mut self.recent,
+                    format!("found {name}"),
+                );
+            }
+        }
+        if ended {
+            self.ant_scan = None;
+            let line = match self.ant_found.len() {
+                0 => "no ANT+ sensors found (worn, awake, the key right?)".to_string(),
+                n => format!("ANT+ search done: {n} found, choose one to connect it"),
+            };
+            Self::say(&mut self.messages, &mut self.recent, line);
+        }
+    }
+
+    /// An ANT+ sensor's name: as found, remembered, else from its id.
+    pub fn ant_name(&self, id: &str) -> String {
+        self.ant_found
+            .iter()
+            .find(|f| f.id == id)
+            .and_then(|f| f.name.clone())
+            .or_else(|| {
+                self.remembered
+                    .devices
+                    .iter()
+                    .find(|d| d.id == id)
+                    .map(|d| d.name.clone())
+            })
+            .or_else(|| ocw_devices::ant::AntDeviceId::parse(id).map(|d| d.name()))
+            .unwrap_or_else(|| id.to_owned())
     }
 
     /// A line for the console and the Devices page.
@@ -461,6 +576,24 @@ impl WebDevices {
                 });
             }
         }
+        // The ANT+ sensors the search found (connected by id).
+        for f in &self.ant_found {
+            if !entries.iter().any(|e| e.id == f.id) {
+                entries.push(Entry {
+                    id: f.id.clone(),
+                    name: f.name.clone().unwrap_or_else(|| f.id.clone()),
+                    role: Role::of(f.name.as_deref(), &f.profiles).unwrap_or(Role::HeartRate),
+                    rssi: f.rssi,
+                    link: Link::Idle,
+                    remembered: false,
+                    heart_rate: None,
+                    cadence: None,
+                    reading: None,
+                    calibration: None,
+                    trainer: None,
+                });
+            }
+        }
         DevicesInfo {
             scan: Scan::Chooser(match self.bluetooth {
                 Bluetooth::Missing => Some("no Web Bluetooth in this browser".into()),
@@ -472,7 +605,7 @@ impl WebDevices {
             file: Some("this browser (localStorage)".into()),
             virtual_trainer: self.uses_virtual(),
             bridge: Some(self.bridge_info.clone()),
-            ant: None,
+            ant: self.ant_info.clone(),
         }
     }
 
@@ -742,6 +875,59 @@ mod tests {
         d.add(late, DeviceKind::PowerMeter, "p".into());
         assert_eq!(late_cmds.try_recv().ok(), d.last_command);
         assert_eq!(d.json(0.0)["commands_sent"], d.commands_sent);
+    }
+
+    /// ANT+ over WebUSB (spec 14 Phase 17 A5): the search's finds are
+    /// listed, a found power meter connects by id, replaces the virtual
+    /// trainer and is remembered with its `ant:` id.
+    #[test]
+    fn ant_sensors_found_connect_and_ride_like_bluetooth_ones() {
+        use ocw_devices::ant::{AntDeviceId, AntProfile};
+        let mut d = WebDevices::new(RiderProfile::default(), 200.0);
+        let mut client = joined_client();
+        let (tx, rx) = mpsc::channel();
+        d.start_ant_scan(rx, 0.0, 10.0);
+        assert!(d.ant_scanning());
+        assert_eq!(d.ant_scan_left(3.2), Some(7));
+        let strap = AntDeviceId::new(AntProfile::HeartRate, 1234, 1);
+        let meter = AntDeviceId::new(AntProfile::BikePower, 5678, 5);
+        tx.send(strap.found(Some(-60))).unwrap();
+        tx.send(meter.found(None)).unwrap();
+        tx.send(strap.found(Some(-55))).unwrap();
+        d.poll_ant_scan(1.0);
+        assert_eq!(
+            d.take_messages(),
+            ["found ANT+ heart rate 1234", "found ANT+ power 5678"]
+        );
+        let info = d.menu_info();
+        let roles: Vec<Role> = info.entries.iter().map(|e| e.role).collect();
+        assert_eq!(roles, [Role::HeartRate, Role::Power]);
+        assert_eq!(info.entries[0].rssi, Some(-55));
+        // The search ends (the stick closed its sender).
+        drop(tx);
+        d.poll_ant_scan(2.0);
+        assert!(!d.ant_scanning());
+        assert_eq!(
+            d.take_messages(),
+            ["ANT+ search done: 2 found, choose one to connect it"]
+        );
+        // The power meter through the stick: the ride's power.
+        let id = meter.to_string();
+        let (h, ptx, _cmds) = backend(&d.ant_name(&id));
+        assert_eq!(h.name, "ANT+ power 5678");
+        d.add(h, crate::ant::kind_of(&id).unwrap(), id.clone());
+        assert!(!d.uses_virtual());
+        ptx.send(DeviceEvent::Connected {
+            kind: "power meter (ANT+)",
+        })
+        .unwrap();
+        ptx.send(power(247.0)).unwrap();
+        assert_eq!(d.poll(&mut client).len(), 1);
+        assert_eq!(client.power_w(), 247.0);
+        assert_eq!(d.remembered.kind_of(&id), Some(DeviceKind::PowerMeter));
+        // Running first, the strap found still listed once.
+        let ids: Vec<String> = d.menu_info().entries.into_iter().map(|e| e.id).collect();
+        assert_eq!(ids, [id, strap.to_string()]);
     }
 
     #[test]

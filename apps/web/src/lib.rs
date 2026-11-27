@@ -57,6 +57,7 @@
 //! resident around the rider within a memory budget.
 
 pub mod account;
+pub mod ant;
 pub mod audio;
 pub mod bisect;
 pub mod bridge;
@@ -607,6 +608,12 @@ pub fn app_with_settings(
         app.add_systems(Startup, || {
             info!("{}", ocw_render::switches::ios_shadows_line())
         });
+    }
+    // …and takes no ride photos (10G: the first photo closed the page on
+    // an iPhone); `photos=1` turns them on, `photos=0` off anywhere.
+    if let Some(off) = bisect.photos_off(device_info().ios, cfg!(feature = "webgl2")) {
+        app.insert_resource(off);
+        app.add_systems(Startup, move || info!("{}", off.line()));
     }
     let shadow_cap = shadow_map_cap(&bisect, memory);
     if let Some(n) = bisect.render.shadow_map

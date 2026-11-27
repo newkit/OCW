@@ -49,6 +49,51 @@ use ocw_world::package::WorldPackage;
 use ocw_world::photo::{Conditions, Landmark, PhotoScene};
 use ocw_world::photo_share::SharedShot;
 
+/// The own photographer is off on this platform or by the page's switch
+/// (spec 14 Phase 10, 10G): it takes no photos whatever the setting says;
+/// the other riders' photographers are still drawn. The browser app
+/// inserts it.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhotosOff {
+    /// The default on iOS / iPadOS WebKit with WebGL 2: the first photo
+    /// closed the page on an iPhone (iOS 18.7, 2026-11-27).
+    IosWebKit,
+    /// The address's `photos=0`.
+    Switch,
+}
+
+/// The reason of the iOS default.
+pub const IOS_PHOTOS_WHY: &str =
+    "iOS WebKit with WebGL 2: taking the first photo closed the page on an iPhone";
+
+impl PhotosOff {
+    /// For the log, the status and the page text.
+    pub fn long(self) -> &'static str {
+        match self {
+            Self::IosWebKit => IOS_PHOTOS_WHY,
+            Self::Switch => "photos=0",
+        }
+    }
+
+    /// For the Settings rows.
+    pub fn short(self) -> &'static str {
+        match self {
+            Self::IosWebKit => "off on iOS (WebGL 2)",
+            Self::Switch => "off (photos=0)",
+        }
+    }
+
+    /// The page log's line.
+    pub fn line(self) -> String {
+        match self {
+            Self::IosWebKit => format!(
+                "ride photos off on {IOS_PHOTOS_WHY}; photos=1 turns them on (photofix=… to test a fix)"
+            ),
+            Self::Switch => "ride photos off (photos=0)".into(),
+        }
+    }
+}
+
 /// What the app does with the photographer's output.
 #[derive(Resource, Clone, Copy)]
 pub struct PhotographerHooks {
@@ -264,7 +309,8 @@ fn run(world: &mut World) {
     };
     let enabled = world
         .get_resource::<RidePhotographer>()
-        .is_some_and(|p| p.enabled && p.allowed);
+        .is_some_and(|p| p.enabled && p.allowed)
+        && !world.contains_resource::<PhotosOff>();
     let show_others = world
         .get_resource::<RidePhotographer>()
         .is_none_or(|p| p.others);
@@ -540,7 +586,21 @@ fn receive(world: &mut World) {
                 .is_some_and(|p| p.enabled)
                 .then(|| ocw_render::photo_preview::thumbnail(&image))
                 .flatten();
-            let went = (hooks.save)(world, &t, image);
+            // `photofix=nosave` (spec 10G): no JPEG, no download.
+            let nosave = world
+                .get_resource::<ocw_render::switches::RenderSwitches>()
+                .is_some_and(|s| s.photo_fix.nosave);
+            let went = if nosave {
+                info!(
+                    "ride photo {id}: not saved (photofix=nosave), {} × {}",
+                    image.width(),
+                    image.height()
+                );
+                Some("Not saved (photofix=nosave)".to_string())
+            } else {
+                info!("ride photo {id}: saving");
+                (hooks.save)(world, &t, image)
+            };
             if let (Some(thumb), Some(went)) = (thumb, went)
                 && let Some(mut p) = world.get_resource_mut::<PhotoPreview>()
             {
@@ -560,6 +620,15 @@ fn register_commands(app: &mut App) {
         |world, m| {
             let what = m.get_one::<String>("what").map_or("status", String::as_str);
             let value = m.get_one::<String>("value").map(String::as_str);
+            let off = world.get_resource::<PhotosOff>().copied();
+            if let Some(off) = off
+                && matches!(what, "now" | "drone")
+            {
+                return Err(format!(
+                    "ride photos are off ({}); photos=1 in the address turns them on",
+                    off.long()
+                ));
+            }
             let mut r = world
                 .get_resource_mut::<RidePhotographer>()
                 .ok_or("no photographer")?;
@@ -613,9 +682,13 @@ fn register_commands(app: &mut App) {
                     pl.at_m
                 )
             });
+            let state = match off {
+                Some(o) => format!("off ({})", o.long()),
+                None if r.enabled => "on".into(),
+                None => "off".into(),
+            };
             Ok(format!(
-                "ride photographer {}: {} of {} photos in this ride, at least {:.0} min apart; {plan}; other riders' photographers {}",
-                if r.enabled { "on" } else { "off" },
+                "ride photographer {state}: {} of {} photos in this ride, at least {:.0} min apart; {plan}; other riders' photographers {}",
                 p.photos(),
                 p.limits.max_photos,
                 p.limits.gap_s / 60.0,
@@ -897,5 +970,60 @@ mod tests {
         let r = app.world().resource::<RidePhotographer>();
         assert!(r.enabled && !r.others);
         assert!(r.sent().is_some(), "the own shot shared with the others");
+    }
+
+    /// Rides up to 9000 frames (3 min): whether the own photographer
+    /// showed up, and the photos asked from the renderer meanwhile.
+    fn own_photographer(app: &mut App) -> (bool, usize) {
+        let (mut shown, mut asked) = (false, 0);
+        for _ in 0..9000 {
+            app.update();
+            asked += std::mem::take(&mut app.world_mut().resource_mut::<PhotoRequests>().0).len();
+            shown |= app.world().resource::<RideView>().photographer.is_some();
+            if shown && asked > 0 {
+                break;
+            }
+        }
+        (shown, asked)
+    }
+
+    /// Off on iOS WebKit with WebGL 2 (spec 14 Phase 10, 10G: the first
+    /// photo closed the page on an iPhone): no photo is asked for, even
+    /// with `photographer now`, the status and the error say why; the
+    /// other riders' photographers are still drawn. Without it the same
+    /// ride's photographer shows up.
+    #[test]
+    fn photos_off_takes_no_photo_and_says_why() {
+        let mut app = app();
+        app.insert_resource(PhotosOff::IosWebKit);
+        joined(&mut app);
+        let answer = run(&mut app, "photographer now");
+        assert!(
+            answer.contains("ride photos are off (iOS WebKit with WebGL 2: taking the first photo closed the page on an iPhone)")
+                && answer.contains("photos=1"),
+            "{answer}"
+        );
+        let status = run(&mut app, "photographer");
+        assert!(
+            status.starts_with("ride photographer off (iOS WebKit"),
+            "{status}"
+        );
+        assert_eq!(own_photographer(&mut app), (false, 0));
+        assert!(app.world().resource::<RidePhotographer>().sent().is_none());
+        let t = client(&app).photo_time_s(now(&app)).unwrap();
+        others_shot(&mut app, t);
+        assert_eq!(watch(&mut app).0, 1, "the others' photographers drawn");
+        assert!(PhotosOff::IosWebKit.line().starts_with(
+            "ride photos off on iOS WebKit with WebGL 2: taking the first photo closed the page on an iPhone"
+        ));
+        assert_eq!(PhotosOff::Switch.short(), "off (photos=0)");
+        // The same ride without the platform's default.
+        let mut app = self::app();
+        joined(&mut app);
+        run(&mut app, "photographer now");
+        assert!(
+            own_photographer(&mut app).0,
+            "the own photographer shows up"
+        );
     }
 }

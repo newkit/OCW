@@ -46,6 +46,9 @@ pub struct RenderSwitches {
     pub shadow_map: Option<usize>,
     /// `shadowfix=…`: changes to the shadow pass to try on a phone.
     pub shadow_fix: ShadowFix,
+    /// `photofix=…`: changes to the ride photographer's capture to try on
+    /// a phone (spec 10G: the first photo closed the page on an iPhone).
+    pub photo_fix: PhotoFix,
     /// No multisampling on any camera.
     pub no_msaa: bool,
     /// The simplest sky: no cloud dome, no night sky (stars, moon).
@@ -85,6 +88,9 @@ impl RenderSwitches {
         }
         if self.shadow_fix.any() {
             out.push(format!("shadowfix={}", self.shadow_fix.name()));
+        }
+        if self.photo_fix.any() {
+            out.push(format!("photofix={}", self.photo_fix.name()));
         }
         if let Some(n) = self.compile_budget {
             out.push(format!("{n} pipeline(s) per frame"));
@@ -189,6 +195,74 @@ impl ShadowFix {
             w.push("near");
         }
         w.join(",")
+    }
+}
+
+/// `photofix=` (comma-separated): changes to the ride photographer's
+/// capture (`crate::photographer`) that could keep a phone's page alive –
+/// tests on the phone before any becomes a default there (spec 14 Phase
+/// 10, 10G: the first ride photo closed the page on an iPhone).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PhotoFix {
+    /// `small`: the photo at 640 × 360
+    /// ([`crate::photographer::PhotoSize::SMALL`]).
+    pub small: bool,
+    /// `once`: the photo camera draws two frames (captured on its second)
+    /// instead of five.
+    pub once: bool,
+    /// `screen`: no second camera – the window's own picture at the
+    /// shutter (the rider's view, with the HUD) is the photo.
+    pub screen: bool,
+    /// `nosave`: the photo is not encoded or saved (the HUD's preview
+    /// only).
+    pub nosave: bool,
+    /// `bgra`: the photo's target in BGRA as before v6.86 (WebGL 2 now
+    /// renders it in RGBA, the canvas's format).
+    pub bgra: bool,
+}
+
+impl PhotoFix {
+    /// The words, in the order [`Self::name`] gives them.
+    const WORDS: [&'static str; 5] = ["small", "once", "screen", "nosave", "bgra"];
+
+    /// `small`, `once`, `screen`, `nosave`, `bgra` (comma-separated),
+    /// `all` (`small,once,nosave`), `none` (`None`: a word it does not
+    /// know).
+    pub fn parse(value: &str) -> Option<Self> {
+        let mut f = Self::default();
+        for w in value.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+            match w {
+                "small" => f.small = true,
+                "once" => f.once = true,
+                "screen" => f.screen = true,
+                "nosave" => f.nosave = true,
+                "bgra" => f.bgra = true,
+                "all" => {
+                    f.small = true;
+                    f.once = true;
+                    f.nosave = true;
+                }
+                "none" | "0" => f = Self::default(),
+                _ => return None,
+            }
+        }
+        Some(f)
+    }
+
+    pub fn any(&self) -> bool {
+        *self != Self::default()
+    }
+
+    /// As the address names it ("small,once").
+    pub fn name(&self) -> String {
+        let on = [self.small, self.once, self.screen, self.nosave, self.bgra];
+        Self::WORDS
+            .iter()
+            .zip(on)
+            .filter(|(_, on)| *on)
+            .map(|(w, _)| *w)
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -539,6 +613,26 @@ mod tests {
                 .contains("iPhone (iOS 18.7)")
         );
         assert_eq!(ShadowsOffWhy::default().long(), "noshadow=1");
+    }
+
+    #[test]
+    fn photofix_parses_and_names() {
+        assert_eq!(PhotoFix::parse(""), Some(PhotoFix::default()));
+        let small = PhotoFix::parse("small").unwrap();
+        assert!(small.small && !small.once && !small.screen);
+        let f = PhotoFix::parse("screen, nosave,bgra").unwrap();
+        assert!(f.screen && f.nosave && f.bgra && !f.small);
+        assert_eq!(f.name(), "screen,nosave,bgra");
+        let all = PhotoFix::parse("all").unwrap();
+        assert_eq!(all.name(), "small,once,nosave");
+        assert_eq!(PhotoFix::parse("small,none"), Some(PhotoFix::default()));
+        assert_eq!(PhotoFix::parse("tiny"), None);
+        let s = RenderSwitches {
+            photo_fix: small,
+            ..default()
+        };
+        assert_eq!(s.names(), ["photofix=small"]);
+        assert!(!PhotoFix::default().any() && small.any());
     }
 
     /// `shadowfix=hw2x2,near`: the cameras filter with one hardware

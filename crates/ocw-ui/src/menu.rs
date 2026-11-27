@@ -397,9 +397,41 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
                 .map_or(0, |i| i + 1);
             rows.insert(at, row);
         }
+        // The own ride photos off on this platform (10G: off by default
+        // on iOS WebKit with WebGL 2): Graphics → Ride photographer and
+        // its My photographer row say so.
+        if let Some(off) = world
+            .get_resource::<crate::photographer::PhotosOff>()
+            .copied()
+        {
+            photos_off_rows(&mut rows, page, off);
+        }
         rows
     };
     for_platform(rows, platform(world))
+}
+
+/// The photographer's rows while the own photos are off (`off`): the
+/// value says so and why, whatever the setting.
+fn photos_off_rows(rows: &mut [Row], page: sub::Page, off: crate::photographer::PhotosOff) {
+    for r in rows.iter_mut() {
+        let graphics = page == sub::Page::Graphics
+            && r.confirm == Some(sub::Activate::Open(sub::Page::Photographer));
+        let own = page == sub::Page::Photographer && row_setting(r) == Some("photographer.enabled");
+        if graphics {
+            let hidden = r
+                .value
+                .as_deref()
+                .is_some_and(|v| v.ends_with("others hidden"));
+            r.value = Some(if hidden {
+                format!("{}, others hidden", off.short())
+            } else {
+                off.short().into()
+            });
+        } else if own {
+            r.value = Some(off.short().into());
+        }
+    }
 }
 
 /// Graphics' Shadows row while the shadows are off (`None`: they are on,
@@ -446,6 +478,21 @@ fn page_text(world: &World, page: Page) -> Vec<String> {
         && s.no_shadow
     {
         let mut out = vec![format!("Shadows off: {}.", s.shadows_off_why.long())];
+        out.extend(
+            world
+                .get_resource::<MenuHooks>()
+                .map_or_else(Vec::new, |h| (h.text)(world, page)),
+        );
+        return out;
+    }
+    // Why the own ride photos are off (10G).
+    if page == Page::Sub(sub::Page::Photographer)
+        && let Some(off) = world.get_resource::<crate::photographer::PhotosOff>()
+    {
+        let mut out = vec![format!(
+            "Ride photos off: {}. photos=1 in the address turns them on.",
+            off.long()
+        )];
         out.extend(
             world
                 .get_resource::<MenuHooks>()
@@ -1121,6 +1168,45 @@ mod tests {
         assert!(
             text.iter()
                 .any(|t| t.contains("closed the page on an iPhone")),
+            "{text:?}"
+        );
+    }
+
+    /// With the own ride photos off (10G: iOS WebKit with WebGL 2),
+    /// Graphics → Ride photographer and My photographer say "off on iOS
+    /// (WebGL 2)" and the page's text says why; without, the settings'
+    /// values as before.
+    #[test]
+    fn the_photographer_rows_say_when_photos_are_off() {
+        use crate::photographer::PhotosOff;
+        let mut app = app(Platform::Browser);
+        let value = |app: &App, page: sub::Page, label: &str| {
+            sub_rows(app.world(), page)
+                .into_iter()
+                .find(|r| r.label == label)
+                .and_then(|r| r.value)
+        };
+        assert_eq!(
+            value(&app, sub::Page::Graphics, "Ride photographer").as_deref(),
+            Some("on")
+        );
+        app.world_mut().insert_resource(PhotosOff::IosWebKit);
+        assert_eq!(
+            value(&app, sub::Page::Graphics, "Ride photographer").as_deref(),
+            Some("off on iOS (WebGL 2)")
+        );
+        assert_eq!(
+            value(&app, sub::Page::Photographer, "My photographer").as_deref(),
+            Some("off on iOS (WebGL 2)")
+        );
+        // The others' row keeps its value.
+        assert!(value(&app, sub::Page::Photographer, "Other riders' photographers").is_some());
+        let text = page_text(app.world(), Page::Sub(sub::Page::Photographer));
+        assert!(
+            text.iter().any(
+                |t| t.contains("taking the first photo closed the page on an iPhone")
+                    && t.contains("photos=1")
+            ),
             "{text:?}"
         );
     }
