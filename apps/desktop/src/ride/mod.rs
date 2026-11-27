@@ -286,10 +286,14 @@ impl Plugin for RidePlugin {
             .init_resource::<RideCatalog>()
             .init_resource::<WorldMemo>()
             .add_systems(Startup, refresh_catalog)
-            .add_systems(
-                Update,
-                (follow_world_change, finish_switch, refresh_on_menu_open),
-            );
+            // The switch despawns the old world's scene: in `PreUpdate`
+            // (like the browser's `stream_world`), so no system of `Update`
+            // has commands for the old scene's entities pending when it
+            // runs (a ground-detail mesh was inserted into a despawned
+            // chunk once, 2026-11-27; spec 3.2.1 *World switch and
+            // streaming*).
+            .add_systems(PreUpdate, (follow_world_change, finish_switch))
+            .add_systems(Update, refresh_on_menu_open);
         register_commands(app);
         world::register_commands(app);
         join::build(app);

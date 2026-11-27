@@ -35,6 +35,7 @@ pub mod hud_fit;
 pub mod inspect_hud;
 pub mod junction;
 pub mod junction_mesh;
+pub mod late;
 pub mod lod;
 pub mod materials;
 pub mod media;
@@ -575,6 +576,9 @@ impl Plugin for OcwRenderPlugins {
 /// HUD, menu and console stay. Without the render plugins (headless tests
 /// with `MinimalPlugins`) only the despawning runs.
 pub fn rebuild_scene(world: &mut World) {
+    // A new scene: background results still queued for the old one are
+    // dropped ([`late`]).
+    world.get_resource_or_init::<late::SceneGeneration>().0 += 1;
     let old: Vec<Entity> = world
         .query_filtered::<Entity, With<world::SceneEntity>>()
         .iter(world)
