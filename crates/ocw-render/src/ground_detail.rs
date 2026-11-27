@@ -57,6 +57,7 @@ use ocw_world::{RoadSurface, TileKey, WorldPackage};
 
 use crate::camera::SolidFootprints;
 use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
+use crate::late::LateCommands;
 use crate::package::{Keep, MeshArrays, TileGround};
 
 /// Chunks per tile side (25 m chunks for 1 km tiles).
@@ -1743,6 +1744,13 @@ pub struct GroundPatches;
 #[derive(Component)]
 pub struct GroundBuild(Task<(MeshArrays, MeshArrays, usize)>, BuildKey);
 
+impl GroundBuild {
+    /// Whether its task is done (and the result waits for this system).
+    pub fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
 /// What [`lazy_ground`] does with a chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroundStep {
@@ -1914,42 +1922,32 @@ pub fn lazy_ground(
             .fold(f32::INFINITY, f32::min);
         if let Some(mut task) = task {
             if d > draw_m + DROP_MARGIN_M || task.1 != want {
-                commands.entity(e).remove::<GroundBuild>();
+                commands.entity(e).try_remove::<GroundBuild>();
             } else if let Some((solid, patches, n)) = check_ready(&mut task.0) {
+                // The meshes go on the chunk when the commands are applied –
+                // unless a world switch despawned it in between: then the
+                // result is dropped (`late`; it panicked once, 2026-11-27).
                 let key = task.1;
-                let mut ec = commands.entity(e);
-                ec.remove::<GroundBuild>();
-                if solid.indices.is_empty() {
-                    ec.remove::<(
-                        Mesh3d,
-                        MeshMaterial3d<crate::see_through::SeeThroughMaterial>,
-                    )>();
-                } else {
-                    ec.insert((
+                let solid = (!solid.indices.is_empty()).then(|| {
+                    (
                         Mesh3d(meshes.add(solid.mesh())),
                         MeshMaterial3d(materials.solid.clone()),
-                    ));
-                }
-                if let Some(old) = lazy.patches.take() {
-                    commands.entity(old).despawn();
-                }
-                if !patches.indices.is_empty() {
-                    let child = commands
-                        .spawn((
-                            Mesh3d(meshes.add(patches.mesh())),
-                            MeshMaterial3d(materials.patches.clone()),
-                            Transform::IDENTITY,
-                            Visibility::default(),
-                            NotShadowCaster,
-                            range.clone(),
-                            GroundPatches,
-                            ChildOf(e),
-                        ))
-                        .id();
-                    lazy.patches = Some(child);
-                }
-                lazy.built = Some(key);
-                lazy.bits = n;
+                    )
+                });
+                let patches = (!patches.indices.is_empty()).then(|| {
+                    (
+                        Mesh3d(meshes.add(patches.mesh())),
+                        MeshMaterial3d(materials.patches.clone()),
+                        Transform::IDENTITY,
+                        Visibility::default(),
+                        NotShadowCaster,
+                        range.clone(),
+                        GroundPatches,
+                    )
+                });
+                commands.entity(e).late("ground detail", move |ew| {
+                    put_ground(ew, key, n, solid, patches)
+                });
             } else {
                 busy += 1;
             }
@@ -1959,12 +1957,12 @@ pub fn lazy_ground(
         match ground_step(d, draw_m, built, lazy.built == Some(want)) {
             GroundStep::Build => todo.push((d, e)),
             GroundStep::Drop => {
-                commands.entity(e).remove::<(
+                commands.entity(e).try_remove::<(
                     Mesh3d,
                     MeshMaterial3d<crate::see_through::SeeThroughMaterial>,
                 )>();
                 if let Some(old) = lazy.patches.take() {
-                    commands.entity(old).despawn();
+                    commands.entity(old).try_despawn();
                 }
                 lazy.built = None;
                 lazy.bits = 0;
@@ -1984,7 +1982,9 @@ pub fn lazy_ground(
             let p = Params { density, snow };
             let task =
                 AsyncComputeTaskPool::get().spawn(async move { src.build(&pkg, &chunk, &p) });
-            commands.entity(e).insert(GroundBuild(task, want));
+            commands
+                .entity(e)
+                .late_insert("ground detail", GroundBuild(task, want));
         }
     }
 }
@@ -2026,6 +2026,56 @@ pub struct GroundDetailCommandPlugin;
 impl Plugin for GroundDetailCommandPlugin {
     fn build(&self, app: &mut App) {
         register_command(app);
+    }
+}
+
+/// The solid mesh of a ground-detail chunk and its blended patches' child.
+type SolidPart = (
+    Mesh3d,
+    MeshMaterial3d<crate::see_through::SeeThroughMaterial>,
+);
+type PatchPart = (
+    Mesh3d,
+    MeshMaterial3d<StandardMaterial>,
+    Transform,
+    Visibility,
+    NotShadowCaster,
+    VisibilityRange,
+    GroundPatches,
+);
+
+/// Puts a finished build on its chunk (run only while the chunk is there,
+/// [`crate::late::LateCommands::late`]).
+fn put_ground(
+    mut ew: EntityWorldMut,
+    key: BuildKey,
+    bits: usize,
+    solid: Option<SolidPart>,
+    patches: Option<PatchPart>,
+) {
+    let e = ew.id();
+    ew.remove::<GroundBuild>();
+    match solid {
+        Some(s) => {
+            ew.insert(s);
+        }
+        None => {
+            ew.remove::<SolidPart>();
+        }
+    }
+    let child = ew.world_scope(|w| patches.map(|p| w.spawn((p, ChildOf(e))).id()));
+    let Some(mut lazy) = ew.get_mut::<LazyGround>() else {
+        return;
+    };
+    let old = std::mem::replace(&mut lazy.patches, child);
+    lazy.built = Some(key);
+    lazy.bits = bits;
+    if let Some(old) = old {
+        ew.world_scope(|w| {
+            if let Ok(o) = w.get_entity_mut(old) {
+                o.despawn();
+            }
+        });
     }
 }
 

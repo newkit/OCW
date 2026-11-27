@@ -355,6 +355,10 @@ pub struct OrthoStreamer {
     images: HashMap<TileId, (Handle<Image>, f32)>,
     building: HashMap<TileId, Task<Option<(Image, f32)>>>,
     generation: u64,
+    /// The scene they were built for ([`crate::late::SceneGeneration`]): a
+    /// new world set counts its generations from 0 again, and its tile ids
+    /// may be the old world's, so a world switch drops them too.
+    scene: u64,
 }
 
 impl OrthoStreamer {
@@ -418,10 +422,22 @@ fn stream_ortho(
     library: Option<Res<MaterialLibrary>>,
     mut images: ResMut<Assets<Image>>,
     mut terrain: ResMut<Assets<TerrainMaterial>>,
+    scene: Option<Res<crate::late::SceneGeneration>>,
 ) {
     let set = &world.set;
-    if streamer.generation != set.generation() {
+    let scene = crate::late::current(scene.as_deref());
+    if streamer.generation != set.generation() || streamer.scene != scene {
+        if streamer.scene != scene && !(streamer.images.is_empty() && streamer.building.is_empty())
+        {
+            debug!(
+                "orthophotos: dropped {} built and {} pending of scene {} (now {scene})",
+                streamer.images.len(),
+                streamer.building.len(),
+                streamer.scene
+            );
+        }
         streamer.generation = set.generation();
+        streamer.scene = scene;
         streamer.images.clear();
         streamer.building.clear();
     }

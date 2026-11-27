@@ -29,6 +29,7 @@ use ocw_world::vegetation::FieldCrop;
 use ocw_world::{TileKey, WorldPackage};
 
 use crate::flora::{Detail, PlantAt};
+use crate::late::LateCommands;
 use crate::package::{Keep, MeshArrays, TileGround, TreeSite};
 
 /// Chunks per tile side (200 m chunks for 1 km tiles).
@@ -273,6 +274,13 @@ impl LazyPlants {
 #[derive(Component)]
 pub struct LazyBuild(Task<MeshArrays>);
 
+impl LazyBuild {
+    /// Whether its task is done (and the result waits for [`lazy_plants`]).
+    pub fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
 /// Builds the near meshes of the chunks near a camera – those in view at
 /// once (in this frame), the others ahead on the task pool,
 /// [`PREBUILD_PER_FRAME`] a frame (nearest first, at most
@@ -311,12 +319,16 @@ pub fn lazy_plants(
             .fold(f32::INFINITY, f32::min);
         if let Some(mut task) = task {
             if d > lazy.drop_m {
-                commands.entity(e).remove::<LazyBuild>();
+                commands.entity(e).try_remove::<LazyBuild>();
             } else if let Some(m) = check_ready(&mut task.0) {
-                commands.entity(e).remove::<LazyBuild>().insert((
-                    Mesh3d(meshes.add(m.mesh())),
-                    MeshMaterial3d(lazy.material.clone()),
-                ));
+                // Dropped if a world switch despawns the chunk first (`late`).
+                commands.entity(e).try_remove::<LazyBuild>().late_insert(
+                    "plants",
+                    (
+                        Mesh3d(meshes.add(m.mesh())),
+                        MeshMaterial3d(lazy.material.clone()),
+                    ),
+                );
             } else {
                 busy += 1;
             }
@@ -326,7 +338,7 @@ pub fn lazy_plants(
             LazyStep::Build => now.push((e, lazy.plants.clone(), lazy.material.clone())),
             LazyStep::Prebuild => ahead.push((d, e)),
             LazyStep::Drop => {
-                commands.entity(e).remove::<(
+                commands.entity(e).try_remove::<(
                     Mesh3d,
                     MeshMaterial3d<crate::see_through::SeeThroughMaterial>,
                 )>();
@@ -350,9 +362,10 @@ pub fn lazy_plants(
     #[cfg(target_arch = "wasm32")]
     let built: Vec<MeshArrays> = now.iter().map(|(_, plants, _)| plants.build()).collect();
     for ((e, _, material), m) in now.into_iter().zip(built) {
-        commands
-            .entity(e)
-            .insert((Mesh3d(meshes.add(m.mesh())), MeshMaterial3d(material)));
+        commands.entity(e).late_insert(
+            "plants",
+            (Mesh3d(meshes.add(m.mesh())), MeshMaterial3d(material)),
+        );
     }
     ahead.sort_by(|a, b| a.0.total_cmp(&b.0));
     let room = MAX_LAZY_TASKS.saturating_sub(busy).min(PREBUILD_PER_FRAME);
@@ -366,7 +379,7 @@ pub fn lazy_plants(
 fn start_lazy(commands: &mut Commands, e: Entity, lazy: &LazyPlants) {
     let plants = lazy.plants.clone();
     let task = AsyncComputeTaskPool::get().spawn(async move { plants.build() });
-    commands.entity(e).insert(LazyBuild(task));
+    commands.entity(e).late_insert("plants", LazyBuild(task));
 }
 
 /// The plants of one chunk of a tile; positions relative to `origin`.

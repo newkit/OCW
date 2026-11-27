@@ -1846,7 +1846,9 @@ fn load_neighbours(
     mut world: ResMut<PackageWorld>,
     view: Res<RideView>,
     mut loads: ResMut<NeighbourLoads>,
+    scene: Option<Res<crate::late::SceneGeneration>>,
 ) {
+    let scene = crate::late::current(scene.as_deref());
     if world.set.len() < 2 {
         return;
     }
@@ -1896,8 +1898,13 @@ fn load_neighbours(
         }
     }
     if changed {
-        commands.insert_resource(world.ground());
-        commands.insert_resource(world.pavement());
+        // The ground of this world set – not of the next one if a world
+        // switch comes before the commands are applied (`late`).
+        let (ground, pavement) = (world.ground(), world.pavement());
+        crate::late::queue_if_current(&mut commands, scene, "neighbour tiles", move |w| {
+            w.insert_resource(ground);
+            w.insert_resource(pavement);
+        });
     }
 }
 
@@ -2065,7 +2072,7 @@ fn stream_tiles(
     for id in far {
         streamer.terrain.remove(&id);
         if let Some(e) = streamer.loaded.remove(&id) {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
             obstacles.remove_tile(id.0 as u32, (id.1.x, id.1.z));
             flight_obstacles
                 .0
@@ -2156,7 +2163,9 @@ pub(crate) fn upload_tiles(
         Option<Res<HouseMaterial>>,
         Option<Res<crate::street_lamps::LampMaterials>>,
     ),
+    scene: Option<Res<crate::late::SceneGeneration>>,
 ) {
+    let scene = crate::late::current(scene.as_deref());
     let library = library.as_deref();
     // The road materials, one pair per marking style (made when first
     // needed, again when the library arrives).
@@ -2204,6 +2213,11 @@ pub(crate) fn upload_tiles(
             id,
             t,
         );
+        // Spawned when the commands are applied: gone again if a world
+        // switch came in between (`late`).
+        if let Some(&e) = streamer.loaded.get(&id) {
+            crate::late::despawn_if_stale(&mut commands, scene, "tile", e);
+        }
     }
 }
 
@@ -2500,7 +2514,7 @@ fn upload_tile(
         })
         .id();
     if let Some(old) = streamer.loaded.insert(id, parent) {
-        commands.entity(old).despawn();
+        commands.entity(old).try_despawn();
     }
 }
 
@@ -3402,6 +3416,290 @@ mod tests {
         // Camera-solid up to the ridge (or more: a steeper regional roof).
         let top = m.solid.top_at(16.0, 74.0).expect("solid house");
         assert!(top >= 7.5 + 3.0 * 0.5, "{top}");
+    }
+
+    use bevy::ecs::system::System;
+
+    /// A streaming app as in a ride on `pkg` (the rider 50 m along the
+    /// road at z = 50 m, a camera there).
+    fn stream_app(pkg: WorldPackage) -> App {
+        use ocw_core::RiderId;
+        use ocw_world::Route;
+        let pts = (0..=100)
+            .map(|i| [f64::from(i) * 10.0, 5.0, 50.0])
+            .collect();
+        let route = Route::from_points("r", "R", pts, false, 6.0).unwrap();
+        let mut view = RideView::new(route);
+        view.riders.push(crate::RiderView {
+            id: RiderId(1),
+            name: "Ada Rider".into(),
+            state: ocw_sim::RiderState {
+                distance: 50.0,
+                ..default()
+            },
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: Default::default(),
+            look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
+            damage: None,
+            cue: Default::default(),
+            signs: Default::default(),
+        });
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<SeeThroughMaterial>()
+            .init_asset::<TerrainMaterial>()
+            .init_asset::<crate::water::WaterMaterial>()
+            .init_asset::<crate::far_terrain::FarMaterial>()
+            .init_resource::<CameraObstacles>()
+            .insert_resource(PackageWorld::single(Arc::new(pkg)))
+            .insert_resource(view)
+            .add_plugins(PackagePlugin);
+        app.world_mut()
+            .resource_mut::<crate::ground_detail::GroundDetailSettings>()
+            .mode = crate::ground_detail::GroundDetailMode::Full;
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Camera::default(),
+            GlobalTransform::from_translation(Vec3::new(50.0, 7.0, 50.0)),
+        ));
+        app
+    }
+
+    /// The streaming systems of [`PackagePlugin`], run by hand: a frame like
+    /// the app's, or the race of 2026-11-27 – the systems run, then a ride
+    /// switch ([`crate::rebuild_scene`], exclusive and unordered with them in
+    /// the app) despawns the scene, then their commands are applied.
+    struct Racer(Vec<Box<dyn System<In = (), Out = ()>>>);
+
+    impl Racer {
+        fn new(world: &mut World) -> Self {
+            let mut v: Vec<Box<dyn System<In = (), Out = ()>>> = vec![
+                Box::new(IntoSystem::into_system(load_neighbours)),
+                Box::new(IntoSystem::into_system(stream_tiles)),
+                Box::new(IntoSystem::into_system(upload_tiles)),
+                Box::new(IntoSystem::into_system(
+                    crate::far_terrain::update_far_terrain,
+                )),
+                Box::new(IntoSystem::into_system(crate::vegetation::lazy_plants)),
+                Box::new(IntoSystem::into_system(crate::ground_detail::lazy_ground)),
+            ];
+            for s in &mut v {
+                s.initialize(world);
+            }
+            Racer(v)
+        }
+
+        /// A frame like the app's (each system's commands applied after it).
+        fn frame(&mut self, world: &mut World) {
+            for s in &mut self.0 {
+                s.run((), world).expect("runs");
+            }
+        }
+
+        /// The systems, the switch, then their commands.
+        fn switch(&mut self, world: &mut World) {
+            for s in &mut self.0 {
+                s.run_without_applying_deferred((), world).expect("runs");
+            }
+            crate::rebuild_scene(world);
+            for s in &mut self.0 {
+                s.apply_deferred(world);
+            }
+        }
+    }
+
+    /// The tile parents in the scene and those the streamer knows.
+    fn tiles(app: &mut App) -> (usize, usize) {
+        let w = app.world_mut();
+        let drawn = w
+            .query_filtered::<(), With<crate::street_lamps::LampSpots>>()
+            .iter(w)
+            .count();
+        (drawn, w.resource::<TileStreamer>().loaded.len())
+    }
+
+    fn count<C: Component>(app: &mut App) -> usize {
+        let w = app.world_mut();
+        w.query_filtered::<(), With<C>>().iter(w).count()
+    }
+
+    /// Updates until `done` (the builds run on the task pool's threads).
+    fn until(app: &mut App, what: &str, mut done: impl FnMut(&mut App) -> bool) {
+        for _ in 0..3000 {
+            if done(app) {
+                return;
+            }
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let state = (
+            count::<crate::ground_detail::LazyGround>(app),
+            count::<crate::ground_detail::GroundBuild>(app),
+            count::<crate::vegetation::LazyPlants>(app),
+            count::<crate::vegetation::LazyBuild>(app),
+            tiles(app),
+        );
+        panic!(
+            "{what}: not reached (ground chunks, builds, plant chunks, builds, tiles: {state:?})"
+        );
+    }
+
+    /// Ground-detail and plant builds done on the task pool but not yet
+    /// put on their chunks, and the far terrain built but not yet spawned.
+    fn in_flight(app: &mut App) -> (bool, bool, bool) {
+        let w = app.world_mut();
+        let ground = w
+            .query::<&crate::ground_detail::GroundBuild>()
+            .iter(w)
+            .any(crate::ground_detail::GroundBuild::is_finished);
+        let plants = w
+            .query::<&crate::vegetation::LazyBuild>()
+            .iter(w)
+            .any(crate::vegetation::LazyBuild::is_finished);
+        let far = w
+            .resource::<crate::far_terrain::FarTerrain>()
+            .built_unspawned();
+        (ground, plants, far)
+    }
+
+    /// A ride or world switch while tiles, ground detail, plants and the far
+    /// terrain are still being built (the panic of 2026-11-27: a ground
+    /// detail mesh inserted into a chunk the switch had despawned): no
+    /// panic, the old results are dropped – nothing of the old scene is left
+    /// – and the new scene's tiles and chunks get their own.
+    #[test]
+    fn a_world_switch_drops_the_results_still_in_flight() {
+        let mut pkg = landuse_package();
+        let key0 = TileKey { x: 0, z: 0 };
+        let tile = pkg.tiles[&key0].clone();
+        let lu = pkg.landuse.as_ref().unwrap().tiles[&key0].clone();
+        let keys: Vec<TileKey> = (0..6).map(|x| TileKey { x, z: 0 }).collect();
+        pkg.tiles = keys
+            .iter()
+            .map(|&key| {
+                (
+                    key,
+                    Tile {
+                        key,
+                        ..tile.clone()
+                    },
+                )
+            })
+            .collect();
+        pkg.landuse.as_mut().unwrap().tiles = keys.iter().map(|&k| (k, lu.clone())).collect();
+        let mut app = stream_app(pkg);
+        app.update();
+        let mut racer = Racer::new(app.world_mut());
+        // Its first frame sees every chunk as new (and skips it).
+        racer.frame(app.world_mut());
+        // 1. Ground detail (and plants) built, not yet on their chunks.
+        until(&mut app, "ground detail in flight", |app| in_flight(app).0);
+        racer.switch(app.world_mut());
+        assert_eq!(tiles(&mut app), (0, 0), "tiles of the old scene left");
+        assert_eq!(count::<crate::ground_detail::LazyGround>(&mut app), 0);
+        assert_eq!(count::<crate::ground_detail::GroundPatches>(&mut app), 0);
+        assert_eq!(count::<crate::vegetation::LazyPlants>(&mut app), 0);
+        // 2. A teleport in the switch's frame: its tiles are built and
+        // uploaded in that frame, spawned after the switch – and despawned
+        // again.
+        until(&mut app, "tiles again", |app| tiles(app).1 >= 2);
+        app.world_mut().resource_mut::<RideView>().riders[0]
+            .state
+            .distance = 450.0;
+        racer.switch(app.world_mut());
+        assert_eq!(tiles(&mut app), (0, 0), "tiles of the old scene left");
+        // 3. The far terrain built, not yet spawned: the same.
+        until(&mut app, "far terrain in flight", |app| in_flight(app).2);
+        racer.switch(app.world_mut());
+        assert_eq!(tiles(&mut app), (0, 0), "tiles of the old scene left");
+        assert_eq!(count::<crate::far_terrain::FarTile>(&mut app), 0);
+        // 4. The new scene streams its own (back at the start, by the
+        // camera): tiles, ground detail, plants and one far terrain (not
+        // two).
+        app.world_mut().resource_mut::<RideView>().riders[0]
+            .state
+            .distance = 50.0;
+        until(&mut app, "new tiles", |app| tiles(app).1 >= 3);
+        until(&mut app, "new ground detail", |app| {
+            let w = app.world_mut();
+            w.query::<&crate::ground_detail::LazyGround>()
+                .iter(w)
+                .any(|l| l.built.is_some())
+        });
+        until(&mut app, "new plants", |app| {
+            let w = app.world_mut();
+            w.query_filtered::<(), (With<crate::vegetation::LazyPlants>, With<Mesh3d>)>()
+                .iter(w)
+                .next()
+                .is_some()
+        });
+        until(&mut app, "new far terrain", |app| {
+            count::<crate::far_terrain::FarTile>(app) > 0
+        });
+        let (drawn, known) = tiles(&mut app);
+        assert_eq!(drawn, known, "every tile drawn is the streamer's");
+        let far = app
+            .world()
+            .resource::<crate::far_terrain::FarTerrain>()
+            .tile_count();
+        assert_eq!(count::<crate::far_terrain::FarTile>(&mut app), far);
+    }
+
+    /// The late helpers on their own: an insert into a despawned entity, a
+    /// spawn and a resource for an older scene are dropped; in the same
+    /// scene they are applied.
+    #[test]
+    fn late_results_of_an_old_scene_are_dropped() {
+        use crate::late::{LateCommands, SceneGeneration, despawn_if_stale, queue_if_current};
+        #[derive(Component)]
+        struct Built;
+        #[derive(Resource)]
+        struct Applied;
+        fn build(mut commands: Commands, scene: Res<SceneGeneration>, target: Res<Target>) {
+            let e = target.0;
+            commands.entity(e).late_insert("test", Built);
+            commands.entity(e).late("test", |mut ew| {
+                ew.insert(Name::new("late"));
+            });
+            let spawned = commands.spawn(Built).id();
+            despawn_if_stale(&mut commands, scene.0, "test", spawned);
+            queue_if_current(&mut commands, scene.0, "test", |w| {
+                w.insert_resource(Applied)
+            });
+        }
+        #[derive(Resource)]
+        struct Target(Entity);
+        let mut world = World::new();
+        world.init_resource::<SceneGeneration>();
+        let e = world.spawn_empty().id();
+        world.insert_resource(Target(e));
+        let mut sys = IntoSystem::into_system(build);
+        sys.initialize(&mut world);
+        // A switch between the system and its commands.
+        sys.run_without_applying_deferred((), &mut world).unwrap();
+        world.despawn(e);
+        world.resource_mut::<SceneGeneration>().0 += 1;
+        sys.apply_deferred(&mut world);
+        let mut built = world.query_filtered::<(), With<Built>>();
+        assert_eq!(built.iter(&world).count(), 0);
+        assert!(!world.contains_resource::<Applied>());
+        // No switch: applied.
+        let e = world.spawn_empty().id();
+        world.insert_resource(Target(e));
+        sys.run((), &mut world).unwrap();
+        assert!(world.get::<Built>(e).is_some());
+        assert!(world.get::<Name>(e).is_some());
+        assert_eq!(built.iter(&world).count(), 2);
+        assert!(world.contains_resource::<Applied>());
     }
 
     /// Tile meshing time on a real package (not run by default):

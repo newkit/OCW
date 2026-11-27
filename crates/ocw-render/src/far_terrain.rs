@@ -520,6 +520,18 @@ pub(crate) struct FarTerrain {
 }
 
 impl FarTerrain {
+    /// Whether a build is done but not yet spawned (tests).
+    #[cfg(test)]
+    pub(crate) fn built_unspawned(&self) -> bool {
+        self.task.as_ref().is_some_and(|t| t.1.is_finished())
+    }
+
+    /// The far tiles spawned (tests).
+    #[cfg(test)]
+    pub(crate) fn tile_count(&self) -> usize {
+        self.tiles.len()
+    }
+
     /// Despawns everything (a ride switch).
     pub(crate) fn clear(&mut self, world: &mut World) {
         for e in std::mem::take(&mut self.parents) {
@@ -583,7 +595,9 @@ pub(crate) fn update_far_terrain(
     mut meshes: ResMut<Assets<Mesh>>,
     mut far_materials: ResMut<Assets<FarMaterial>>,
     mut material: Local<Option<Handle<FarMaterial>>>,
+    scene: Option<Res<crate::late::SceneGeneration>>,
 ) {
+    let scene = crate::late::current(scene.as_deref());
     let set = world.set.clone();
     // The world date in buckets, as the streamed tiles take it.
     let season = view.as_deref().and_then(|v| v.sky.as_ref()).map(|s| {
@@ -643,7 +657,7 @@ pub(crate) fn update_far_terrain(
     let done = *key;
     far.task = None;
     for e in std::mem::take(&mut far.parents) {
-        commands.entity(e).despawn();
+        commands.entity(e).try_despawn();
     }
     far.tiles.clear();
     far.built = Some(done);
@@ -696,6 +710,9 @@ pub(crate) fn update_far_terrain(
                 }
             })
             .id();
+        // Spawned when the commands are applied: gone again if a world
+        // switch came in between (`late`).
+        crate::late::despawn_if_stale(&mut commands, scene, "far terrain", parent);
         far.parents.push(parent);
         far.tiles.extend(ids);
     }
