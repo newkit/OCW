@@ -698,6 +698,11 @@
       // iPad that reports a Mac.
       max_touch_points: Number(navigator.maxTouchPoints || 0),
       ipad_as_mac: navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints || 0) > 1,
+      // iOS / iPadOS WebKit (spec 14 Phase 10, 10G: no shadows there on
+      // WebGL 2, the saver memory mode): the app reads these two with the
+      // touch points (`ocw_client::quality::is_ios_webkit`).
+      user_agent: String(navigator.userAgent || ""),
+      platform: String(navigator.platform || ""),
       cores: navigator.hardwareConcurrency || 0,
       memory_gb: navigator.deviceMemory || 0,
       screen_px: [screen.width * (devicePixelRatio || 1), screen.height * (devicePixelRatio || 1)],

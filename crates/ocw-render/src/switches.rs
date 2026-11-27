@@ -38,6 +38,14 @@ pub struct RenderSwitches {
     pub plain: bool,
     /// No shadow maps (sun, moon, lamps).
     pub no_shadow: bool,
+    /// Why [`Self::no_shadow`] is on (the switch, or the default of iOS
+    /// WebKit on WebGL 2).
+    pub shadows_off_why: ShadowsOffWhy,
+    /// `shadowmap=N`: the sun's shadow map at most N² (wins over a
+    /// phone's memory cap; `None`: the preset's within that cap).
+    pub shadow_map: Option<usize>,
+    /// `shadowfix=…`: changes to the shadow pass to try on a phone.
+    pub shadow_fix: ShadowFix,
     /// No multisampling on any camera.
     pub no_msaa: bool,
     /// The simplest sky: no cloud dome, no night sky (stars, moon).
@@ -72,6 +80,12 @@ impl RenderSwitches {
                 out.push(name.to_string());
             }
         }
+        if let Some(n) = self.shadow_map {
+            out.push(format!("shadowmap={n}"));
+        }
+        if self.shadow_fix.any() {
+            out.push(format!("shadowfix={}", self.shadow_fix.name()));
+        }
         if let Some(n) = self.compile_budget {
             out.push(format!("{n} pipeline(s) per frame"));
         }
@@ -79,6 +93,102 @@ impl RenderSwitches {
             out.push(format!("frames={n}"));
         }
         out
+    }
+}
+
+/// Why the shadows are off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ShadowsOffWhy {
+    /// The address's `noshadow=1` (or `ios=safe`).
+    #[default]
+    Switch,
+    /// The default on iOS / iPadOS WebKit with WebGL 2 (spec 14 Phase 10,
+    /// 10G: the shadow pass closed the page on an iPhone).
+    IosWebKit,
+}
+
+impl ShadowsOffWhy {
+    /// For the quality line and the log.
+    pub fn long(self) -> &'static str {
+        match self {
+            Self::Switch => "noshadow=1",
+            Self::IosWebKit => IOS_SHADOWS_WHY,
+        }
+    }
+
+    /// For the Settings row.
+    pub fn short(self) -> &'static str {
+        match self {
+            Self::Switch => "off (noshadow=1)",
+            Self::IosWebKit => "off on iOS (WebGL 2)",
+        }
+    }
+}
+
+/// The reason of the iOS default (the page log, the quality line).
+pub const IOS_SHADOWS_WHY: &str =
+    "iOS WebKit with WebGL 2: the shadow pass closed the page on an iPhone (iOS 18.7)";
+
+/// The page log's line of the iOS default.
+pub fn ios_shadows_line() -> String {
+    format!("shadows off on {IOS_SHADOWS_WHY}; noshadow=0 or shadowmap=N turns them on")
+}
+
+/// The sizes `shadowmap=` takes.
+pub const SHADOW_MAP_SIZES: [usize; 5] = [256, 512, 1024, 2048, 4096];
+
+/// How far the sun's shadows reach with `shadowfix=near` (m; Low: 70).
+pub const NEAR_SHADOW_M: f32 = 30.0;
+
+/// `shadowfix=` (comma-separated): changes to the shadow pass that could
+/// keep a phone's page alive, to test on the phone before any becomes a
+/// default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShadowFix {
+    /// `hw2x2`: one hardware comparison sample per pixel instead of the
+    /// 9-tap Gaussian filter (`ShadowFilteringMethod::Hardware2x2`).
+    pub hw2x2: bool,
+    /// `near`: the shadows reach [`NEAR_SHADOW_M`] (fewer casters drawn
+    /// into the map).
+    pub near: bool,
+}
+
+impl ShadowFix {
+    /// `hw2x2`, `near`, `hw2x2,near`, `all`, `none` (`None`: a word it
+    /// does not know).
+    pub fn parse(value: &str) -> Option<Self> {
+        let mut f = Self::default();
+        for w in value.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+            match w {
+                "hw2x2" => f.hw2x2 = true,
+                "near" => f.near = true,
+                "all" => {
+                    f = Self {
+                        hw2x2: true,
+                        near: true,
+                    }
+                }
+                "none" | "0" => f = Self::default(),
+                _ => return None,
+            }
+        }
+        Some(f)
+    }
+
+    pub fn any(&self) -> bool {
+        self.hw2x2 || self.near
+    }
+
+    /// As the address names it ("hw2x2,near").
+    pub fn name(&self) -> String {
+        let mut w = Vec::new();
+        if self.hw2x2 {
+            w.push("hw2x2");
+        }
+        if self.near {
+            w.push("near");
+        }
+        w.join(",")
     }
 }
 
@@ -167,7 +277,7 @@ pub struct FramesDrawn(pub u32);
 
 /// Shadows, multisampling and the cameras, every frame after the quality
 /// preset (which would turn them on again).
-#[allow(clippy::type_complexity)] // a Bevy system query
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system
 fn apply_switches(
     s: Res<RenderSwitches>,
     mut frames: ResMut<FramesDrawn>,
@@ -175,7 +285,13 @@ fn apply_switches(
     mut suns: Query<&mut DirectionalLight>,
     mut points: Query<&mut PointLight>,
     mut spots: Query<&mut SpotLight>,
-    mut cams: Query<(Entity, &mut Camera, Option<&Msaa>)>,
+    mut cams: Query<(
+        Entity,
+        &mut Camera,
+        Option<&Msaa>,
+        Option<&bevy::light::ShadowFilteringMethod>,
+    )>,
+    mut cascades: Query<&mut bevy::light::CascadeShadowConfig, With<crate::sky::Sun>>,
 ) {
     frames.0 = frames.0.saturating_add(1);
     if s.no_shadow {
@@ -202,14 +318,41 @@ fn apply_switches(
             s.frames.unwrap_or_default()
         );
     }
-    for (e, mut cam, msaa) in &mut cams {
+    if s.shadow_fix.near {
+        let near = near_cascades();
+        for mut c in &mut cascades {
+            if c.bounds != near.bounds {
+                *c = near.clone();
+            }
+        }
+    }
+    for (e, mut cam, msaa, filter) in &mut cams {
         if s.no_msaa && msaa != Some(&Msaa::Off) {
             commands.entity(e).insert(Msaa::Off);
+        }
+        if s.shadow_fix.hw2x2
+            && filter.is_some_and(|f| *f != bevy::light::ShadowFilteringMethod::Hardware2x2)
+        {
+            commands
+                .entity(e)
+                .insert(bevy::light::ShadowFilteringMethod::Hardware2x2);
         }
         if stop && cam.is_active {
             cam.is_active = false;
         }
     }
+}
+
+/// The sun's one cascade of `shadowfix=near`.
+pub fn near_cascades() -> bevy::light::CascadeShadowConfig {
+    bevy::light::CascadeShadowConfigBuilder {
+        num_cascades: 1,
+        minimum_distance: 0.1,
+        maximum_distance: NEAR_SHADOW_M,
+        first_cascade_far_bound: NEAR_SHADOW_M,
+        overlap_proportion: 0.3,
+    }
+    .build()
 }
 
 /// No cloud dome ([`RenderSwitches::no_sky`]).
@@ -371,5 +514,74 @@ mod tests {
             !app.world().get::<Camera>(cam).unwrap().is_active,
             "after 2 frames"
         );
+    }
+
+    #[test]
+    fn shadowfix_parses_and_names() {
+        assert_eq!(ShadowFix::parse(""), Some(ShadowFix::default()));
+        let hw = ShadowFix::parse("hw2x2").unwrap();
+        assert!(hw.hw2x2 && !hw.near);
+        let both = ShadowFix::parse("hw2x2,near").unwrap();
+        assert!(both.hw2x2 && both.near);
+        assert_eq!(ShadowFix::parse("all"), Some(both));
+        assert_eq!(ShadowFix::parse("none"), Some(ShadowFix::default()));
+        assert_eq!(ShadowFix::parse("depth16"), None);
+        assert_eq!(both.name(), "hw2x2,near");
+        let s = RenderSwitches {
+            shadow_map: Some(512),
+            shadow_fix: both,
+            ..default()
+        };
+        assert_eq!(s.names(), ["shadowmap=512", "shadowfix=hw2x2,near"]);
+        assert!(
+            ShadowsOffWhy::IosWebKit
+                .long()
+                .contains("iPhone (iOS 18.7)")
+        );
+        assert_eq!(ShadowsOffWhy::default().long(), "noshadow=1");
+    }
+
+    /// `shadowfix=hw2x2,near`: the cameras filter with one hardware
+    /// sample, the sun's one cascade reaches 30 m.
+    #[test]
+    fn shadowfix_acts_on_the_cameras_and_the_sun() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RenderSwitches {
+                shadow_fix: ShadowFix::parse("all").unwrap(),
+                ..default()
+            })
+            .init_resource::<FramesDrawn>()
+            .add_systems(Update, apply_switches);
+        let sun = app
+            .world_mut()
+            .spawn((
+                crate::sky::Sun,
+                DirectionalLight {
+                    shadow_maps_enabled: true,
+                    ..default()
+                },
+                crate::quality::QualityPreset::of(crate::quality::QualityLevel::Low).cascades(),
+            ))
+            .id();
+        let cam = app
+            .world_mut()
+            .spawn((
+                Camera::default(),
+                bevy::light::ShadowFilteringMethod::Gaussian,
+            ))
+            .id();
+        app.update();
+        let w = app.world();
+        assert_eq!(
+            w.get::<bevy::light::ShadowFilteringMethod>(cam),
+            Some(&bevy::light::ShadowFilteringMethod::Hardware2x2)
+        );
+        let c = w.get::<bevy::light::CascadeShadowConfig>(sun).unwrap();
+        assert_eq!(c.bounds, near_cascades().bounds);
+        assert_eq!(c.bounds.len(), 1);
+        assert!((c.bounds[0] - NEAR_SHADOW_M).abs() < 1e-3);
+        // The shadows stay on.
+        assert!(w.get::<DirectionalLight>(sun).unwrap().shadow_maps_enabled);
     }
 }

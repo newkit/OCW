@@ -17,13 +17,20 @@
 //! | `pipelines=serial` | one render pipeline compiled per frame (`=N`: N per frame, `=all`: all at once) |
 //! | `frames=N` | the cameras stop drawing after N frames (`0`: nothing is drawn) |
 //! | `ios=safe` | all of the above but `frames` (`pipelines=serial`) |
+//! | `shadowmap=N` | the sun's shadow map at most N² (256 – 4096; shadows on) |
+//! | `shadowfix=…` | a change to the shadow pass: `hw2x2`, `near` (comma-separated) |
+//!
+//! On iOS / iPadOS WebKit with WebGL 2 the shadows are off by default
+//! ([`Bisect::platform_defaults`]; spec 10G: the shadow pass closed the
+//! page on an iPhone, iOS 18.7): `noshadow=0` turns them on again,
+//! `shadowmap=N` turns them on at that size.
 //!
 //! `=0` turns a switch off again (`ios=safe&nosee=0`: everything but the
 //! trees' shader). On WebGL 2 at most [`WEBGL2_BUDGET`] pipelines compile
 //! per frame anyway (it compiles on the page's thread). Unknown values are
 //! ignored with a warning, like every option of the page.
 
-use ocw_render::switches::RenderSwitches;
+use ocw_render::switches::{RenderSwitches, ShadowsOffWhy};
 
 /// Pipelines that start compiling per frame on WebGL 2 without
 /// `pipelines=` (spec 10G: the first frames compiled all at once before).
@@ -40,6 +47,9 @@ pub struct Bisect {
     /// `pipelines=`: `None` the default of the GPU API, `Some(None)` all
     /// at once, `Some(Some(n))` n per frame.
     pub pipelines: Option<Option<usize>>,
+    /// The address named `noshadow` (or `ios=safe`): the platform's
+    /// default does not change it.
+    pub shadow_named: bool,
 }
 
 /// The keys [`Bisect::set`] reads (index.html reads `novoice` itself).
@@ -56,6 +66,8 @@ pub const KEYS: &[&str] = &[
     "pipelines",
     "frames",
     "ios",
+    "shadowmap",
+    "shadowfix",
 ];
 
 fn flag(value: &str) -> Option<bool> {
@@ -104,8 +116,27 @@ impl Bisect {
                 no_voice: true,
                 no_audio: true,
                 pipelines: Some(Some(1)),
+                shadow_named: true,
             };
             return true;
+        }
+        if key == "shadowmap" {
+            return match value.trim().parse::<usize>() {
+                Ok(n) if ocw_render::switches::SHADOW_MAP_SIZES.contains(&n) => {
+                    self.render.shadow_map = Some(n);
+                    true
+                }
+                _ => false,
+            };
+        }
+        if key == "shadowfix" {
+            return match ocw_render::switches::ShadowFix::parse(value) {
+                Some(f) => {
+                    self.render.shadow_fix = f;
+                    true
+                }
+                None => false,
+            };
         }
         let r = &mut self.render;
         let slot = match key {
@@ -143,10 +174,28 @@ impl Bisect {
         match flag(value) {
             Some(on) => {
                 *slot = on;
+                if key == "noshadow" {
+                    self.shadow_named = true;
+                    self.render.shadows_off_why = ShadowsOffWhy::Switch;
+                }
                 true
             }
             None => false,
         }
+    }
+
+    /// The defaults of the platform under the address's switches: on iOS /
+    /// iPadOS WebKit with WebGL 2 the shadows are off (spec 10G: the shadow
+    /// pass closed the page on an iPhone, iOS 18.7, 2026-11-27) unless the
+    /// address names `noshadow` or asks for a `shadowmap=N`. `true`: the
+    /// default turned them off.
+    pub fn platform_defaults(&mut self, ios_webkit: bool, webgl2: bool) -> bool {
+        if ios_webkit && webgl2 && !self.shadow_named && self.render.shadow_map.is_none() {
+            self.render.no_shadow = true;
+            self.render.shadows_off_why = ShadowsOffWhy::IosWebKit;
+            return true;
+        }
+        false
     }
 
     /// The renderer's switches for this GPU API: the pipelines' budget
@@ -234,9 +283,70 @@ mod tests {
                     no_shadow: true,
                     ..Default::default()
                 },
+                shadow_named: true,
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn shadowmap_and_shadowfix() {
+        let (b, w) = parse("shadowmap=512&shadowfix=hw2x2,near");
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(b.render.shadow_map, Some(512));
+        assert!(b.render.shadow_fix.hw2x2 && b.render.shadow_fix.near);
+        assert!(!b.render.no_shadow);
+        let s = b.summary().unwrap();
+        assert!(
+            s.contains("shadowmap=512") && s.contains("shadowfix=hw2x2,near"),
+            "{s}"
+        );
+        for n in [256, 512, 1024, 2048, 4096] {
+            assert_eq!(
+                parse(&format!("shadowmap={n}")).0.render.shadow_map,
+                Some(n)
+            );
+        }
+        let (b, w) = parse("shadowmap=1000&shadowmap=8192&shadowfix=depth16");
+        assert_eq!(b, Bisect::default());
+        assert_eq!(w.len(), 3, "{w:?}");
+    }
+
+    /// iOS WebKit on WebGL 2: shadows off by default; `noshadow=0` and
+    /// `shadowmap=N` turn them on; Android, desktops and WebGPU keep them.
+    #[test]
+    fn ios_webkit_on_webgl2_rides_without_shadows_by_default() {
+        let with = |q: &str, ios: bool, webgl2: bool| {
+            let mut b = parse(q).0;
+            let off = b.platform_defaults(ios, webgl2);
+            (b, off)
+        };
+        let (b, off) = with("route=hills", true, true);
+        assert!(off && b.render.no_shadow);
+        assert_eq!(b.render.shadows_off_why, ShadowsOffWhy::IosWebKit);
+        // The other suspects stay on.
+        assert!(!b.render.no_see && !b.render.no_arrays && !b.render.no_sky);
+        // noshadow=0: on again; noshadow=1: off by the switch.
+        let (b, off) = with("noshadow=0", true, true);
+        assert!(!off && !b.render.no_shadow);
+        let (b, off) = with("noshadow=1", true, true);
+        assert!(!off && b.render.no_shadow);
+        assert_eq!(b.render.shadows_off_why, ShadowsOffWhy::Switch);
+        // shadowmap=N: on at that size.
+        let (b, off) = with("shadowmap=1024", true, true);
+        assert!(!off && !b.render.no_shadow);
+        assert_eq!(b.render.shadow_map, Some(1024));
+        // …unless noshadow=1 says off too.
+        let (b, _) = with("shadowmap=512&noshadow=1", true, true);
+        assert!(b.render.no_shadow);
+        // ios=safe and a later noshadow=0.
+        let (b, _) = with("ios=safe&noshadow=0", true, true);
+        assert!(!b.render.no_shadow && b.render.no_see);
+        // Not iOS, or WebGPU (only by gpu=webgpu on iOS): unchanged.
+        for (ios, webgl2) in [(false, true), (false, false), (true, false)] {
+            let (b, off) = with("route=hills", ios, webgl2);
+            assert!(!off && !b.render.no_shadow, "{ios} {webgl2}");
+        }
     }
 
     #[test]

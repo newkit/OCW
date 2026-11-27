@@ -69,6 +69,7 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -132,6 +133,8 @@ IPHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit
              "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 ANDROID_UA = ("Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/131.0.0.0 Mobile Safari/537.36")
+# The app's line of the iOS default (spec 14 Phase 10, 10G, v6.77).
+IOS_SHADOWS_OFF = "shadows off on iOS WebKit with WebGL 2: the shadow pass closed the page on an iPhone (iOS 18.7)"
 # Android's Chrome has element full screen (WebKit here does not say so):
 # the first-ride tip offers the "Full screen" button there.
 ANDROID_FULLSCREEN = """
@@ -579,6 +582,17 @@ def main():
                       and "Safari" in gpu.get("reason", "") and st.get("adapterAsked") == 0, gpu)
                 check(f"{label}: rides and draws", st.get("frames", 0) > 20 and not st.get("status")
                       and not st.get("failure") and drawn, f"{how}; frames {st.get('frames')}")
+                # iOS WebKit on WebGL 2 rides without shadows (spec 14 Phase
+                # 10, 10G, v6.77); Safari on a Mac keeps them.
+                own = [ln for ln in lines if ln.startswith(f"[{label}] ")]
+                ios_off = any(IOS_SHADOWS_OFF in ln for ln in own)
+                quality = next((ln for ln in own if "quality: low (" in ln), "")
+                if label in PHONES:
+                    check(f"{label}: shadows off on iOS WebKit with WebGL 2 (log, quality line), rides",
+                          ios_off and "shadows off (iOS WebKit with WebGL 2" in quality, quality[-300:])
+                else:
+                    check(f"{label}: Safari on a Mac keeps the shadows", not ios_off
+                          and re.search(r"shadows \d+² × 1", quality), quality[-300:])
                 cw, vp = st["canvas"], st["viewport"]
                 check(f"{label}: the canvas fills the viewport", abs(cw[2] - vp[0]) <= 1 and abs(cw[3] - vp[1]) <= 1,
                       {"canvas": cw, "viewport": vp})

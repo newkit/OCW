@@ -32,6 +32,8 @@ wgpu_wrapper! {
 pub struct Texture {
     id: TextureId,
     value: WgpuTexture,
+    /// OCW patch: counted in [`super::gpu_allocated`] while it lives.
+    _live: std::sync::Arc<super::gpu_allocated::Live>,
 }
 
 impl Texture {
@@ -51,6 +53,7 @@ impl From<wgpu::Texture> for Texture {
     fn from(value: wgpu::Texture) -> Self {
         Texture {
             id: TextureId::new(),
+            _live: super::gpu_allocated::Live::texture(&value),
             value: WgpuTexture::new(value),
         }
     }
