@@ -228,6 +228,32 @@
     return {href: u.toString(), mode};
   }
 
+  // The note after a death (the step `mode` of nextMemoryStep): what the
+  // next try changes on this device (`f`: gpuFacts; `query`: the page's
+  // URLSearchParams). On iPhones and iPads (iOS WebKit)
+  // with WebGL 2 the shadows are off already (spec 14 Phase 10, 10G) and
+  // the app rides in the saver memory mode from the start, so the notes
+  // say what really changes there (the user's iPhone, 2026-11-27: "the
+  // smallest shadows" on a page that had none).
+  function memoryStepNote(mode, f, query) {
+    const q = (k) => (query && query.get ? query.get(k) : null);
+    const ios = !!(f && f.ios);
+    const shadowsOff = q("noshadow") === "1" || q("ios") === "safe"
+      || (ios && q("gpu") !== "webgpu" && q("noshadow") !== "0" && !q("shadowmap"));
+    const pixels = f && f.phone && f.webkit ? "the picture at one pixel per point" : "a sharper limit on the picture's pixels";
+    const off = shadowsOff ? " (the shadows are off here already)" : "";
+    if (mode === "saver") {
+      const parts = ios
+        ? [pixels]
+        : ["fewer world tiles", shadowsOff ? null : "smaller shadows", pixels];
+      return "The page was closed in the ride (probably for memory) – riding on with less detail: "
+        + parts.filter(Boolean).join(", ") + off + ".";
+    }
+    const parts = ["one ring of world tiles", "every third tree", "the world's details only close to the route",
+      shadowsOff ? null : "the smallest shadows", "the picture at one pixel per point"];
+    return "The page was closed again – riding on with the least detail: " + parts.filter(Boolean).join(", ") + off + ".";
+  }
+
   // The canvas' pixel ratio for the app on a phone (spec 14 Phase 10 B7,
   // the iPhone's memory). WebKit (Safari, every browser on iOS) has no
   // `devicePixelContentBoxSize`, so winit sizes the canvas at the full
@@ -383,5 +409,5 @@
 
   root.ocwGpuChoice = {facts, choose, recall, remember, forget, fallbackUrl, startPage, uniform, watch, KEY, FAILED_PARAM,
     mayFallBack, mayReload, RELOAD_KEY, RELOAD_WINDOW_MS, lastRideDied, rideStarted, rideClosed, saverUrl, RIDE_KEY,
-    pixelRatioCap, nextMemoryStep, MEMORY_STEPS, simd, SIMD_TEST, TOO_OLD};
+    pixelRatioCap, nextMemoryStep, memoryStepNote, MEMORY_STEPS, simd, SIMD_TEST, TOO_OLD};
 })(typeof window !== "undefined" ? window : globalThis);

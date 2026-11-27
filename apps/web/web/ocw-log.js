@@ -27,6 +27,13 @@
 // next load says when the page last showed a sign of life. The app's
 // pipeline compiles (name, ms) come as its own lines.
 //
+// The world load's stages (10G: the iPhone that closed the page while a
+// world's base was decoded, 2026-11-27): every "world load: …" line of the
+// app (each with the wasm memory and the heap) is also kept at once in its
+// own small key (KEY_STAGES, at any time, not only in the early log) and
+// pulses; the next load adds the stages its saved log missed and names the
+// last one in the title of "the page load before".
+//
 // The panel is built only when it is shown:
 //   ?log=1 in the address, or five quick taps on the version stamp (bottom
 //   right corner) or on the start page's build line; the panel's Hide ends
@@ -40,7 +47,8 @@
 // Download (.txt), Clear, the size, Hide.
 //
 //   window.ocwLog.lines()        this page load's lines (strings)
-//   window.ocwLog.previous()     {started, ended, lines} of the load before, or null
+//   window.ocwLog.previous()     {started, ended, stage, lines} of the load before, or null
+//   window.ocwLog.stages()       this load's world load stage lines
 //   window.ocwLog.report()       Promise → the whole text (header, previous, this load)
 //   window.ocwLog.header()       Promise → the environment header
 //   window.ocwLog.show() / hide() / offer(why) / clear()
@@ -61,6 +69,10 @@
   var KEY_PREV = "ocw.log.prev";
   var KEY_SHOW = "ocw.log.show";
   var KEY_PULSE = "ocw.log.pulse";
+  var KEY_STAGES = "ocw.log.stages";
+  var STAGES_MAX = 150;
+  var STAGE = /world load: /;
+  var stages = [];
   var EARLY_MS = 15000;
   var FRAMES_LOGGED = 30;
   var t0 = (window.performance && performance.timeOrigin) || Date.now();
@@ -160,6 +172,14 @@
     if (lines.length > LIMIT + 200) {
       dropped += lines.length - LIMIT;
       lines.splice(0, lines.length - LIMIT);
+    }
+    // A world load's stage: at once in its own small key (the page may be
+    // killed in the next step of the load).
+    if (STAGE.test(text)) {
+      stages.push(line);
+      if (stages.length > STAGES_MAX) stages.splice(0, stages.length - STAGES_MAX);
+      sset(KEY_STAGES, JSON.stringify({started: started, lines: stages}));
+      pulse();
     }
     // The early log: at once (the page may be killed before a timer).
     if (now() < EARLY_MS) { save(); pulse(); } else dirty();
@@ -311,6 +331,19 @@
       var p = JSON.parse(raw);
       if (p && p.lines && p.lines.length) previous = p;
     } catch (e) { previous = null; }
+    // The world load's stages its saved lines missed (written after its
+    // last save), and the last one.
+    try {
+      var st = JSON.parse(sget(KEY_STAGES) || "null");
+      if (st && previous && st.started === previous.started && st.lines && st.lines.length) {
+        var have = {};
+        for (var i = 0; i < previous.lines.length; i++) have[previous.lines[i]] = true;
+        var missed = st.lines.filter(function (l) { return !have[l]; });
+        if (missed.length) previous.lines = previous.lines.concat(missed);
+        previous.stage = st.lines[st.lines.length - 1];
+        sset(KEY_PREV, JSON.stringify(previous));
+      }
+    } catch (e) { /* none */ }
     // Its last sign of life (the early log's pulse), kept with it.
     if (previous && !previous.pulse) {
       try {
@@ -433,7 +466,8 @@
       + (previous.ended || "ended without pagehide – the browser closed or killed the page (memory?), or it crashed")
       + (previous.pulse ? "; last sign of life at +" + (previous.pulse.t / 1000).toFixed(1) + " s (wasm " + mb(previous.pulse.wasm)
         + (previous.pulse.js ? ", JS heap " + mb(previous.pulse.js) : "")
-        + (previous.pulse.gpu ? ", gpu renderer " + mb(previous.pulse.gpu) : "") + ", frames " + previous.pulse.frames + ")" : "") + " ---";
+        + (previous.pulse.gpu ? ", gpu renderer " + mb(previous.pulse.gpu) : "") + ", frames " + previous.pulse.frames + ")" : "")
+      + (previous.stage ? "; last world load stage: " + previous.stage.replace(/^.*?world load: /, "") : "") + " ---";
   }
   function report() {
     return header().then(function (h) {
@@ -646,6 +680,8 @@
     dropped = 0;
     previous = null;
     sdel(KEY_PREV);
+    sdel(KEY_STAGES);
+    stages = [];
     save();
     if (shown) render();
   }
@@ -713,7 +749,8 @@
   add("page", "page log started (" + location.pathname + " " + query() + ")" + (previous ? "; the load before is kept" : ""));
   window.ocwLog = {
     lines: function () { return lines.slice(); },
-    previous: function () { return previous ? {started: previous.started, ended: previous.ended, lines: previous.lines.slice()} : null; },
+    previous: function () { return previous ? {started: previous.started, ended: previous.ended, stage: previous.stage || null, lines: previous.lines.slice()} : null; },
+    stages: function () { return stages.slice(); },
     report: report,
     header: header,
     show: show,

@@ -47,6 +47,60 @@ pub const PUBLISH_INTERVAL_S: f64 = 1.0;
 /// them).
 pub const LOG_INTERVAL_S: f64 = 2.0;
 
+/// The base sections the browser neither fetches nor decodes: the road
+/// traffic's rules, signals, bus lines and car parks (`TRFC`; Tenerife 3
+/// MB encoded, many more decoded): the browser shows no road traffic (spec
+/// 14 Phase 18 Q9 (b)), and its local server runs none (10G, the iPhone
+/// that closed the page while Andorra's and Tenerife's bases were decoded,
+/// 2026-11-27).
+pub const BROWSER_SKIPPED_SECTIONS: [[u8; 4]; 1] = [*ocw_world::traffic::TRAFFIC_TAG];
+
+/// The stage lines of the world loads so far (the last
+/// [`STAGES_KEPT`]; the tests read them).
+static STAGES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Stage lines kept.
+pub const STAGES_KEPT: usize = 200;
+
+/// One stage of a world's load in the page log, with the memory (spec 14
+/// Phase 10, 10G *Bisecting a phone's crash*): "world load: base: section
+/// LUSE (2.10 MB) decoded – wasm 212 MB, heap 160 MB (peak 171 MB)". The
+/// page log (`ocw-log.js`) stores every "world load:" line at once, so a
+/// phone that closes the page leaves its last stage in the next load's
+/// log.
+pub fn stage(what: &str) {
+    let wasm = crate::wasm_memory_bytes().map_or(String::new(), |b| {
+        format!("wasm {:.0} MB, ", b as f64 / 1048576.0)
+    });
+    let line = format!(
+        "world load: {what} – {wasm}heap {:.0} MB (peak {:.0} MB)",
+        crate::heap::live() as f64 / 1048576.0,
+        crate::heap::peak() as f64 / 1048576.0
+    );
+    info!("{line}");
+    if let Ok(mut s) = STAGES.lock() {
+        if s.len() >= STAGES_KEPT {
+            s.remove(0);
+        }
+        s.push(line);
+    }
+}
+
+/// For how long after the start the ride's memory steps are logged as
+/// stages (s) and by how much it must grow for a line (bytes).
+pub const RIDE_STAGES_S: f64 = 30.0;
+pub const STAGE_STEP: u64 = 8 << 20;
+
+/// The memory the stage lines watch: the wasm memory (never shrinks),
+/// natively the heap's peak.
+fn memory_mark() -> u64 {
+    crate::wasm_memory_bytes().unwrap_or_else(crate::heap::peak)
+}
+
+/// The stage lines so far.
+pub fn stages() -> Vec<String> {
+    STAGES.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
 /// The page's world options (`?world=…&route=…`, see `crate::parse_query`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldOptions {
@@ -76,6 +130,9 @@ pub struct WorldOptions {
     /// rings of its course (`None`: the whole world; `memory::MemoryMode::
     /// course_rings`; spec 14 Phase 10 B7, v5.42).
     pub course_rings: Option<i32>,
+    /// The base sections left out ([`BROWSER_SKIPPED_SECTIONS`]; the
+    /// bisect switch `?base=all` loads them all, 10G).
+    pub skip_sections: Vec<[u8; 4]>,
 }
 
 impl WorldOptions {
@@ -93,6 +150,7 @@ impl WorldOptions {
             preview: cfg!(feature = "preview"),
             base: WORLDS_BASE.into(),
             course_rings: None,
+            skip_sections: BROWSER_SKIPPED_SECTIONS.to_vec(),
         }
     }
 
@@ -175,6 +233,8 @@ impl WorldOptions {
                     Some(keep)
                 }))
             }),
+            skip_sections: self.skip_sections.clone(),
+            log: Some(ocw_worldstore::stream::driver::StageLog(Arc::new(stage))),
         })
     }
 }
@@ -211,20 +271,24 @@ pub fn world_ride(
     let obstacles = Some(Arc::new(
         ocw_world::obstacles::WorldObstacles::from_streamed_base(pkg),
     ));
+    stage("ride: obstacles placed");
     // The damaged roads under the wheels (spec Phase 8 Q12): the base has
     // no tiles; they are added as they are streamed in.
     let road_feel = Some(Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
         pkg,
     )));
+    stage("ride: road feel");
     // Where leaves lie on the roads (spec 4.6.2 Q6: wet leaves in the
     // ride): the tiles' land use decoded one at a time.
     let leaves = match landuse {
         Some(index) => ocw_world::leaves::LeafMap::from_streamed(pkg, Some(index)),
         None => ocw_world::leaves::LeafMap::from_package(pkg),
     };
+    stage("ride: leaves on the roads");
     // The ground away from the roads (spec §14 Phase 13A): the base has
     // no tiles; they are added as they are streamed in (like the road feel).
     let ground = Arc::new(ocw_world::ground::GroundMap::from_package(pkg));
+    stage("ride: ground map");
     // Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10
     // (a)): the trunks come from the renderer's package of resident tiles
     // (the same `Arc`, set as the tiles arrive; no copy).
@@ -238,6 +302,7 @@ pub fn world_ride(
             .with_ground(Some(ground))
             .with_woods(Some(woods)),
     );
+    stage("ride: road network");
     let profile = RiderProfile::default();
     let route_name = match (&opts.route, opts.free_ride) {
         (_, true) => None,
@@ -337,13 +402,16 @@ pub fn course_tiles(
     opts: &WorldOptions,
     rings: i32,
 ) -> Option<BTreeSet<TileKey>> {
-    let net = RoadNetwork::new(pkg.graph.clone()?);
+    // From the graph alone: a `RoadNetwork` (its junctions, adjacency)
+    // took Tenerife's heap 100 – 170 MB higher for a moment while the
+    // base was decoded (10G, v6.99); the ride builds its own afterwards.
+    let graph = pkg.graph.as_deref()?;
     let (points, r) = match wanted_route(pkg, opts) {
-        Some(route) => (route.resolve(&net).ok()?.points(&net, 200.0), rings),
+        Some(route) => (route_points(graph, route, 200.0)?, rings),
         None if opts.route.is_some() && !opts.free_ride => return None,
         None => {
-            let (edge, offset, _) = net.random_start(1)?;
-            let p = net.geometry(edge).point_at(offset);
+            let (edge, offset, _) = RoadNetwork::random_start_in(graph, 1)?;
+            let p = ocw_world::network::EdgeGeometry::new(&graph.edges[edge]).point_at(offset);
             (vec![[p[0], p[2]]], rings.max(FREE_RIDE_RINGS))
         }
     };
@@ -361,6 +429,38 @@ pub fn course_tiles(
         }
     }
     Some(keep)
+}
+
+/// Points every `step_m` along `route` on `graph` (x, z), as
+/// `RoutePlan::points` gives them, without a network (`None`: an edge of
+/// the route is not in the graph).
+fn route_points(
+    graph: &ocw_world::graph::RoadGraph,
+    route: &ocw_world::GraphRoute,
+    step_m: f64,
+) -> Option<Vec<[f64; 2]>> {
+    let by_id: std::collections::HashMap<_, usize> = graph
+        .edges
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.id, i))
+        .collect();
+    let mut out: Vec<[f64; 2]> = Vec::new();
+    for s in &route.steps {
+        let ocw_world::RouteStep::Edge { id, from_m, to_m } = *s else {
+            continue;
+        };
+        let g = ocw_world::network::EdgeGeometry::new(&graph.edges[*by_id.get(&id)?]);
+        let (from_m, to_m) = (from_m.clamp(0.0, g.length()), to_m.clamp(0.0, g.length()));
+        let len = (to_m - from_m).abs();
+        let n = (len / step_m.max(0.5)).ceil().max(1.0) as usize;
+        for k in 0..=n {
+            let t = k as f64 / n as f64;
+            let p = g.point_at(from_m + (to_m - from_m) * t);
+            out.push([p[0], p[2]]);
+        }
+    }
+    Some(out)
 }
 
 /// `Vaduz–Malbun` → `vaduz-malbun` (route names in page links).
@@ -413,6 +513,10 @@ pub struct WorldStream {
     /// The trees off the road (spec 14 Phase 13 Q10): the resident tiles'
     /// package is shared with it.
     woods: Option<Arc<ocw_world::woods::Woods>>,
+    /// When the ride started (s) and the memory last logged as a stage
+    /// since (the world-wide builds of the first frames, 10G).
+    started_s: f64,
+    stage_mark: u64,
 }
 
 impl WorldStream {
@@ -440,6 +544,8 @@ impl WorldStream {
             obstacles: None,
             lamp_pkg: None,
             woods: None,
+            started_s: 0.0,
+            stage_mark: 0,
         }
     }
 
@@ -513,8 +619,10 @@ fn on_base(stream: &mut WorldStream, base: StreamBase) -> Result<(), String> {
         &stream.session.name,
     )?;
     info!("world ride: {}", ride.description);
+    stage(&format!("ride prepared: {}", ride.description));
     let mut resident = ResidentTiles::new(base.package, &base.file, stream.options.residency);
     let first = resident.update(ride.start);
+    stage(&format!("{} first tiles asked for", first.len()));
     let n = stream.request(first);
     stream
         .shared
@@ -655,6 +763,16 @@ pub fn stream_world(world: &mut World) {
         let s = stream.shared.lock().expect("not poisoned");
         stream.screen = s.progress.lines();
     }
+    // The first seconds of the ride (the renderer's world-wide builds –
+    // far terrain, colour maps, the first tiles' meshes – come in these
+    // frames): a stage line each time the memory grew by STAGE_STEP.
+    if stream.started && now - stream.started_s < RIDE_STAGES_S {
+        let used = memory_mark();
+        if used >= stream.stage_mark + STAGE_STEP {
+            stream.stage_mark = used;
+            stage(&format!("riding {:.1} s", now - stream.started_s));
+        }
+    }
     if stream.started && now - stream.last_log_s >= LOG_INTERVAL_S {
         stream.last_log_s = now;
         info!("{}", stream.status_line(crate::wasm_memory_bytes()));
@@ -762,6 +880,8 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
         return;
     };
     stream.started = true;
+    stream.started_s = now;
+    stream.stage_mark = memory_mark();
     stream.last_publish_s = now;
     stream.road_feel = match &ride.course {
         Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => {
@@ -792,10 +912,12 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
     if let Some(w) = &stream.woods {
         w.set_package(pkg.clone());
     }
+    stage(&format!("first tiles here ({} tiles)", pkg.tiles.len()));
     world.insert_resource(PackageWorld {
         set: Arc::new(WorldSet::new(&id, pkg)),
         loader: None,
     });
+    stage("world set made");
     // The local server, or a remote one (B3) on the same package.
     let transport = crate::plugin::MakeTransport::for_config(world, &stream.session);
     let config = SessionConfig {
@@ -803,6 +925,7 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
         ..stream.session.clone()
     };
     let session = WebSession::start(ride.course, ride.client, &config, transport);
+    stage("session started");
     world.insert_resource(Session(session));
     world.insert_resource(Place(zone));
     if let Some(mut view) = world.get_resource_mut::<RideView>() {
@@ -810,6 +933,7 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
         view.riders.clear();
     }
     ocw_render::rebuild_scene(world);
+    stage("scene rebuilt: riding");
     let summary = {
         let mut s = stream.shared.lock().expect("not poisoned");
         if s.progress.stage == Stage::FirstTiles {
@@ -1181,9 +1305,14 @@ pub(crate) mod tests {
         assert!((me.distance - st.distance).abs() < 0.5, "{me:?} {st:?}");
     }
 
-    /// The package published at `worlds/test/strip/2/` (unsigned).
+    /// The package published at `worlds/test/strip/2/` (unsigned), with
+    /// a road traffic section (the browser leaves it out, 10G).
     pub(crate) fn server() -> MemoryFetch {
-        let bytes = package().to_bytes();
+        let bytes = WorldPackage {
+            traffic: Some(Arc::new(ocw_world::traffic::TrafficData::default())),
+            ..package()
+        }
+        .to_bytes();
         let mut m = Manifest::new("test/strip", "Strip", 2, 0, "test", vec![]).unwrap();
         m.add_file("strip.ocwpkg", &bytes).unwrap();
         MemoryFetch::with([
@@ -1224,6 +1353,105 @@ pub(crate) mod tests {
                 Box::new(move || (t.fetch_add(5, std::sync::atomic::Ordering::Relaxed) + 5) as f64),
             ),
         ))
+    }
+
+    /// The browser neither fetches nor decodes the road traffic's section
+    /// (spec 14 Phase 18 Q9 (b): it shows no road traffic; 10G, the
+    /// iPhone's memory); `?base=all` (bisecting) loads it.
+    #[test]
+    fn the_browser_skips_the_traffic_section() {
+        let config = options().stream_config(0).unwrap();
+        assert_eq!(config.skip_sections, vec![*ocw_world::traffic::TRAFFIC_TAG]);
+        assert!(config.log.is_some(), "the stages go to the page log");
+        let all = WorldOptions {
+            skip_sections: Vec::new(),
+            ..options()
+        };
+        assert!(all.stream_config(0).unwrap().skip_sections.is_empty());
+        // Over the in-memory server: the base comes without it.
+        let d = driver(server(), Arc::new(MemoryStore::default()), &options());
+        let shared = Mutex::new(StreamShared::default());
+        let mut drv = d.0.lock().unwrap();
+        for _ in 0..64 {
+            if !bevy::tasks::block_on(drv.step(&shared)) {
+                break;
+            }
+        }
+        let s = shared.lock().unwrap();
+        let base = s.base.as_ref().expect("the base");
+        assert!(base.package.base().traffic.is_none());
+        assert!(base.package.base().graph.is_some());
+        // With `base=all` it is there.
+        let d = driver(server(), Arc::new(MemoryStore::default()), &all);
+        let shared = Mutex::new(StreamShared::default());
+        let mut drv = d.0.lock().unwrap();
+        for _ in 0..64 {
+            if !bevy::tasks::block_on(drv.step(&shared)) {
+                break;
+            }
+        }
+        let s = shared.lock().unwrap();
+        assert!(
+            s.base
+                .as_ref()
+                .expect("the base")
+                .package
+                .base()
+                .traffic
+                .is_some()
+        );
+    }
+
+    /// A phone's course tiles come from the graph alone (no network built
+    /// while the base is decoded, 10G) and are those of the resolved route
+    /// / the free ride's start on a network.
+    #[test]
+    fn course_tiles_without_a_network_match_the_network() {
+        let pkg = package();
+        let via_net = |opts: &WorldOptions, rings: i32| {
+            let net = RoadNetwork::new(pkg.graph.clone().unwrap());
+            let (points, r) = match wanted_route(&pkg, opts) {
+                Some(route) => (route.resolve(&net).unwrap().points(&net, 200.0), rings),
+                None => {
+                    let (e, o, _) = net.random_start(1).unwrap();
+                    let p = net.geometry(e).point_at(o);
+                    (vec![[p[0], p[2]]], rings.max(FREE_RIDE_RINGS))
+                }
+            };
+            let mut keep = BTreeSet::new();
+            for p in points {
+                let c = TileKey::containing(p, 1000.0);
+                for dz in -r..=r {
+                    for dx in -r..=r {
+                        keep.insert(TileKey {
+                            x: c.x + dx,
+                            z: c.z + dz,
+                        });
+                    }
+                }
+            }
+            keep
+        };
+        for rings in [0, 2, 3] {
+            let route = options();
+            assert_eq!(
+                course_tiles(&pkg, &route, rings).unwrap(),
+                via_net(&route, rings)
+            );
+            let free = WorldOptions {
+                free_ride: true,
+                ..options()
+            };
+            assert_eq!(
+                course_tiles(&pkg, &free, rings).unwrap(),
+                via_net(&free, rings)
+            );
+        }
+        let moon = WorldOptions {
+            route: Some("moon".into()),
+            ..options()
+        };
+        assert!(course_tiles(&pkg, &moon, 2).is_none());
     }
 
     #[test]

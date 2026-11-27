@@ -52,6 +52,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -218,14 +219,15 @@ def children(pid):
     return out
 
 
-def webkit_rss():
-    """The RSS (MB) of this test's WebKit web and GPU processes."""
+def webkit_rss(field="VmRSS:"):
+    """The RSS (MB) of this test's WebKit web and GPU processes (`field`
+    "VmHWM:": their highest RSS so far)."""
     rss = {"web": 0.0, "gpu": 0.0, "network": 0.0, "other": 0.0}
     for p in children(os.getpid()):
         try:
             name = open(f"/proc/{p}/comm").read().strip()
             with open(f"/proc/{p}/status") as f:
-                kb = next((int(line.split()[1]) for line in f if line.startswith("VmRSS:")), 0)
+                kb = next((int(line.split()[1]) for line in f if line.startswith(field)), 0)
         except (OSError, StopIteration, ValueError):
             continue
         key = ("web" if "WebProcess" in name or "WebKitWebProces" in name else
@@ -233,6 +235,27 @@ def webkit_rss():
                "network" if "Network" in name else "other")
         rss[key] += kb / 1024.0
     return rss
+
+
+# "world load: base: section LUSE (3.20 MB) decoded – wasm 212 MB, heap 160 MB (peak 171 MB)"
+STAGE_RE = re.compile(r"world load: (.*?) – (?:wasm (\d+) MB, )?heap (\d+) MB \(peak (\d+) MB\)")
+
+
+def stage_rows(stage_lines, rss_samples):
+    """The world load's stages (10G) with the WebKit web process's highest
+    RSS since the stage before: [{t, stage, wasm_mb, heap_mb, heap_peak_mb,
+    rss_web_mb}]. `stage_lines`: [(t, text)], `rss_samples`: [(t, web MB)]."""
+    rows, prev_t = [], -1.0
+    for t, text in stage_lines:
+        m = STAGE_RE.search(text)
+        if not m:
+            continue
+        rss = max((r for (ts, r) in rss_samples if prev_t < ts <= t + 0.05), default=None)
+        rows.append({"t": round(t, 2), "stage": m.group(1), "wasm_mb": int(m.group(2)) if m.group(2) else None,
+                     "heap_mb": int(m.group(3)), "heap_peak_mb": int(m.group(4)),
+                     "rss_web_mb": round(rss, 1) if rss is not None else None})
+        prev_t = t
+    return rows
 
 
 def image_drawn(path):
@@ -278,6 +301,10 @@ def main():
     p.add_argument("--site", default=None,
                    help="ride a deployed site instead of --dir (e.g. https://newkit.github.io/OCW/)")
     p.add_argument("--trust-root", default=None)
+    p.add_argument("--viewport", default=None,
+                   help="WxH of the phone instead of the iPhone 15's (the reporting iPhone of 10G: 430x932)")
+    p.add_argument("--stage-budget-mb", type=float, default=0.0,
+                   help="the wasm memory a world's load may reach up to the ride's start (MB; 0: no check)")
     p.add_argument("--python", default=None)
     a = p.parse_args()
     if not in_venv():
@@ -335,11 +362,34 @@ def main():
         browser = pw.webkit.launch()
         summary["webkit"] = browser.version
         dev = dict(pw.devices["iPhone 15 landscape" if a.landscape else "iPhone 15"])
+        if a.viewport:
+            w, h = (int(v) for v in a.viewport.lower().split("x"))
+            dev["viewport"] = {"width": w, "height": h} if not a.landscape else {"width": h, "height": w}
+            dev["screen"] = dict(dev["viewport"])
         ctx = browser.new_context(**dev)
         ctx.add_init_script(FAKE_GPU)
         ctx.add_init_script(GL_TRACK)
         pg = ctx.new_page()
-        pg.on("console", lambda m: lines.append(f"{time.time() - t0:8.2f} s  {m.type}: {m.text[:700]}"))
+        stage_lines, rss_samples = [], []
+
+        def on_console(m):
+            t = time.time() - t0
+            lines.append(f"{t:8.2f} s  {m.type}: {m.text[:700]}")
+            if "world load: " in m.text:
+                stage_lines.append((t, m.text))
+
+        pg.on("console", on_console)
+        # The web process's RSS every 50 ms while the world loads (WebKit
+        # has no performance.memory: this is the page's whole footprint, JS
+        # heap included).
+        sampling = {"on": True}
+
+        def rss_loop():
+            while sampling["on"]:
+                rss_samples.append((time.time() - t0, webkit_rss()["web"]))
+                time.sleep(0.05)
+
+        threading.Thread(target=rss_loop, daemon=True).start()
         pg.on("pageerror", lambda e: (lines.append(f"{time.time() - t0:8.2f} s  PAGEERROR {e}"),
                                       errors.append(str(e)[:400])))
         pg.on("crash", lambda _p: (crashes.append(time.time() - t0), lines.append(f"{time.time() - t0:8.2f} s  CRASH")))
@@ -486,7 +536,31 @@ def main():
             except Exception as e:  # noqa: BLE001
                 lines.append(f"wait: {e}")
             ready_t = time.time()
+            sampling["on"] = False
             st = sample("ready")
+            if a.world:
+                rows = stage_rows(stage_lines, rss_samples)
+                hwm = webkit_rss("VmHWM:")
+                summary["stages"] = rows
+                summary["load_rss_hwm_mb"] = round(hwm["web"], 1)
+                print("  world load stages (wasm / heap / heap peak / web process RSS, MB):")
+                for r in rows:
+                    print(f"    {r['t']:7.2f} s  {r['wasm_mb'] or '-':>5}  {r['heap_mb']:>5}  {r['heap_peak_mb']:>5}  "
+                          f"{r['rss_web_mb'] or '-':>7}  {r['stage']}", flush=True)
+                print(f"  web process RSS high-water mark at the start: {hwm['web']:.0f} MB", flush=True)
+                check("the world load logs its stages with the memory (base, sections, ride, first tiles)",
+                      any(r["stage"].startswith("base: section ") for r in rows)
+                      and any(r["stage"] == "base decoded" for r in rows)
+                      and any(r["stage"].startswith("ride prepared") for r in rows)
+                      and any(r["stage"].startswith("scene rebuilt") for r in rows),
+                      [r["stage"] for r in rows][:40])
+                check("the browser leaves the road traffic's section (TRFC) out of the base",
+                      not any("section TRFC" in r["stage"] and "decoded" in r["stage"] for r in rows),
+                      [r["stage"] for r in rows if "TRFC" in r["stage"] or "left out" in r["stage"]])
+                if a.stage_budget_mb > 0:
+                    load_wasm = max((r["wasm_mb"] or 0 for r in rows), default=0)
+                    check(f"the world's load stays under {a.stage_budget_mb:g} MB of wasm memory up to the ride's start",
+                          0 < load_wasm <= a.stage_budget_mb, f"{load_wasm} MB")
 
             def lamp_bump(pg):
                 """A bump into a streamed tile's lamp pole (K3): the server's

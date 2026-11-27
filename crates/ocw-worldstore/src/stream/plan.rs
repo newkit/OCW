@@ -88,6 +88,28 @@ pub fn base_chunks(file: &FileEntry) -> Vec<usize> {
     v
 }
 
+/// `wanted` (chunk indices by offset) in consecutive batches of at least
+/// one chunk and about `bytes` (the base fetched and decoded a batch at a
+/// time, spec 14 Phase 10, 10G).
+pub fn base_batches(file: &FileEntry, wanted: &[usize], bytes: u64) -> Vec<Vec<usize>> {
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    let mut size = 0u64;
+    for &i in wanted {
+        let c = file.chunks[i].size;
+        match out.last_mut() {
+            Some(b) if size + c <= bytes.max(1) => {
+                b.push(i);
+                size += c;
+            }
+            _ => {
+                out.push(vec![i]);
+                size = c;
+            }
+        }
+    }
+    out
+}
+
 /// The tile chunks by key.
 pub fn tile_chunks(file: &FileEntry) -> BTreeMap<TileKey, usize> {
     file.chunks

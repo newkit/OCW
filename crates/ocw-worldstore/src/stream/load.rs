@@ -223,6 +223,35 @@ pub async fn load_chunks<F: RangeFetch, S: ChunkStore>(
     params: RangeParams,
     progress: &mut dyn FnMut(u64, Source),
 ) -> Result<(Vec<LoadedChunk>, LoadStats), StreamError> {
+    load_chunks_logged(
+        fetch,
+        cache,
+        manifest,
+        file,
+        file_url,
+        wanted,
+        params,
+        progress,
+        &mut |_| {},
+    )
+    .await
+}
+
+/// [`load_chunks`] telling `log` of its stages (the base's page log
+/// lines, spec 14 Phase 10, 10G): fetched and verified, stored in the
+/// cache.
+#[allow(clippy::too_many_arguments)]
+pub async fn load_chunks_logged<F: RangeFetch, S: ChunkStore>(
+    fetch: &F,
+    cache: Option<&ChunkCache<S>>,
+    manifest: &Manifest,
+    file: &FileEntry,
+    file_url: &str,
+    wanted: &[usize],
+    params: RangeParams,
+    progress: &mut dyn FnMut(u64, Source),
+    log: &mut dyn FnMut(String),
+) -> Result<(Vec<LoadedChunk>, LoadStats), StreamError> {
     let mut stats = LoadStats::default();
     let mut got: BTreeMap<usize, LoadedChunk> = BTreeMap::new();
     let mut missing = Vec::new();
@@ -257,10 +286,23 @@ pub async fn load_chunks<F: RangeFetch, S: ChunkStore>(
     let mut retry = Vec::new();
     for req in plan_ranges(file, &missing, params) {
         let body = fetch_range(fetch, file_url, req.range.clone(), &mut stats).await?;
+        // A request of one chunk (a big section: Tenerife's land use is
+        // 75 MB) is that chunk: kept as it came, not copied (10G).
+        let one = req.chunks.len() == 1
+            && file.chunks[req.chunks[0]].offset == req.range.start
+            && file.chunks[req.chunks[0]].size == body.len() as u64;
+        let (mut whole, body) = if one {
+            (Some(body), Vec::new())
+        } else {
+            (None, body)
+        };
         for i in req.chunks {
             let c = &file.chunks[i];
             let at = (c.offset - req.range.start) as usize;
-            let bytes = body[at..at + c.size as usize].to_vec();
+            let bytes = match whole.take() {
+                Some(b) => b,
+                None => body[at..at + c.size as usize].to_vec(),
+            };
             if manifest.verify_chunk(&file.path, &c.name, &bytes).is_ok() {
                 got.insert(
                     i,
@@ -294,8 +336,16 @@ pub async fn load_chunks<F: RangeFetch, S: ChunkStore>(
             },
         );
     }
+    log(format!(
+        "{} chunks verified ({:.1} MB from the network, {:.1} MB from the cache)",
+        got.len(),
+        stats.network_bytes as f64 / 1e6,
+        stats.cache_bytes as f64 / 1e6
+    ));
+    let mut stored = 0u64;
     for chunk in got.values().filter(|c| c.source == Source::Network) {
         let c = &file.chunks[chunk.index];
+        stored += c.size;
         stats.network_chunks += 1;
         progress(c.size, Source::Network);
         if let Some(cache) = cache {
@@ -304,6 +354,12 @@ pub async fn load_chunks<F: RangeFetch, S: ChunkStore>(
                 .put(&manifest.id, manifest.version, c, &chunk.bytes)
                 .await;
         }
+    }
+    if cache.is_some() && stored > 0 {
+        log(format!(
+            "{:.1} MB written to the cache",
+            stored as f64 / 1e6
+        ));
     }
     let mut out = Vec::with_capacity(got.len());
     let mut seen = std::collections::BTreeSet::new();

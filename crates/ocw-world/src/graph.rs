@@ -111,7 +111,13 @@ pub struct Edge {
 /// FNV-1a, 64 bit: a small, stable content hash (not cryptographic; the
 /// package signature, spec §4.7, covers tampering).
 pub fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    fnv1a_from(FNV_START, bytes)
+}
+
+const FNV_START: u64 = 0xcbf2_9ce4_8422_2325;
+
+/// FNV-1a over `bytes` going on from the state `h` (chunks hash as one).
+pub fn fnv1a_from(mut h: u64, bytes: &[u8]) -> u64 {
     for &b in bytes {
         h ^= u64::from(b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
@@ -184,9 +190,15 @@ impl RoadGraph {
     /// encoding): client and server must ride the same graph, since
     /// junctions are vertex indices (spec §6.5); it is sent in the Welcome.
     pub fn fingerprint(&self) -> u64 {
-        let mut bytes = Vec::new();
-        crate::package::write_graph(self, &mut bytes);
-        fnv1a(&bytes)
+        // Hashed 64 kB at a time (FNV-1a goes on from its state): the same
+        // value as over the whole written graph, without holding it.
+        let mut h = FNV_START;
+        let mut bytes = Vec::with_capacity(1 << 16);
+        crate::package::write_graph_with(self, &mut bytes, 1 << 16, &mut |b| {
+            h = fnv1a_from(h, b);
+            b.clear();
+        });
+        h
     }
 
     pub fn total_length_m(&self) -> f64 {
@@ -406,6 +418,35 @@ impl RoadGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fingerprint hashed in pieces is the hash of the whole written
+    /// graph (the stored junctions' `JNCT` compare it), and a long graph
+    /// is written through many flushes.
+    #[test]
+    fn the_fingerprint_hashed_in_pieces_is_the_whole_hash() {
+        let n = 5000u32;
+        let vertices: Vec<[f64; 2]> = (0..=n).map(|i| [f64::from(i) * 10.0, 0.0]).collect();
+        let edges: Vec<(u32, u32)> = (0..n).map(|i| (i, i + 1)).collect();
+        let mut g = graph(&vertices, &edges);
+        g.edges[3].name = Some("Landstrasse".into());
+        let mut whole = Vec::new();
+        crate::package::write_graph(&g, &mut whole);
+        assert!(whole.len() > 3 << 16);
+        assert_eq!(g.fingerprint(), fnv1a(&whole));
+        let mut pieces = 0;
+        let mut joined = Vec::new();
+        crate::package::write_graph_with(&g, &mut Vec::new(), 1 << 16, &mut |b| {
+            pieces += 1;
+            joined.extend_from_slice(b);
+            b.clear();
+        });
+        assert!(pieces > 3);
+        assert_eq!(joined, whole);
+        assert_eq!(
+            fnv1a_from(fnv1a(&whole[..100]), &whole[100..]),
+            fnv1a(&whole)
+        );
+    }
 
     /// Builds a graph from straight edges between named vertex positions.
     pub(crate) fn graph(vertices: &[[f64; 2]], edges: &[(u32, u32)]) -> RoadGraph {
