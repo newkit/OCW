@@ -6,7 +6,7 @@
 //! `ocw_sim::traffic::PlanFollower` drives each vehicle as the server's
 //! follower does.
 
-use ocw_sim::traffic::{DriverParams, Motion, Plan, PlanChange, Step, Tick, VehicleClass};
+use ocw_sim::traffic::{DriverParams, Motion, Plan, PlanChange, Shift, Step, Tick, VehicleClass};
 
 use crate::v1;
 
@@ -82,6 +82,9 @@ pub fn spawn_to_wire(p: &Plan, update_tick: Tick) -> v1::TrafficSpawn {
         motion,
         accel,
         target,
+        shift_at: p.shift.at,
+        shift_to: p.shift.to,
+        shift_rate: p.shift.rate,
     }
 }
 
@@ -113,6 +116,11 @@ pub fn spawn_from_wire(m: &v1::TrafficSpawn, update_tick: Tick) -> Option<Plan> 
         v: m.v,
         lane: m.lane.min(15) as u8,
         motion: motion_from_wire(m.motion, m.accel, m.target),
+        shift: Shift {
+            at: m.shift_at,
+            to: m.shift_to,
+            rate: m.shift_rate,
+        },
     })
 }
 
@@ -130,6 +138,9 @@ pub fn change_to_wire(c: &PlanChange, update_tick: Tick) -> v1::TrafficChange {
         accel,
         target,
         extend: (!c.extend.is_empty()).then(|| route_to_wire(&c.extend)),
+        shift_at: c.shift.at,
+        shift_to: c.shift.to,
+        shift_rate: c.shift.rate,
     }
 }
 
@@ -148,6 +159,11 @@ pub fn change_from_wire(m: &v1::TrafficChange, update_tick: Tick) -> Option<Plan
         lane: m.lane.min(15) as u8,
         motion: motion_from_wire(m.motion, m.accel, m.target),
         extend,
+        shift: Shift {
+            at: m.shift_at,
+            to: m.shift_to,
+            rate: m.shift_rate,
+        },
     })
 }
 
@@ -191,6 +207,11 @@ mod tests {
                 a: -1.25,
                 target: 4.5,
             },
+            shift: Shift {
+                at: 0.4,
+                to: 1.75,
+                rate: 0.6,
+            },
         }
     }
 
@@ -210,6 +231,11 @@ mod tests {
                     lane: 0,
                     motion: Motion::Stopped,
                     extend: p.route.clone(),
+                    shift: Shift {
+                        at: -0.3,
+                        to: 0.0,
+                        rate: 0.5,
+                    },
                 },
                 1000,
             )],
@@ -229,6 +255,7 @@ mod tests {
         let c = change_from_wire(&back.changes[0], back.tick).unwrap();
         assert_eq!((c.tick, c.step, c.motion), (995, 4, Motion::Stopped));
         assert_eq!(c.extend, p.route);
+        assert_eq!((c.shift.at, c.shift.to, c.shift.rate), (-0.3, 0.0, 0.5));
         assert_eq!(back.despawns, vec![5, 6]);
         assert!(back.reset);
         assert_eq!(back.graph_hash, 0x1234_5678_9ABC_DEF0);
@@ -260,7 +287,7 @@ mod tests {
     fn a_spawn_is_small() {
         let mut p = plan();
         let two = prost::Message::encoded_len(&spawn_to_wire(&p, 1000));
-        assert!(two < 120, "{two} bytes");
+        assert!(two < 135, "{two} bytes");
         let step = p.route[1];
         p.route.extend(std::iter::repeat_n(step, 10));
         let twelve = prost::Message::encoded_len(&spawn_to_wire(&p, 1000));

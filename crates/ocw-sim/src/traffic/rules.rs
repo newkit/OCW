@@ -8,6 +8,8 @@
 use ocw_world::RoadNetwork;
 use ocw_world::graph::{Oneway, RoadClass, VertexId};
 
+pub use super::around::PassRule;
+
 /// The kinds of road vehicle (spec 18B *Vehicles*).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VehicleClass {
@@ -204,6 +206,14 @@ pub trait EdgeRules {
     ) -> Option<Control> {
         let _ = (net, vertex, edge, forward);
         None
+    }
+
+    /// The rules for passing riders on `edge` (T4): the country's legal
+    /// distance, in town or not, `overtaking=no`. The default is
+    /// [`PassRule::implied`] from the class and the limit.
+    fn passing(&self, net: &RoadNetwork, edge: usize) -> PassRule {
+        let r = self.edge_rule(net, edge);
+        PassRule::implied(net.edge(edge).class, r.speed)
     }
 }
 

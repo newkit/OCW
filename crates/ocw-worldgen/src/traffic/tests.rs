@@ -476,14 +476,14 @@ fn speed_coverage_counts_roads_without_a_limit() {
 /// them.
 #[test]
 fn the_traffic_core_drives_by_the_built_rules() {
-    use ocw_sim::traffic::package::PackageRules;
+    use ocw_sim::traffic::WorldRules;
     use ocw_sim::traffic::{
         Bubble, Control, DemandTime, EdgeRules as _, TrafficConfig, TrafficLevel, TrafficSim,
         VehicleClass,
     };
     let (pkg, _) = built("Europe/Vaduz", true);
     let net = ocw_world::RoadNetwork::new(pkg.graph.clone().unwrap()).with_traffic_of(&pkg);
-    let rules = PackageRules::new(&net);
+    let rules = WorldRules::new(&net);
     assert!(rules.from_data());
     let index = |e: &Edge| net.edge_index(e.id).unwrap();
     let street = index(&edge_of(&pkg, 101, 0));

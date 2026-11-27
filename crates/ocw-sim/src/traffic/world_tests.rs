@@ -1,9 +1,9 @@
-//! Tests of the package rules adapter (spec 18E T5).
+//! Tests of the package rules adapter [`WorldRules`] (spec 18E T5).
 
 use std::sync::Arc;
 
 use ocw_world::graph::{Edge, EdgeId, Oneway, RoadGraph};
-use ocw_world::traffic::{Applies, EdgeRules as WorldRules, NodeControl, TrafficData};
+use ocw_world::traffic::{Applies, EdgeRules as WorldEdge, NodeControl, TrafficData};
 
 use super::*;
 use crate::traffic::{Bubble, DemandTime, TrafficConfig, TrafficEvent, TrafficLevel, TrafficSim};
@@ -72,7 +72,7 @@ fn control(edge: u64, along_m: f32, kind: ControlKind, at_junction: bool) -> Nod
 /// south arm a give-way sign 20 m before the junction; lights at a
 /// crossing on the west arm.
 fn data() -> TrafficData {
-    let base = |c| WorldRules::implied(c, Country::Li, false);
+    let base = |c| WorldEdge::implied(c, Country::Li, false);
     let mut edges = BTreeMap::new();
     let mut north = base(RoadClass::Secondary);
     north.access = north.access.with(Vehicle::Hgv, false);
@@ -110,7 +110,7 @@ fn net(data: Option<TrafficData>) -> RoadNetwork {
 #[test]
 fn the_packages_rules_map_onto_the_core() {
     let n = net(Some(data()));
-    let r = PackageRules::new(&n);
+    let r = WorldRules::new(&n);
     assert!(r.from_data());
     assert_eq!(r.country(), Country::Li);
     assert_eq!(region_of(r.country()), Region::Li);
@@ -155,7 +155,7 @@ fn signals_on_one_arm_signal_every_arm() {
     let mut d = data();
     d.controls = vec![control(100, 0.0, ControlKind::Signals, true)];
     let n = net(Some(d));
-    let r = PackageRules::new(&n);
+    let r = WorldRules::new(&n);
     for e in 0..4 {
         assert_eq!(
             r.node_control(&n, VertexId(0), e, false),
@@ -168,7 +168,7 @@ fn signals_on_one_arm_signal_every_arm() {
     let mut d = data();
     d.controls = vec![control(102, 100.0, ControlKind::Stop, false)];
     let n = net(Some(d));
-    let r = PackageRules::new(&n);
+    let r = WorldRules::new(&n);
     assert_eq!(r.node_control(&n, VertexId(0), 2, false), None);
 }
 
@@ -176,10 +176,10 @@ fn signals_on_one_arm_signal_every_arm() {
 #[test]
 fn without_trfc_the_implied_rules_apply() {
     let n = net(None);
-    let r = PackageRules::new(&n);
+    let r = WorldRules::new(&n);
     assert!(!r.from_data());
     for (i, e) in n.graph().edges.iter().enumerate() {
-        let want = edge_rule(&WorldRules::implied(e.class, Country::Li, false), e.class);
+        let want = edge_rule(&WorldEdge::implied(e.class, Country::Li, false), e.class);
         assert_eq!(r.edge_rule(&n, i), want);
     }
     assert!(r.edge_rule(&n, 4).access.is_none(), "cycleway");
@@ -187,7 +187,7 @@ fn without_trfc_the_implied_rules_apply() {
     assert_eq!(r.node_control(&n, VertexId(0), 0, false), None);
     // Tracks: tractors only, unless the package opens them.
     let track = edge_rule(
-        &WorldRules::implied(RoadClass::Track, Country::De, false),
+        &WorldEdge::implied(RoadClass::Track, Country::De, false),
         RoadClass::Track,
     );
     assert_eq!(track.access, Access::only(&[VehicleClass::Tractor]));

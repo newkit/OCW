@@ -33,8 +33,8 @@ use ocw_protocol::v1;
 use ocw_protocol::vehicles::{change_to_wire, spawn_to_wire};
 use ocw_protocol::{encode, server_message};
 use ocw_sim::traffic::{
-    Bubble, DemandTime, DriverManners, Plan, Region, RoadUser, TrafficConfig, TrafficEvent,
-    TrafficLevel, TrafficSim, package,
+    Bubble, DemandTime, DriverManners, Gust, Plan, Region, RiderEvent, RoadUser, TrafficConfig,
+    TrafficEvent, TrafficLevel, TrafficSim, world,
 };
 use ocw_world::RoadNetwork;
 
@@ -49,8 +49,6 @@ pub const BUBBLE_M: f64 = 1500.0;
 /// A bare update at least this often while a rider has vehicles (ticks of
 /// the traffic: 1 s), for the client's traffic clock.
 const HEARTBEAT_TICKS: u64 = 50;
-/// The length a rider takes on the road (m).
-const RIDER_LENGTH_M: f64 = 1.8;
 
 /// The sim's level of the session's road traffic.
 pub fn level_of(l: RoadTraffic) -> TrafficLevel {
@@ -80,6 +78,17 @@ struct Interest {
     reset: bool,
     /// The traffic tick of its last update.
     last_tick: Option<u64>,
+}
+
+/// The vehicles' encounters with riders (T4's events), counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TrafficRiderStats {
+    pub passes: u64,
+    pub contacts: u64,
+    pub honks: u64,
+    pub approaching: u64,
+    /// Rider-ticks with a vehicle's air on them.
+    pub gusts: u64,
 }
 
 /// Bytes and messages sent, for the tests and `ocw-server`'s log.
@@ -114,6 +123,7 @@ pub(crate) struct ServerVehicles {
     route_net: Option<(u64, Arc<RoadNetwork>)>,
     interest: BTreeMap<ConnectionId, Interest>,
     sent: BTreeMap<ConnectionId, TrafficSent>,
+    rider_stats: TrafficRiderStats,
 }
 
 impl ServerVehicles {
@@ -167,26 +177,30 @@ impl GameServer {
         let user = if self.session.off_road(id).is_some() {
             None
         } else if self.session.network().is_none() {
-            // A route course: its road ([`package::route_network`]).
+            // A route course: its road ([`world::route_network`]).
             let (_, net) = self.vehicles.route_net.as_ref()?;
-            let (edge, along) = package::on_route_network(net, self.session.route(), s.distance);
+            let (edge, along) = world::on_route_network(net, self.session.route(), s.distance);
             Some(RoadUser {
+                id: id.0,
                 edge,
                 s: along,
                 forward: true,
                 speed: s.speed,
-                length: RIDER_LENGTH_M,
+                lateral: s.lateral_offset,
+                ..Default::default()
             })
         } else {
             self.session
                 .path(id)
                 .and_then(|path| path.locate(s.distance))
                 .map(|(edge, forward, along)| RoadUser {
+                    id: id.0,
                     edge,
                     s: along,
                     forward,
                     speed: s.speed,
-                    length: RIDER_LENGTH_M,
+                    lateral: s.lateral_offset,
+                    ..Default::default()
                 })
         };
         Some(([p[0], p[2]], user))
@@ -214,7 +228,7 @@ impl GameServer {
                 .as_ref()
                 .is_none_or(|(k, _)| *k != key)
             {
-                self.vehicles.route_net = Some((key, Arc::new(package::route_network(route))));
+                self.vehicles.route_net = Some((key, Arc::new(world::route_network(route))));
             }
             self.vehicles.route_net.as_ref().map(|(_, n)| n.clone())
         };
@@ -236,8 +250,8 @@ impl GameServer {
             self.vehicles.world_changed();
         }
         if self.vehicles.run.is_none() {
-            let rules_src = package::PackageRules::new(&net);
-            let region = package::region_of(rules_src.country());
+            let rules_src = world::WorldRules::new(&net);
+            let region = world::region_of(rules_src.country());
             tracing::info!(
                 level = %rules.summary(),
                 trfc = rules_src.from_data(),
@@ -303,9 +317,17 @@ impl GameServer {
                 d
             }
         };
+        // Vehicles and riders touch only with collisions on (12A, Q4).
+        let collisions = self.session.collision_mode() != ocw_sim::collide::Mode::Off;
+        if run.sim.config().collisions != collisions {
+            run.sim.set_collisions(collisions);
+        }
         run.sim.step(&net, &bubbles, &users, &time);
         let events = run.sim.drain_events();
         run.pending.extend(events);
+        let rider_events = run.sim.drain_rider_events();
+        let gusts = run.sim.gusts().to_vec();
+        self.vehicle_rider_events(rider_events, &gusts);
         if self
             .session
             .tick()
@@ -313,6 +335,49 @@ impl GameServer {
         {
             self.vehicles_updates(&centres);
         }
+    }
+
+    /// What the vehicles did to the riders this tick (T4's events): a
+    /// contact is 12B's response with the collision rules in force (a
+    /// crash or a bump, the damage by 12E); a lorry's air a wobble; passes,
+    /// honks and vehicles closing in from behind are counted
+    /// ([`GameServer::traffic_rider_stats`]) for the client's sound and HUD
+    /// (T7).
+    fn vehicle_rider_events(&mut self, events: Vec<RiderEvent>, gusts: &[Gust]) {
+        for ev in events {
+            let st = &mut self.vehicles.rider_stats;
+            match ev {
+                RiderEvent::Contact(c) => {
+                    st.contacts += 1;
+                    if self.session.vehicle_contact(
+                        RiderId(c.rider),
+                        c.closing_mps,
+                        c.relative,
+                        c.push_side,
+                    ) {
+                        tracing::info!(
+                            rider = c.rider,
+                            vehicle = c.vehicle,
+                            class = c.class.name(),
+                            closing = c.closing_mps,
+                            "a vehicle touched a rider"
+                        );
+                    }
+                }
+                RiderEvent::Passed(_) => st.passes += 1,
+                RiderEvent::Honk { .. } => st.honks += 1,
+                RiderEvent::Approaching { .. } => st.approaching += 1,
+            }
+        }
+        for g in gusts {
+            self.vehicles.rider_stats.gusts += 1;
+            self.session.vehicle_gust(RiderId(g.rider), g);
+        }
+    }
+
+    /// What the vehicles did to the riders so far (counts).
+    pub fn traffic_rider_stats(&self) -> TrafficRiderStats {
+        self.vehicles.rider_stats
     }
 
     /// One reset to every connection that still has vehicles (the road

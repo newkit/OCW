@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use ocw_protocol::v1;
 use ocw_protocol::vehicles::{change_from_wire, spawn_from_wire};
 use ocw_render::traffic::VehicleView;
-use ocw_sim::traffic::{Curves, EdgeRule, Motion, PlanFollower, Tick, lateral_offset, package};
+use ocw_sim::traffic::{Curves, EdgeRule, Motion, PlanFollower, Tick, lateral_offset, world};
 use ocw_world::RoadNetwork;
 
 /// A correction is blended out over about this long (s).
@@ -80,7 +80,7 @@ pub struct ClientVehicles {
     inner: Option<Mutex<Inner>>,
     stats: VehicleStats,
     /// A route course's road as the traffic's network (the server makes
-    /// the same: `ocw_sim::traffic::package::route_network`).
+    /// the same: `ocw_sim::traffic::world::route_network`).
     route_net: Option<(String, Arc<RoadNetwork>)>,
 }
 
@@ -112,7 +112,7 @@ impl Inner {
         let net = &self.net;
         *self.rules.entry(e).or_insert_with(|| {
             let edge = net.edge(e);
-            package::edge_rule(&net.road_rules().edge(edge), edge.class)
+            world::edge_rule(&net.road_rules().edge(edge), edge.class)
         })
     }
 
@@ -131,6 +131,7 @@ impl Inner {
         let f = &self.followers[i];
         let (e, forward, s) = f.on_edge(&self.net)?;
         let lane = f.lane;
+        let shift = f.shift;
         let v = f.v;
         let ended = f.ended || f.motion == Motion::Stopped;
         let g = self.net.geometry(e);
@@ -150,7 +151,9 @@ impl Inner {
         let width = self.net.edge(e).width_m;
         let keep_left = self.net.keep_left;
         let rule = self.rule(e);
-        let lateral = lateral_offset(&rule, width, lane) * if keep_left { -1.0 } else { 1.0 };
+        // The lane, less T4's shift towards the centreline (passing a rider).
+        let lateral =
+            (lateral_offset(&rule, width, lane) - shift) * if keep_left { -1.0 } else { 1.0 };
         let right = [-h[1], h[0]];
         Some((
             [p[0] + right[0] * lateral, p[1], p[2] + right[1] * lateral],
@@ -202,7 +205,7 @@ impl ClientVehicles {
         match &self.route_net {
             Some((id, n)) if id == route.id() => n.clone(),
             _ => {
-                let n = Arc::new(package::route_network(route));
+                let n = Arc::new(world::route_network(route));
                 self.route_net = Some((route.id().to_owned(), n.clone()));
                 n
             }

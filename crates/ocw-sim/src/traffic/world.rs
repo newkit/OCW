@@ -1,15 +1,20 @@
-//! The package's traffic rules for the traffic core (spec 14 Phase 18,
-//! 18E T5): [`PackageRules`] implements [`EdgeRules`] over T2's
-//! `ocw_world::traffic::RoadRules` – the section `TRFC` with each edge's
-//! motor one-way, lanes, speed limit and access, and the signals, stop
-//! and give-way signs at the junctions. Packages without `TRFC` read the
-//! rules T2 implies by class and the country of the package's time zone;
-//! a network without any package data falls back to [`ClassRules`]
-//! ([`rules_for`]).
+//! The package's traffic rules (`TRFC`, T2's [`ocw_world::traffic`]) as
+//! the core's [`EdgeRules`] (spec 14 Phase 18, 18E T4 / T5): [`WorldRules`]
+//! over T2's `RoadRules` – each edge's motor one-way, lanes, speed limit
+//! and access, the signals, stop and give-way signs at the junctions, and
+//! (T4) the passing rule: the country and *in town* give the legal
+//! passing distance, `overtaking=no` the places where riders may not be
+//! passed. Packages without `TRFC` read the rules T2 implies by class and
+//! the country of the package's time zone ([`RoadNetwork::road_rules`]).
+//!
+//! ```ignore
+//! let rules = WorldRules::of(&package, &net); // or WorldRules::new(&net)
+//! let sim = TrafficSim::new(&net, Box::new(rules), cfg);
+//! ```
 //!
 //! What maps how:
 //! - **one-way, lanes, roundabout** as the package has them (a direction
-//!   without lanes carries no traffic);
+//!   without lanes carries no traffic; an allowed one at least one lane);
 //! - **speed**: T2's driving guess at most the limit
 //!   (`EdgeRules::target_kmh`) in the edge's main direction (forward if
 //!   it may be driven, else backward);
@@ -26,8 +31,13 @@
 //!   within [`SIGN_REACH_M`] of it, towards the nearer end) for the
 //!   directions they apply to; where any arm of a junction has signals,
 //!   every motor arm has them; at a junction with signs the arms without
-//!   one have right of way. Crossing lights along an edge are not stopped
-//!   at (the core knows controls only at junctions).
+//!   one have right of way (not at roundabouts). Crossing lights along an
+//!   edge are not stopped at (the core knows controls only at junctions);
+//! - **passing** ([`PassRule`]): the edge's country, *in town* and
+//!   `overtaking=no`.
+//!
+//! Routes without a road graph (test routes, route files) drive their own
+//! road ([`route_network`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,6 +45,7 @@ use ocw_world::RoadNetwork;
 use ocw_world::graph::{RoadClass, VertexId};
 use ocw_world::traffic::{self as wt, ControlKind, Country, Vehicle};
 
+use super::around::PassRule;
 use super::demand::Region;
 use super::rules::{
     Access, ClassRules, Control, EdgeRule, EdgeRules, VehicleClass, class_defaults,
@@ -53,7 +64,9 @@ const BUS_HEIGHT_M: f32 = 3.5;
 /// The traffic rules of a world package's network, owned (the core keeps
 /// them for the session).
 #[derive(Debug, Clone)]
-pub struct PackageRules {
+pub struct WorldRules {
+    /// The package's rules by edge index (the passing rule reads them).
+    world: Vec<wt::EdgeRules>,
     rules: Vec<EdgeRule>,
     /// (vertex, edge, arriving forward) → control.
     controls: BTreeMap<(u32, u32, bool), Control>,
@@ -66,10 +79,10 @@ pub struct PackageRules {
     country: Country,
 }
 
-/// The rules of `net`: its package's ([`PackageRules`]) – `TRFC` or the
+/// The rules of `net`: its package's ([`WorldRules`]) – `TRFC` or the
 /// rules T2 implies by class and country.
 pub fn rules_for(net: &RoadNetwork) -> Box<dyn EdgeRules + Send + Sync> {
-    Box::new(PackageRules::new(net))
+    Box::new(WorldRules::new(net))
 }
 
 /// The rules of `net` by road class alone (T3's default, for comparison).
@@ -127,9 +140,13 @@ pub fn edge_rule(r: &wt::EdgeRules, class: RoadClass) -> EdgeRule {
         [0, 0]
     } else {
         [
-            if r.oneway.allows(true) { r.lanes[0] } else { 0 },
+            if r.oneway.allows(true) {
+                r.lanes[0].max(1)
+            } else {
+                0
+            },
             if r.oneway.allows(false) {
-                r.lanes[1]
+                r.lanes[1].max(1)
             } else {
                 0
             },
@@ -149,15 +166,27 @@ pub fn edge_rule(r: &wt::EdgeRules, class: RoadClass) -> EdgeRule {
     }
 }
 
-impl PackageRules {
+impl WorldRules {
     /// The rules of `net`'s package ([`RoadNetwork::road_rules`]).
     pub fn new(net: &RoadNetwork) -> Self {
-        let rr = net.road_rules();
+        Self::from_rules(&net.road_rules(), net)
+    }
+
+    /// The rules of `package` for its network `net` (the package's `TRFC`,
+    /// whether or not `net` carries it).
+    pub fn of(package: &ocw_world::WorldPackage, net: &RoadNetwork) -> Self {
+        Self::from_rules(&wt::RoadRules::of(package), net)
+    }
+
+    /// The rules of `rr` on `net` (by edge index).
+    pub fn from_rules(rr: &wt::RoadRules<'_>, net: &RoadNetwork) -> Self {
         let graph = net.graph();
+        let world = rr.aligned(graph);
         let rules: Vec<EdgeRule> = graph
             .edges
             .iter()
-            .map(|e| edge_rule(&rr.edge(e), e.class))
+            .zip(&world)
+            .map(|(e, w)| edge_rule(w, e.class))
             .collect();
         let mut controls = BTreeMap::new();
         let mut controlled = BTreeSet::new();
@@ -203,6 +232,7 @@ impl PackageRules {
             }
         }
         Self {
+            world,
             rules,
             controls,
             controlled,
@@ -210,6 +240,11 @@ impl PackageRules {
             from_data: rr.data.is_some(),
             country: rr.country,
         }
+    }
+
+    /// The package's rules of edge `e`.
+    pub fn world_rule(&self, e: usize) -> &wt::EdgeRules {
+        &self.world[e]
     }
 
     /// The package had a `TRFC` section (else: T2's implied rules).
@@ -242,7 +277,7 @@ fn strictness(c: Control) -> u8 {
     }
 }
 
-impl EdgeRules for PackageRules {
+impl EdgeRules for WorldRules {
     fn edge_rule(&self, _net: &RoadNetwork, edge: usize) -> EdgeRule {
         self.rules[edge]
     }
@@ -271,6 +306,11 @@ impl EdgeRules for PackageRules {
             return Some(Control::Priority);
         }
         None
+    }
+
+    fn passing(&self, _net: &RoadNetwork, edge: usize) -> PassRule {
+        let w = &self.world[edge];
+        PassRule::new(w.country, w.urban, w.no_overtaking)
     }
 }
 
@@ -369,5 +409,5 @@ pub fn on_route_network(
 }
 
 #[cfg(test)]
-#[path = "package_tests.rs"]
+#[path = "world_tests.rs"]
 mod tests;

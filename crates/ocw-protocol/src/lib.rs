@@ -356,6 +356,7 @@ fn contact_kind_to_wire(k: ocw_sim::collide::ContactKind) -> v1::ContactKind {
         K::RoadEdge => v1::ContactKind::RoadEdge,
         K::Slide => v1::ContactKind::Slide,
         K::Leaves => v1::ContactKind::Leaves,
+        K::Vehicle => v1::ContactKind::Vehicle,
     }
 }
 
@@ -371,6 +372,7 @@ fn contact_kind_from_wire(v: i32, obstacle: u32) -> ocw_sim::collide::ContactKin
         Ok(v1::ContactKind::RoadEdge) => K::RoadEdge,
         Ok(v1::ContactKind::Slide) => K::Slide,
         Ok(v1::ContactKind::Leaves) => K::Leaves,
+        Ok(v1::ContactKind::Vehicle) => K::Vehicle,
         Ok(v1::ContactKind::WheelToWheel) => K::WheelToWheel,
         Ok(v1::ContactKind::WheelTouch) => K::WheelTouch,
         Ok(v1::ContactKind::RearEnd) => K::RearEnd,
@@ -2364,6 +2366,7 @@ mod tests {
             ContactKind::RoadEdge,
             ContactKind::Slide,
             ContactKind::Leaves,
+            ContactKind::Vehicle,
         ] {
             let tree = quantize(&ocw_sim::RiderSnapshot {
                 crash: Some(CrashView {

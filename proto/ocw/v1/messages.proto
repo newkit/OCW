@@ -866,6 +866,12 @@ message TrafficSpawn {
   // With MOTION_ACCEL: m/s² and the target speed (m/s).
   float accel = 12;
   float target = 13;
+  // The lateral shift from the lane's centre (T4: pulling out to pass a
+  // rider, swerving): metres towards the centreline now, its target and
+  // the rate (m/s) it moves at (ocw_sim::traffic::Shift).
+  float shift_at = 14;
+  float shift_to = 15;
+  float shift_rate = 16;
 }
 
 // What changed in a vehicle's plan (ocw_sim::traffic::PlanChange): its
@@ -884,6 +890,10 @@ message TrafficChange {
   float target = 9;
   // A longer route: these steps replace the route's last one and follow.
   TrafficRoute extend = 10;
+  // The lateral shift, as TrafficSpawn's.
+  float shift_at = 11;
+  float shift_to = 12;
+  float shift_rate = 13;
 }
 
 // A rider's bike build (spec §14 Phase 4, 4G): reliable, sent to everyone
@@ -1464,6 +1474,9 @@ enum ContactKind {
   // Slipped on wet leaves in a corner (spec 4.6.2 Q6; damage on, never in
   // group rides).
   CONTACT_KIND_LEAVES = 10;
+  // A road vehicle (spec 14 Phase 18 T4, Q4): a car that could not stop
+  // hit the rider, or the rider steered into it.
+  CONTACT_KIND_VEHICLE = 11;
 }
 
 message CrashState {
