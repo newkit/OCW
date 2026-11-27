@@ -2226,6 +2226,15 @@ package is installed only when all its files match the manifest.
   start. The heart rate goes the same way as a Bluetooth strap's: HUD,
   FIT recording, workouts, multiplayer; an ANT+ power meter replaces the
   virtual trainer like a Bluetooth one.
+- **ANT+ FE-C smart trainers** (spec 14 Phase 17, 17E): a trainer that
+  speaks ANT+ FE-C ("ANT+ trainer 5005", "trainer, ANT+, …") is a
+  *trainer* like a Bluetooth FTMS one: it replaces the virtual trainer,
+  sends power, cadence and speed (pages 16 and 25), and takes **SIM** (the
+  road's gradient and rolling resistance as page 51, the wind and air drag
+  as page 50, your weight, the bike's and the wheel as page 55) and
+  **ERG** (`erg.target 200`, page 49). OCW sends these pages one at a time
+  as acknowledged ANT messages, retries a failed one and drops a target
+  that a newer one replaced, so a trainer never gets a stale gradient.
 - **The ANT+ network key:** ANT+ sensors are heard only with the ANT+
   network key (16 hex digits), which Garmin publishes for ANT+ developers
   and which OCW does not ship (spec 14 Phase 17 Q1). Enter it once:
@@ -2274,8 +2283,15 @@ package is installed only when all its files match the manifest.
   `devices.hr auto` undoes it); the choice is remembered. There is no
   automatic switching: when the chosen strap goes, the ride has no heart
   rate until it is back or another one is chosen.
-- Without a stick: `--ant-sim hr:12345:142,hr:23456:128,power:4004:230`
-  rides with a **simulated ANT stick** and these sensors (any key works);
+- **Two trainers** (a Bluetooth one and an ANT+ FE-C one, or one trainer
+  on both): the same rule – only one trainer's power is used and only it
+  gets SIM / ERG, the first that sends power. The other trainer's page has
+  **Use as trainer** (`devices.trainer ID`, `devices.trainer auto` undoes
+  it); it takes the current target at once, and the choice is remembered.
+- Without a stick: `--ant-sim hr:12345:142,hr:23456:128,power:4004:230,fec:5005:200`
+  rides with a **simulated ANT stick** and these sensors (any key works;
+  `fec:N:W[:RPM]` is a simulated FE-C trainer whose rider rides W watts on
+  the flat: its power follows the gradient in SIM and the target in ERG);
   `--no-ant` turns ANT+ off. `scripts/test-ant-devices.sh [shot|shot-wayland]
   DIR` walks the pages headless with it (screenshots in DIR).
 - Trainer control: **SIM** (default; the trainer simulates the road's
@@ -3109,6 +3125,7 @@ you can run are offered (no *Dev* commands on a remote server).
 | `devices.list` | Running, remembered and found devices |
 | `devices.forget ID\|NAME\|all` | Disconnect and forget a device |
 | `devices.hr ID\|NAME\|auto` | *Use for heart rate*: with two straps, use this one's heart rate (`auto`: the first that sends) |
+| `devices.trainer ID\|NAME\|auto` | *Use as trainer*: with two trainers (Bluetooth and ANT+ FE-C), use this one's power and send it SIM / ERG (`auto`: the first that sends) |
 | `ant.key.edit` / `ant.key.paste` / `ant.key.save` / `ant.key.cancel` / `ant.key.clear` | The ANT+ network key (Devices → ANT+): type it (masked), paste, save it in `secrets.toml`, cancel, remove |
 | `ant.access.install` | Linux: install the ANT stick's udev rule through `pkexec` (Devices → ANT+ → *Install access for the ANT stick*; the same as `ocw-desktop --install-udev-rule`) |
 | `devices.virtual` | Start an additional virtual trainer |
