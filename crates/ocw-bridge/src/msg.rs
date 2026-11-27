@@ -145,7 +145,10 @@ impl Control {
                 wind_grade: p.wind_grade,
             }),
             DeviceCommand::SetTargetPower(w) => Some(Self::Erg(w)),
-            DeviceCommand::SetVirtualPower(_) | DeviceCommand::Shutdown => None,
+            DeviceCommand::SetVirtualPower(_)
+            | DeviceCommand::Calibrate
+            | DeviceCommand::SetAutoZero(_)
+            | DeviceCommand::Shutdown => None,
         }
     }
 

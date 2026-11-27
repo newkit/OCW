@@ -32,6 +32,11 @@ pub struct KnownDevices {
     /// (c)): with two straps only its heart rate is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heart_rate: Option<String>,
+    /// The device chosen with *Use for cadence* (the same rule for a
+    /// cadence sensor next to a trainer or power meter, spec 14 Phase 17,
+    /// 17E).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cadence: Option<String>,
     /// The trainer chosen with *Use as trainer* (spec 14 Phase 17, 17E:
     /// the Q6 (c) rule for trainers): with two trainers – a BLE one and
     /// an ANT+ FE-C one – only its power counts and only it gets SIM /
@@ -96,6 +101,9 @@ impl KnownDevices {
         self.devices.retain(|d| d.id != id);
         if self.heart_rate.as_deref() == Some(id) {
             self.heart_rate = None;
+        }
+        if self.cadence.as_deref() == Some(id) {
+            self.cadence = None;
         }
         if self.trainer.as_deref() == Some(id) {
             self.trainer = None;

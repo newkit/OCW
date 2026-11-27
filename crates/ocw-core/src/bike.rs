@@ -71,6 +71,20 @@ impl BikeType {
     pub fn profiles(self) -> impl Iterator<Item = ProfileId> {
         ProfileId::ALL.into_iter().filter(move |p| p.bike() == self)
     }
+
+    /// The wheel's rolling circumference (mm) a speed sensor's wheel
+    /// revolutions are measured with, unless the rider sets their own
+    /// (`devices.wheel_mm`, spec 14 Phase 17): the common tyre of the
+    /// family – road and time trial 700 × 25C (2105 mm), gravel 700 × 40C
+    /// (2200 mm), mountain bike 29 × 2.25 (2288 mm), as head units list
+    /// them.
+    pub fn wheel_circumference_mm(self) -> u32 {
+        match self {
+            Self::Road | Self::TimeTrial => 2105,
+            Self::Gravel => 2200,
+            Self::Mountain => 2288,
+        }
+    }
 }
 
 /// One of the curated physics profiles (spec §2.5).

@@ -854,6 +854,7 @@ mod tests {
             software_version: 1,
             laps: Vec::new(),
             markers: Vec::new(),
+            devices: Vec::new(),
         }
     }
 

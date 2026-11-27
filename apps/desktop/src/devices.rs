@@ -27,10 +27,17 @@
 //! key, kept in `secrets.toml [ant]` (never logged; `ant.key.*`). With two
 //! heart-rate sources only one is used: the one chosen with *Use for heart
 //! rate* (`devices.hr <id>`), else the first that sent – no automatic
-//! switching (Q6 (c)). The same rule holds for two trainers (a BLE FTMS
-//! one and an ANT+ FE-C one, 17E): only one trainer's power counts and
-//! only it gets SIM / ERG – the one chosen with *Use as trainer*
-//! (`devices.trainer <id>`), else the first that sent power.
+//! switching (Q6 (c)). The same rule picks the cadence when a cadence
+//! sensor (ANT+ speed / cadence, types 121 / 122) rides next to a trainer
+//! or power meter: *Use for cadence* (`devices.cadence <id>`). A speed
+//! sensor's speed is shown on its page (the wheel from
+//! `trainer.wheel_mm`, else the bike's); an ANT+ power meter's page has
+//! *Calibrate* (`devices.calibrate <id>`, the zero offset) and *Auto zero*
+//! (`devices.autozero <id> on|off`) – spec 14 Phase 17, 17E;
+//! for two trainers (a BLE FTMS one and an ANT+ FE-C one, 17E) only one
+//! trainer's power counts and only it gets SIM / ERG – the one chosen with
+//! *Use as trainer* (`devices.trainer <id>`), else the first that sent
+//! power.
 //!
 //! The Bluetooth stack is behind [`DeviceIo`] (connect, scan), so the
 //! tests run the whole flow with a mock (and ANT+ with the simulated
@@ -43,11 +50,14 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use clap::{Arg, ArgAction, Command, value_parser};
-use ocw_client::menu::devices::{AntFix, AntInfo, DevicesInfo, Entry, Link, Role, Scan};
+use ocw_client::menu::devices::{
+    AntFix, AntInfo, CalibrationInfo, DevicesInfo, Entry, Link, Role, Scan,
+};
 use ocw_devices::ant::{self, AntDeviceId, AntStick, NetworkKey, StickStatus};
 use ocw_devices::ble::{self, BleDevice, FoundDevice};
 use ocw_devices::{
-    DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle, VirtualTrainer,
+    Calibration, DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle,
+    VirtualTrainer,
 };
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
@@ -287,9 +297,39 @@ struct Running {
     role: Option<Role>,
     handle: DeviceHandle,
     link: Link,
+    /// The latest readings (the device's page).
+    watts: Option<f64>,
+    cadence_rpm: Option<f64>,
+    wheel_rps: Option<f64>,
+    /// An ANT+ power meter: the last calibration ("calibrating ...",
+    /// "done, offset 512") and auto zero, if it has it.
+    calibration: Option<String>,
+    auto_zero: Option<bool>,
 }
 
 impl Running {
+    fn new(id: Option<String>, role: Option<Role>, handle: DeviceHandle, link: Link) -> Self {
+        Self {
+            id,
+            role,
+            handle,
+            link,
+            watts: None,
+            cadence_rpm: None,
+            wheel_rps: None,
+            calibration: None,
+            auto_zero: None,
+        }
+    }
+
+    /// An ANT+ power meter (it can be calibrated).
+    fn ant_power_meter(&self) -> bool {
+        self.id
+            .as_deref()
+            .and_then(AntDeviceId::parse)
+            .is_some_and(|d| d.profile == ant::AntProfile::BikePower)
+    }
+
     /// A trainer of the rider's (not the virtual one).
     fn is_trainer(&self) -> bool {
         self.id.is_some() && self.role == Some(Role::Trainer)
@@ -336,6 +376,21 @@ pub struct Devices {
     trainer_active: Option<String>,
     /// The last SIM / ERG command (a newly chosen trainer gets it at once).
     last_control: Mutex<Option<DeviceCommand>>,
+    /// The cadence source when none is chosen: the first device that sent
+    /// a cadence (the same rule).
+    cad_active: Option<String>,
+    /// The wheel's circumference (m) the speed is shown with.
+    wheel_m: f64,
+}
+
+/// Whether a device of this id and role can give the cadence: trainers,
+/// power meters and cadence sensors (not a speed-only sensor).
+fn gives_cadence(id: &str, role: Role) -> bool {
+    match role {
+        Role::Trainer | Role::Power => true,
+        Role::Cadence => AntDeviceId::parse(id).is_none_or(|d| d.profile.is_cadence_sensor()),
+        Role::HeartRate => false,
+    }
 }
 
 impl Devices {
@@ -365,6 +420,8 @@ impl Devices {
             virtual_w,
             ant_key: None,
             hr_active: None,
+            cad_active: None,
+            wheel_m: 2.105,
             trainer_active: None,
             last_control: Mutex::new(None),
         }
@@ -379,12 +436,12 @@ impl Devices {
         let name = backend.name().to_string();
         match backend.start() {
             Ok(handle) => {
-                self.running().push(Running {
-                    id: None,
-                    role: Some(Role::Trainer),
+                self.running().push(Running::new(
+                    None,
+                    Some(Role::Trainer),
                     handle,
-                    link: Link::Connected("virtual".into()),
-                });
+                    Link::Connected("virtual".into()),
+                ));
                 name
             }
             Err(e) => {
@@ -411,12 +468,12 @@ impl Devices {
             (io.connect)(id, name)
         }
         .map_err(|e| format!("{name}: {e}"))?;
-        self.running().push(Running {
-            id: Some(id.to_owned()),
+        self.running().push(Running::new(
+            Some(id.to_owned()),
             role,
             handle,
-            link: Link::Connecting,
-        });
+            Link::Connecting,
+        ));
         let line = format!("{name}: connecting ...");
         self.info.push_message(line.clone());
         Ok(line)
@@ -631,6 +688,13 @@ impl Devices {
             self.hr_active = None;
         }
         if self
+            .cad_active
+            .as_deref()
+            .is_some_and(|a| ids.iter().any(|i| i == a) || all)
+        {
+            self.cad_active = None;
+        }
+        if self
             .trainer_active
             .as_deref()
             .is_some_and(|a| ids.iter().any(|i| i == a) || all)
@@ -713,6 +777,131 @@ impl Devices {
         Ok(line)
     }
 
+    /// The device whose cadence is used: the one chosen with *Use for
+    /// cadence* while it runs, else the first that sent one.
+    fn cadence_source(&self) -> Option<String> {
+        match &self.known.cadence {
+            Some(c) if self.is_running(c) => Some(c.clone()),
+            _ => self.cad_active.clone(),
+        }
+    }
+
+    /// Whether a cadence from the device `id` is used (the rule of spec 14
+    /// Phase 17 Q6 (c) for the cadence): the source's, else the first.
+    fn accept_cadence(&mut self, id: &str) -> bool {
+        match self.cadence_source() {
+            Some(src) if self.is_running(&src) => id == src,
+            _ => {
+                self.cad_active = Some(id.to_owned());
+                true
+            }
+        }
+    }
+
+    /// Whether `id` is a cadence sensor (not a trainer or power meter).
+    fn is_cadence_sensor(&self, id: &str) -> bool {
+        self.listed
+            .iter()
+            .any(|l| l.id == id && l.role == Role::Cadence && gives_cadence(id, l.role))
+    }
+
+    /// `devices.cadence <id|name|auto>`: *Use for cadence*. Returns the
+    /// line and whether the cadence now comes from a cadence sensor.
+    fn use_for_cadence(&mut self, which: &str) -> Result<(String, bool), String> {
+        let (line, sensor) = if which == "auto" {
+            self.known.cadence = None;
+            self.cad_active = None;
+            (
+                "cadence: from the first device that sends one".to_owned(),
+                false,
+            )
+        } else {
+            let l = self
+                .listed
+                .iter()
+                .find(|l| l.id == which || l.name.eq_ignore_ascii_case(which))
+                .ok_or_else(|| format!("{which} is not in the list"))?;
+            if !gives_cadence(&l.id, l.role) {
+                return Err(format!("{} gives no cadence", l.name));
+            }
+            let (id, name) = (l.id.clone(), l.name.clone());
+            let sensor = self.is_cadence_sensor(&id);
+            self.known.cadence = Some(id.clone());
+            self.cad_active = Some(id);
+            (format!("{name} gives the cadence"), sensor)
+        };
+        if let Err(e) = self.save_known() {
+            warn!("the cadence choice is not saved: {e}");
+        }
+        self.info.push_message(line.clone());
+        Ok((line, sensor))
+    }
+
+    /// The running device of this id or name.
+    fn running_device(&mut self, which: &str) -> Option<&mut Running> {
+        self.running()
+            .iter_mut()
+            .find(|r| r.id.as_deref() == Some(which) || r.handle.name.eq_ignore_ascii_case(which))
+    }
+
+    /// `devices.calibrate <id|name>`: an ANT+ power meter's manual zero
+    /// (the cranks still); the answer comes as a device event.
+    fn calibrate(&mut self, which: &str) -> Result<String, String> {
+        let r = self
+            .running_device(which)
+            .ok_or_else(|| format!("{which} is not connected"))?;
+        if !r.ant_power_meter() {
+            return Err(format!("{} cannot be calibrated here", r.handle.name));
+        }
+        if !matches!(r.link, Link::Connected(_)) {
+            return Err(format!("{} is not connected", r.handle.name));
+        }
+        let _ = r.handle.commands.send(DeviceCommand::Calibrate);
+        r.calibration = Some("calibrating ...".into());
+        let line = format!("{}: calibrating (keep the cranks still) ...", r.handle.name);
+        self.info.push_message(line.clone());
+        Ok(line)
+    }
+
+    /// `devices.autozero <id|name> on|off`.
+    fn auto_zero(&mut self, which: &str, on: bool) -> Result<String, String> {
+        let r = self
+            .running_device(which)
+            .ok_or_else(|| format!("{which} is not connected"))?;
+        if !r.ant_power_meter() {
+            return Err(format!("{} has no auto zero", r.handle.name));
+        }
+        let _ = r.handle.commands.send(DeviceCommand::SetAutoZero(on));
+        let line = format!(
+            "{}: auto zero {} ...",
+            r.handle.name,
+            if on { "on" } else { "off" }
+        );
+        self.info.push_message(line.clone());
+        Ok(line)
+    }
+
+    /// The device page's reading of a running device.
+    fn reading(&self, r: &Running) -> Option<String> {
+        if !matches!(r.link, Link::Connected(_)) || r.id.is_none() {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if let Some(w) = r.watts {
+            parts.push(format!("{w:.0} W"));
+        }
+        if let Some(c) = r.cadence_rpm {
+            parts.push(format!("{c:.0} rpm"));
+        }
+        if let Some(v) = r.wheel_rps {
+            parts.push(format!(
+                "{:.1} km/h",
+                ocw_devices::wheel_speed_mps(v, self.wheel_m) * 3.6
+            ));
+        }
+        (!parts.is_empty()).then(|| parts.join(", "))
+    }
+
     /// The Devices page's model.
     fn menu_info(&self) -> DevicesInfo {
         let hr_source = self.hr_source();
@@ -720,6 +909,17 @@ impl Devices {
             .listed
             .iter()
             .filter(|l| l.role == Role::HeartRate)
+            .count();
+        let cad_source = self.cadence_source();
+        let cad_listed = self
+            .listed
+            .iter()
+            .filter(|l| gives_cadence(&l.id, l.role))
+            .count();
+        let cad_sensors = self
+            .listed
+            .iter()
+            .filter(|l| l.role == Role::Cadence && gives_cadence(&l.id, l.role))
             .count();
         let trainer_source = self.trainer_source();
         let trainers_listed = self
@@ -731,20 +931,32 @@ impl Devices {
         let entries = self
             .listed
             .iter()
-            .map(|l| Entry {
-                id: l.id.clone(),
-                name: l.name.clone(),
-                role: l.role,
-                rssi: l.rssi,
-                link: running
+            .map(|l| {
+                let r = running
                     .iter()
-                    .find(|r| r.id.as_deref() == Some(l.id.as_str()))
-                    .map_or(Link::Idle, |r| r.link.clone()),
-                remembered: self.known.devices.iter().any(|d| d.id == l.id),
-                heart_rate: (l.role == Role::HeartRate && hr_listed >= 2)
-                    .then(|| hr_source.as_deref() == Some(l.id.as_str())),
-                trainer: (l.role == Role::Trainer && trainers_listed >= 2)
-                    .then(|| trainer_source.as_deref() == Some(l.id.as_str())),
+                    .find(|r| r.id.as_deref() == Some(l.id.as_str()));
+                Entry {
+                    id: l.id.clone(),
+                    name: l.name.clone(),
+                    role: l.role,
+                    rssi: l.rssi,
+                    link: r.map_or(Link::Idle, |r| r.link.clone()),
+                    remembered: self.known.devices.iter().any(|d| d.id == l.id),
+                    heart_rate: (l.role == Role::HeartRate && hr_listed >= 2)
+                        .then(|| hr_source.as_deref() == Some(l.id.as_str())),
+                    // A choice only with a cadence sensor among them.
+                    cadence: (gives_cadence(&l.id, l.role) && cad_listed >= 2 && cad_sensors >= 1)
+                        .then(|| cad_source.as_deref() == Some(l.id.as_str())),
+                    reading: r.and_then(|r| self.reading(r)),
+                    calibration: r
+                        .filter(|r| r.ant_power_meter() && matches!(r.link, Link::Connected(_)))
+                        .map(|r| CalibrationInfo {
+                            state: r.calibration.clone().unwrap_or_else(|| "not yet".into()),
+                            auto_zero: r.auto_zero,
+                        }),
+                    trainer: (l.role == Role::Trainer && trainers_listed >= 2)
+                        .then(|| trainer_source.as_deref() == Some(l.id.as_str())),
+                }
             })
             .collect();
         DevicesInfo {
@@ -777,6 +989,7 @@ fn poll_devices(
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
     bridge: Option<ResMut<crate::bridge::Bridge>>,
+    wheel_setting: Option<Res<ocw_ui::settings::UserSettings>>,
 ) {
     let mut events = Vec::new();
     for (i, r) in devices.running().iter().enumerate() {
@@ -789,6 +1002,53 @@ fn poll_devices(
     let ids: Vec<Option<String>> = devices.running().iter().map(|r| r.id.clone()).collect();
     events.retain(|(i, _, e)| {
         !matches!(e, DeviceEvent::HeartRate { .. }) || devices.accept_heart_rate(ids[*i].as_deref())
+    });
+    // One cadence source, by the same rule: a cadence sensor's cadence
+    // only while it is the source; a trainer's or power meter's cadence
+    // (in its power events) names it the source when none is.
+    if let Some(mm) = wheel_setting.as_ref().map(|s| {
+        s.settings
+            .get("trainer.wheel_mm")
+            .map(|v| v.to_string())
+            .ok()
+            .as_deref()
+            .and_then(ocw_client::settings::wheel_mm)
+    }) {
+        client.0.set_wheel_mm(mm);
+    }
+    devices.wheel_m = f64::from(client.0.wheel_mm()) / 1000.0;
+    events.retain(|(i, _, e)| {
+        let Some(id) = ids[*i].as_deref() else {
+            return true;
+        };
+        match e {
+            DeviceEvent::Cadence { .. } => devices.accept_cadence(id),
+            DeviceEvent::Power {
+                cadence_rpm: Some(_),
+                ..
+            } => {
+                devices.accept_cadence(id);
+                true
+            }
+            // A sensor's info only while its data is used (the FIT file
+            // lists the sensors of the ride).
+            DeviceEvent::Info(_) => {
+                let role = devices.listed.iter().find(|l| l.id == id).map(|l| l.role);
+                match role {
+                    Some(Role::HeartRate) => devices.hr_source().as_deref() == Some(id),
+                    // Before any cadence (a sensor tells its info with its
+                    // first page): unless another source is in use.
+                    Some(Role::Cadence) if devices.is_cadence_sensor(id) => {
+                        match devices.cadence_source() {
+                            Some(src) if devices.is_running(&src) => src == id,
+                            _ => true,
+                        }
+                    }
+                    _ => true,
+                }
+            }
+            _ => true,
+        }
     });
     // One trainer (17E, the Q6 (c) rule for trainers): a second trainer's
     // power is not mixed in.
@@ -837,6 +1097,43 @@ fn poll_devices(
                         bpm: 0.0,
                         timestamp: Duration::ZERO,
                     });
+                }
+                // The cadence sensor in use is gone: no cadence until it is
+                // back (no frozen value, no switch to the trainer's).
+                if let Some(id) = &id
+                    && devices.cadence_source().as_ref() == Some(id)
+                    && devices.is_cadence_sensor(id)
+                {
+                    client.0.cadence_sensor_lost(true);
+                }
+                let r = &mut devices.running()[i];
+                (r.watts, r.cadence_rpm, r.wheel_rps) = (None, None, None);
+            }
+            DeviceEvent::Power {
+                watts, cadence_rpm, ..
+            } => {
+                let r = &mut devices.running()[i];
+                r.watts = Some(watts);
+                r.cadence_rpm = cadence_rpm;
+            }
+            DeviceEvent::Cadence { rpm, .. } => devices.running()[i].cadence_rpm = Some(rpm),
+            DeviceEvent::WheelSpeed { revs_per_s, .. } => {
+                devices.running()[i].wheel_rps = Some(revs_per_s);
+            }
+            DeviceEvent::Calibration(c) => {
+                let r = &mut devices.running()[i];
+                match c {
+                    Calibration::Done {
+                        auto_zero: Some(on),
+                        ..
+                    }
+                    | Calibration::AutoZero { on } => r.auto_zero = Some(on),
+                    _ => {}
+                }
+                // The meter's own auto zero page is no answer to show.
+                if !matches!(c, Calibration::AutoZero { .. }) || r.calibration.is_some() {
+                    r.calibration = Some(c.text());
+                    line = Some(format!("{name}: calibration {}", c.text()));
                 }
             }
             DeviceEvent::Failed { reason } => {
@@ -1305,6 +1602,51 @@ fn register_commands(app: &mut App) {
         |world, m| {
             let which = m.get_one::<String>("device").expect("required").clone();
             world.resource_mut::<Devices>().use_for_heart_rate(&which)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("devices.cadence")
+            .about("Use this device's cadence (Use for cadence; with a cadence sensor and a trainer only one counts); auto: the first that sends")
+            .arg(Arg::new("device").required(true)),
+        |world, m| {
+            let which = m.get_one::<String>("device").expect("required").clone();
+            let (line, sensor) = world.resource_mut::<Devices>().use_for_cadence(&which)?;
+            // A trainer or power meter chosen: its power events' cadence
+            // again (a sensor chosen takes over with its next reading).
+            if !sensor {
+                world
+                    .resource_mut::<ClientState>()
+                    .0
+                    .cadence_sensor_lost(false);
+            }
+            Ok(line)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("devices.calibrate")
+            .about("Calibrate an ANT+ power meter (manual zero offset: unclip, cranks still)")
+            .arg(Arg::new("device").required(true)),
+        |world, m| {
+            let which = m.get_one::<String>("device").expect("required").clone();
+            world.resource_mut::<Devices>().calibrate(&which)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("devices.autozero")
+            .about("Turn an ANT+ power meter's auto zero on or off")
+            .arg(Arg::new("device").required(true))
+            .arg(
+                Arg::new("state")
+                    .required(true)
+                    .value_parser(["on", "off"]),
+            ),
+        |world, m| {
+            let which = m.get_one::<String>("device").expect("required").clone();
+            let on = m.get_one::<String>("state").expect("required") == "on";
+            world.resource_mut::<Devices>().auto_zero(&which, on)
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -2400,6 +2742,244 @@ mod tests {
         );
         assert_eq!(flag(&menu(&app), ANT_TRAINER), Some(true));
         assert_eq!(sim.radio(|r| r.busy_refusals), 0);
+        let _ = std::fs::remove_dir_all(files.dir());
+    }
+
+    const ANT_TORQUE: &str = "ant:11:4005:5";
+    const ANT_SPDCAD: &str = "ant:121:2222:1";
+
+    fn entry(app: &App, id: &str) -> Entry {
+        menu(app)
+            .entries
+            .into_iter()
+            .find(|e| e.id == id)
+            .unwrap_or_else(|| panic!("{id}: {:?}", menu(app)))
+    }
+
+    fn cadence_now(app: &App) -> Option<f64> {
+        app.world().resource::<ClientState>().0.cadence_rpm()
+    }
+
+    fn near(v: Option<f64>, want: f64, tol: f64) -> bool {
+        v.is_some_and(|v| (v - want).abs() <= tol)
+    }
+
+    /// A torque-only power meter and a speed / cadence sensor without
+    /// hardware (spec 14 Phase 17, 17E and A6): a scan lists them in their
+    /// roles → the sensor connects and gives the cadence, the meter
+    /// connects and replaces the virtual trainer with its torque pages'
+    /// power; *Use for cadence* picks the meter's cadence and back; the
+    /// sensor's page shows its speed; *Calibrate* sends the manual zero
+    /// and shows the meter's answer (offset), *Auto zero* turns it on;
+    /// the FIT file of the ride lists both sensors as `device_info`.
+    #[test]
+    fn ant_torque_meter_and_speed_cadence_sensor_ride_calibrate_and_fit() {
+        let files = temp_config("power");
+        let devices_file = files.dir().join("devices.toml");
+        KnownDevices::default().save(&devices_file).unwrap();
+        files
+            .secret("ant")
+            .write("network_key = \"0A1B2C3D4E5F6071\"\n")
+            .unwrap();
+        let sim = SimTransport::new(
+            Some(NetworkKey::TEST),
+            vec![
+                SimSensor::torque_meter(4005, 250.0, 85.0),
+                SimSensor::speed_cadence(2222, ant::AntProfile::SpeedCadence, 92.0, 32.0),
+            ],
+        );
+        let mock = Mock::default();
+        let io = ant_io(&mock, &sim, None);
+        let path = devices_file.to_str().unwrap().to_owned();
+        let mut app = app_in(&["--devices-file", &path], Some(io), Some(files.clone()));
+        app.update();
+        run(&mut app, "devices.scan 4");
+        until(&mut app, "the meter and the sensor", |m| {
+            m.entries.len() == 2
+        });
+        assert_eq!(entry(&app, ANT_TORQUE).role, Role::Power);
+        assert_eq!(entry(&app, ANT_SPDCAD).role, Role::Cadence);
+        until(&mut app, "the scan's end", |m| m.scan == Scan::Idle);
+
+        // The sensor first: its cadence; it does not replace the virtual
+        // trainer.
+        run(&mut app, &format!("devices.connect {ANT_SPDCAD}"));
+        until_app(&mut app, "92 rpm from the sensor", 10, |a| {
+            near(cadence_now(a), 92.0, 1.0)
+        });
+        assert!(menu(&app).virtual_trainer);
+        assert!(
+            app.world()
+                .resource::<ClientState>()
+                .0
+                .cadence_from_sensor()
+        );
+        // Its page: the cadence and the speed (the road bike's 2105 mm).
+        until_app(&mut app, "the reading", 5, |a| {
+            entry(a, ANT_SPDCAD)
+                .reading
+                .is_some_and(|r| r.contains("92 rpm") && r.contains("32.0 km/h"))
+        });
+        let speed = app.world().resource::<ClientState>().0.sensor_speed_mps();
+        assert!(near(speed.map(|v| v * 3.6), 32.0, 0.2), "{speed:?}");
+        assert_eq!(entry(&app, ANT_SPDCAD).calibration, None);
+
+        // The meter: torque pages only, 250 W; the virtual trainer goes.
+        run(&mut app, &format!("devices.connect {ANT_TORQUE}"));
+        until_app(&mut app, "250 W from the torque pages", 10, |a| {
+            let c = &a.world().resource::<ClientState>().0;
+            (c.power_w() - 250.0).abs() < 2.0 && !menu(a).virtual_trainer
+        });
+        let saved = KnownDevices::load(&devices_file).unwrap();
+        let kinds: Vec<_> = saved
+            .devices
+            .iter()
+            .map(|d| (d.id.as_str(), d.kind.as_deref(), d.transport.as_deref()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (ANT_SPDCAD, Some("cadence"), Some("ant")),
+                (ANT_TORQUE, Some("power"), Some("ant"))
+            ]
+        );
+        // One cadence: the sensor's (the first that sent), not the meter's.
+        for _ in 0..40 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            near(cadence_now(&app), 92.0, 1.0),
+            "{:?}",
+            cadence_now(&app)
+        );
+        assert_eq!(entry(&app, ANT_SPDCAD).cadence, Some(true));
+        assert_eq!(entry(&app, ANT_TORQUE).cadence, Some(false));
+        // Use for cadence: the meter's 85 rpm; saved; back to the sensor.
+        let m = menu(&app);
+        let i = m.entries.iter().position(|e| e.id == ANT_TORQUE).unwrap();
+        let rows = ocw_client::menu::devices::rows(Page::Device(i), &m);
+        let use_it = rows.iter().find(|r| r.label == "Use for cadence").unwrap();
+        let Some(ocw_client::menu::pages::Activate::Command(line)) = &use_it.confirm else {
+            panic!("{use_it:?}")
+        };
+        assert_eq!(run(&mut app, line), "ANT+ power 4005 gives the cadence");
+        until_app(&mut app, "85 rpm from the meter", 5, |a| {
+            near(cadence_now(a), 85.0, 1.0)
+        });
+        assert_eq!(
+            KnownDevices::load(&devices_file)
+                .unwrap()
+                .cadence
+                .as_deref(),
+            Some(ANT_TORQUE)
+        );
+        run(&mut app, &format!("devices.cadence {ANT_SPDCAD}"));
+        until_app(&mut app, "92 rpm again", 5, |a| {
+            near(cadence_now(a), 92.0, 1.0)
+        });
+
+        // Calibrate: the meter's page has the row; the answer is shown.
+        let m = menu(&app);
+        let rows = ocw_client::menu::devices::rows(Page::Device(i), &m);
+        let cal = rows.iter().find(|r| r.label == "Calibrate").unwrap();
+        assert_eq!(cal.value.as_deref(), Some("not yet"));
+        let Some(ocw_client::menu::pages::Activate::Command(line)) = &cal.confirm else {
+            panic!("{cal:?}")
+        };
+        assert_eq!(
+            run(&mut app, line),
+            "ANT+ power 4005: calibrating (keep the cranks still) ..."
+        );
+        until_app(&mut app, "the calibration's answer", 10, |a| {
+            entry(a, ANT_TORQUE).calibration.is_some_and(|c| {
+                c.state == "done, offset 512, auto zero off" && c.auto_zero == Some(false)
+            })
+        });
+        let got = sim.radio(|r| r.sensor(4005).unwrap().received.clone());
+        assert_eq!(got, [ant::power::calibration_request()]);
+        let log = app.world().resource::<ConsoleState>().log().join("\n");
+        assert!(
+            log.contains("ANT+ power 4005: calibration done, offset 512"),
+            "{log}"
+        );
+        // Auto zero on.
+        run(&mut app, &format!("devices.autozero {ANT_TORQUE} on"));
+        until_app(&mut app, "auto zero on", 10, |a| {
+            entry(a, ANT_TORQUE)
+                .calibration
+                .is_some_and(|c| c.auto_zero == Some(true))
+        });
+        // A meter that fails the calibration says so.
+        sim.radio(|r| r.sensor(4005).unwrap().calibration_fails = true);
+        run(&mut app, &format!("devices.calibrate {ANT_TORQUE}"));
+        until_app(&mut app, "failed", 10, |a| {
+            entry(a, ANT_TORQUE)
+                .calibration
+                .is_some_and(|c| c.state.starts_with("failed"))
+        });
+        // The sensor cannot be calibrated.
+        assert!(
+            run(&mut app, &format!("devices.calibrate {ANT_SPDCAD}"))
+                .contains("cannot be calibrated")
+        );
+
+        // The meter's info (manufacturer, serial, battery: its common
+        // pages) reaches the client, then the ride's FIT file.
+        until_app(&mut app, "the meter's info", 20, |a| {
+            a.world()
+                .resource::<ClientState>()
+                .0
+                .sensors()
+                .iter()
+                .any(|s| {
+                    s.manufacturer == Some(255) && s.serial.is_some() && s.battery_volts.is_some()
+                })
+        });
+        let mut rec = ocw_client::recording::RideRecorder::new("Loop");
+        for i in 0..5 {
+            app.update();
+            let c = &app.world().resource::<ClientState>().0;
+            let mut s = ocw_client::recording::sample(c, f64::from(i));
+            s.distance = f64::from(i) * 7.0;
+            rec.observe(c.track(), None, s, 1_800_000_000);
+            rec.note_sensors(c.sensors());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let ride = rec.finish().unwrap();
+        let fit = ocw_fit::decode(&ocw_fit::encode(&ride.activity)).unwrap();
+        assert!(
+            fit.records
+                .iter()
+                .all(|r| near(r.power_w, 250.0, 2.0) && near(r.cadence_rpm, 92.0, 1.0)),
+            "{:?}",
+            fit.records
+        );
+        let mut devs: Vec<_> = fit
+            .devices
+            .iter()
+            .map(|d| (d.device_type, d.ant_device_number, d.source))
+            .collect();
+        devs.sort();
+        assert_eq!(
+            devs,
+            [
+                (Some(11), Some(4005), Some(ocw_fit::SourceType::AntPlus)),
+                (Some(121), Some(2222), Some(ocw_fit::SourceType::AntPlus))
+            ]
+        );
+        let pm = fit
+            .devices
+            .iter()
+            .find(|d| d.device_type == Some(11))
+            .unwrap();
+        assert_eq!(pm.manufacturer, Some(255));
+        assert_eq!(pm.serial_number, Some(0x0042_0000 | 4005));
+        assert_eq!(pm.product, Some(0x0100));
+        assert!(near(pm.software_version, 1.2, 1e-9));
+        assert!(near(pm.battery_voltage, 3.1, 0.004));
+        assert_eq!(pm.battery_status, Some(2));
+        assert_eq!(pm.product_name.as_deref(), Some("ANT+ power 4005"));
         let _ = std::fs::remove_dir_all(files.dir());
     }
 

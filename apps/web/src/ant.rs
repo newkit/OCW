@@ -95,6 +95,10 @@ pub fn kind_of(id: &str) -> Option<DeviceKind> {
     AntDeviceId::parse(id).map(|d| match d.profile {
         AntProfile::HeartRate => DeviceKind::HeartRate,
         AntProfile::BikePower => DeviceKind::PowerMeter,
+        // Speed / cadence sensors: the chooser kind of BLE CSC sensors.
+        AntProfile::SpeedCadence | AntProfile::Cadence | AntProfile::Speed => {
+            DeviceKind::PowerMeter
+        }
         // An FE-C trainer delivers power like a trainer; its SIM / ERG control
         // in the browser follows the desktop's FE-C path (17E).
         AntProfile::FitnessEquipment => DeviceKind::Trainer,

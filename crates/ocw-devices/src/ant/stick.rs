@@ -27,18 +27,28 @@
 //!   ([`super::fec::FecControl`]).
 //! - An unplugged stick ends every channel (`Failed { NoStick }`,
 //!   `Disconnected`); once it is back, every sensor gets a channel again.
+//! - Commands to a sensor ([`StickCore::command`]): a power meter's
+//!   calibration (manual zero, auto zero) goes out as an acknowledged
+//!   message on its channel, sent again when the transfer fails (up to
+//!   [`ACK_TRIES`] times), and the meter's answer page becomes
+//!   [`DeviceEvent::Calibration`] ([`Calibration::NoAnswer`] when none
+//!   comes within [`CALIBRATION_WAIT`]).
+//! - What a sensor says about itself becomes [`DeviceEvent::Info`] once
+//!   connected and whenever it changes (the FIT file's `device_info`).
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
 use super::channel::{Channel, ChannelConfig, ChannelEvent, ChannelState, MAX_LIST};
 use super::codec::{self, Decoder, Incoming, Message, code, id, lib_config};
+use super::common::{Common, fill_battery, software_version};
 use super::fec::{FecControl, FecDecoder};
 use super::hr::HrDecoder;
-use super::power::PowerDecoder;
+use super::power::{self, PowerDecoder};
+use super::spdcad::{SpdCadDecoder, SpdCadKind, SpdCadReading};
 use super::{AntDeviceId, AntProfile, ChannelId, NetworkKey, RECONNECT_DELAY};
 use crate::ble::FoundDevice;
-use crate::{DeviceCommand, DeviceEvent, FailReason};
+use crate::{Calibration, DeviceCommand, DeviceEvent, FailReason, SensorInfo, SensorSource};
 
 /// Who asked for a sensor (the service's device handles).
 pub type UserId = u64;
@@ -55,6 +65,13 @@ pub const SETUP_WAIT: Duration = Duration::from_secs(2);
 /// A scan channel's low-priority search timeout (× 2.5 s): short, so the
 /// scan's rounds go on.
 pub const SCAN_SEARCH_TIMEOUT: u8 = 2;
+/// An acknowledged message is sent this often at most before giving up.
+pub const ACK_TRIES: u8 = 3;
+/// Waiting for the stick to say whether an acknowledged message arrived.
+pub const ACK_WAIT: Duration = Duration::from_secs(2);
+/// Waiting for a power meter's calibration answer (a crank meter takes a
+/// few seconds).
+pub const CALIBRATION_WAIT: Duration = Duration::from_secs(10);
 
 /// What the core reports.
 #[derive(Debug, Clone, PartialEq)]
@@ -107,8 +124,19 @@ struct Slot {
 enum Pages {
     Hr(HrDecoder),
     Power(PowerDecoder),
+    SpdCad(SpdCadDecoder),
     /// An FE-C trainer: its data pages and its control queue.
     Fec(FecDecoder, FecControl),
+}
+
+/// An acknowledged message on its way to a sensor (a calibration).
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    payload: [u8; 8],
+    tries: u8,
+    /// Delivered: waiting for the sensor's answer.
+    delivered: bool,
+    since: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +151,76 @@ struct Sensor {
     /// The last failure told (told once per reason).
     told: Option<FailReason>,
     stale_told: bool,
+    /// A calibration under way.
+    pending: Option<Pending>,
+    /// The info last told.
+    info_told: Option<SensorInfo>,
+    /// The common pages of a sensor whose decoder does not read them (an
+    /// FE-C trainer).
+    common: Common,
+}
+
+impl Sensor {
+    fn source(&self) -> SensorSource {
+        SensorSource::AntPlus {
+            device_type: self.device.profile.device_type(),
+            device_number: self.device.device_number,
+            trans_type: self.device.trans_type,
+        }
+    }
+
+    /// What its pages said about it.
+    fn info(&self) -> SensorInfo {
+        let src = self.source();
+        match &self.pages {
+            Pages::Hr(d) => hr_info(d, src),
+            Pages::Power(d) => d.common.info(src),
+            Pages::SpdCad(d) => d.info(src),
+            Pages::Fec(..) => self.common.info(src),
+        }
+    }
+
+    /// The info, when it is new or changed.
+    fn info_news(&mut self) -> Option<DeviceEvent> {
+        let i = self.info();
+        (self.info_told != Some(i)).then(|| {
+            self.info_told = Some(i);
+            DeviceEvent::Info(i)
+        })
+    }
+}
+
+/// A heart-rate strap's pages as an info (the serial's lower 16 bits are
+/// the device number).
+fn hr_info(d: &HrDecoder, src: SensorSource) -> SensorInfo {
+    let mut i = SensorInfo::new(src);
+    i.manufacturer = d.manufacturer.map(u16::from);
+    i.product = d.model.map(u16::from);
+    if let (Some(upper), SensorSource::AntPlus { device_number, .. }) = (d.serial_upper, src) {
+        i.serial = Some(u32::from(upper) << 16 | u32::from(device_number));
+    }
+    i.hardware_version = d.hardware_version;
+    i.software_version = d.software_version.map(|v| software_version(v, 0xFF));
+    if let Some(b) = d.battery {
+        fill_battery(&mut i, b);
+    }
+    i
+}
+
+/// A speed / cadence reading as events.
+fn spdcad_events(r: SpdCadReading, now: Duration, out: &mut Vec<DeviceEvent>) {
+    if let Some(rpm) = r.cadence_rpm {
+        out.push(DeviceEvent::Cadence {
+            rpm,
+            timestamp: now,
+        });
+    }
+    if let Some(revs_per_s) = r.wheel_rps {
+        out.push(DeviceEvent::WheelSpeed {
+            revs_per_s,
+            timestamp: now,
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -289,6 +387,9 @@ impl StickCore {
         let pages = match device.profile {
             AntProfile::HeartRate => Pages::Hr(HrDecoder::new()),
             AntProfile::BikePower => Pages::Power(PowerDecoder::new()),
+            AntProfile::SpeedCadence => Pages::SpdCad(SpdCadDecoder::new(SpdCadKind::Combined)),
+            AntProfile::Cadence => Pages::SpdCad(SpdCadDecoder::new(SpdCadKind::Cadence)),
+            AntProfile::Speed => Pages::SpdCad(SpdCadDecoder::new(SpdCadKind::Speed)),
             AntProfile::FitnessEquipment => Pages::Fec(FecDecoder::new(), FecControl::new()),
         };
         self.sensors.push(Sensor {
@@ -300,6 +401,9 @@ impl StickCore {
             reopen_at: None,
             told: None,
             stale_told: false,
+            pending: None,
+            info_told: None,
+            common: Common::default(),
         });
         let mut out = Vec::new();
         if self.key.is_none() {
@@ -307,18 +411,6 @@ impl StickCore {
         }
         out.extend(self.assign(now));
         out
-    }
-
-    /// A command for a sensor's handle: an FE-C trainer takes SIM / ERG
-    /// (pages 49 – 51, 55); other sensors ignore it.
-    pub fn command(&mut self, user: UserId, cmd: DeviceCommand, now: Duration) -> Vec<Output> {
-        if let Some(s) = self.sensors.iter_mut().find(|s| s.user == user)
-            && let Pages::Fec(_, c) = &mut s.pages
-        {
-            c.on_command(cmd);
-            self.pump_control(now);
-        }
-        Vec::new()
     }
 
     /// The control queue of the FE-C trainer of `user` (tests, the log).
@@ -358,10 +450,12 @@ impl StickCore {
     }
 
     /// The stick's answer to an acknowledged message (an FE-C control
-    /// page): transferred, failed, or refused (one already in progress).
-    /// `true`: it was one (the channel's own state machine does not see
-    /// it: a refused data message is not a failed channel command).
-    fn transfer_result(&mut self, inc: &Incoming) -> bool {
+    /// page, a power meter's calibration): transferred, failed, or refused
+    /// (one already in progress). `None`: not one (the channel's own state
+    /// machine does not see these: a refused data message is not a failed
+    /// channel command). A calibration that failed to go out is sent
+    /// again ([`ACK_TRIES`]).
+    fn transfer_result(&mut self, inc: &Incoming, now: Duration) -> Option<Vec<Output>> {
         let (ch, ok) = match *inc {
             Incoming::Event {
                 channel,
@@ -375,23 +469,40 @@ impl StickCore {
                 to: id::ACKNOWLEDGED_DATA,
                 code: code::RESPONSE_NO_ERROR,
                 ..
-            } => return true,
+            } => return Some(Vec::new()),
             Incoming::Response {
                 channel,
                 to: id::ACKNOWLEDGED_DATA,
                 code: c,
             } => {
-                tracing::debug!(channel, code = c, "the ANT stick refused a control page");
+                tracing::debug!(
+                    channel,
+                    code = c,
+                    "the ANT stick refused an acknowledged message"
+                );
                 (channel, false)
             }
-            _ => return false,
+            _ => return None,
         };
-        if let Some(s) = self.sensors.iter_mut().find(|s| s.channel == Some(ch))
-            && let Pages::Fec(_, c) = &mut s.pages
-        {
+        let Some(s) = self.sensors.iter_mut().find(|s| s.channel == Some(ch)) else {
+            return Some(Vec::new());
+        };
+        if let Pages::Fec(_, c) = &mut s.pages {
             c.on_result(ok);
+            return Some(Vec::new());
         }
-        true
+        match &mut s.pending {
+            Some(p) if !p.delivered && ok => {
+                p.delivered = true;
+                p.since = now;
+                Some(Vec::new())
+            }
+            Some(p) if !p.delivered => {
+                let user = s.user;
+                Some(self.resend(user, ch, now))
+            }
+            _ => Some(Vec::new()),
+        }
     }
 
     /// The handle is gone: its channel is closed and freed.
@@ -403,6 +514,49 @@ impl StickCore {
         if let Some(n) = s.channel {
             self.retire(n);
         }
+    }
+
+    /// A command for the sensor of `user` (the one way commands reach
+    /// sensors): an FE-C trainer takes SIM / ERG (pages 49 – 51, 55, its
+    /// control queue); a power meter calibrates
+    /// ([`DeviceCommand::Calibrate`], [`DeviceCommand::SetAutoZero`]);
+    /// other sensors ignore them. Both go out as acknowledged messages and
+    /// their transfer results come back through one path
+    /// (`transfer_result`).
+    pub fn command(&mut self, user: UserId, cmd: DeviceCommand, now: Duration) -> Vec<Output> {
+        if let Some(s) = self.sensors.iter_mut().find(|s| s.user == user)
+            && let Pages::Fec(_, c) = &mut s.pages
+        {
+            c.on_command(cmd);
+            self.pump_control(now);
+            return Vec::new();
+        }
+        let payload = match cmd {
+            DeviceCommand::Calibrate => power::calibration_request(),
+            DeviceCommand::SetAutoZero(on) => power::auto_zero_config(on),
+            _ => return Vec::new(),
+        };
+        let Some(s) = self.sensors.iter_mut().find(|s| s.user == user) else {
+            return Vec::new();
+        };
+        if s.device.profile != AntProfile::BikePower {
+            return Vec::new();
+        }
+        let (Some(n), true) = (s.channel, s.connected) else {
+            // Not receiving it: nothing to send to.
+            return vec![Output::Event(
+                user,
+                DeviceEvent::Calibration(Calibration::NoAnswer),
+            )];
+        };
+        s.pending = Some(Pending {
+            payload,
+            tries: 1,
+            delivered: false,
+            since: now,
+        });
+        self.send(Message::acknowledged(n, payload));
+        Vec::new()
     }
 
     /// Starts a scan of every profile until `until`.
@@ -633,8 +787,8 @@ impl StickCore {
             (_, Phase::Ready) => {}
             _ => return Vec::new(),
         }
-        if self.transfer_result(&inc) {
-            return Vec::new();
+        if let Some(out) = self.transfer_result(&inc, now) {
+            return out;
         }
         let Some(n) = m.channel() else {
             return Vec::new();
@@ -734,45 +888,59 @@ impl StickCore {
                         kind: s.device.profile.kind(),
                     }));
                 }
+                let mut evs = Vec::new();
                 match &mut s.pages {
                     Pages::Hr(d) => {
                         let r = d.on_page(&payload, now);
                         match r.bpm {
                             Some(bpm) => {
                                 s.stale_told = false;
-                                out.push(ev(DeviceEvent::HeartRate {
+                                evs.push(DeviceEvent::HeartRate {
                                     bpm: f64::from(bpm),
                                     timestamp: now,
-                                }));
+                                });
                             }
                             // Stale (or 0): no heart rate, once.
                             None if !s.stale_told => {
                                 s.stale_told = true;
-                                out.push(ev(DeviceEvent::HeartRate {
+                                evs.push(DeviceEvent::HeartRate {
                                     bpm: 0.0,
                                     timestamp: now,
-                                }));
+                                });
                             }
                             None => {}
                         }
                     }
                     Pages::Power(d) => {
                         if let Some(r) = d.on_page(&payload, now) {
-                            out.push(ev(DeviceEvent::Power {
+                            evs.push(DeviceEvent::Power {
                                 watts: r.watts,
                                 cadence_rpm: r.cadence_rpm,
                                 timestamp: now,
-                            }));
+                            });
+                            if let Some(revs_per_s) = r.wheel_rps {
+                                evs.push(DeviceEvent::WheelSpeed {
+                                    revs_per_s,
+                                    timestamp: now,
+                                });
+                            }
+                        }
+                        if let Some(c) = d.take_calibration() {
+                            // Any answer ends a calibration under way.
+                            s.pending = None;
+                            evs.push(DeviceEvent::Calibration(c));
                         }
                     }
+                    Pages::SpdCad(d) => spdcad_events(d.on_page(&payload, now), now, &mut evs),
                     Pages::Fec(d, c) => {
+                        s.common.on_page(&payload);
                         let before = d.status;
                         if let Some(r) = d.on_page(&payload, now) {
-                            out.push(ev(DeviceEvent::Power {
+                            evs.push(DeviceEvent::Power {
                                 watts: r.watts,
                                 cadence_rpm: r.cadence_rpm,
                                 timestamp: now,
-                            }));
+                            });
                         }
                         let st = d.status;
                         if st.user_config_required {
@@ -789,6 +957,10 @@ impl StickCore {
                             );
                         }
                     }
+                }
+                out.extend(evs.into_iter().map(ev));
+                if let Some(i) = s.info_news() {
+                    out.push(ev(i));
                 }
             }
             ChannelEvent::Lost => {
@@ -837,6 +1009,29 @@ impl StickCore {
             | ChannelEvent::Unassigned => {}
         }
         out
+    }
+
+    /// Sends a sensor's acknowledged message again, or gives up after
+    /// [`ACK_TRIES`].
+    fn resend(&mut self, user: UserId, n: u8, now: Duration) -> Vec<Output> {
+        let Some(s) = self.sensors.iter_mut().find(|s| s.user == user) else {
+            return Vec::new();
+        };
+        let Some(p) = &mut s.pending else {
+            return Vec::new();
+        };
+        if p.tries >= ACK_TRIES || s.channel != Some(n) || !s.connected {
+            s.pending = None;
+            return vec![Output::Event(
+                user,
+                DeviceEvent::Calibration(Calibration::NoAnswer),
+            )];
+        }
+        p.tries += 1;
+        p.since = now;
+        let payload = p.payload;
+        self.send(Message::acknowledged(n, payload));
+        Vec::new()
     }
 
     fn scan_event(
@@ -935,6 +1130,34 @@ impl StickCore {
         }
         for (n, e) in events {
             out.extend(self.on_channel_event(n, e, now));
+        }
+        // Calibrations without an answer.
+        let mut resend = Vec::new();
+        for s in &mut self.sensors {
+            match s.pending {
+                Some(p) if p.delivered && now.saturating_sub(p.since) > CALIBRATION_WAIT => {
+                    s.pending = None;
+                    out.push(Output::Event(
+                        s.user,
+                        DeviceEvent::Calibration(Calibration::NoAnswer),
+                    ));
+                }
+                Some(p) if !p.delivered && now.saturating_sub(p.since) > ACK_WAIT => {
+                    resend.push((s.user, s.channel.unwrap_or(u8::MAX)));
+                }
+                _ => {}
+            }
+            // A quiet speed / cadence sensor's stop.
+            if let Pages::SpdCad(d) = &mut s.pages
+                && s.connected
+            {
+                let mut evs = Vec::new();
+                spdcad_events(d.on_tick(now), now, &mut evs);
+                out.extend(evs.into_iter().map(|e| Output::Event(s.user, e)));
+            }
+        }
+        for (user, n) in resend {
+            out.extend(self.resend(user, n, now));
         }
         // Closed sensor channels search again; staleness without pages.
         let mut reopen = Vec::new();
@@ -1302,6 +1525,275 @@ mod tests {
         assert!(hr(&b.events(1)).contains(&64.0));
     }
 
+    fn watts(e: &[DeviceEvent]) -> Vec<f64> {
+        e.iter()
+            .filter_map(|e| match e {
+                DeviceEvent::Power { watts, .. } => Some(*watts),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn calibrations(e: &[DeviceEvent]) -> Vec<Calibration> {
+        e.iter()
+            .filter_map(|e| match e {
+                DeviceEvent::Calibration(c) => Some(*c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn infos(e: &[DeviceEvent]) -> Vec<SensorInfo> {
+        e.iter()
+            .filter_map(|e| match e {
+                DeviceEvent::Info(i) => Some(*i),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const METER: AntDeviceId = AntDeviceId {
+        profile: AntProfile::BikePower,
+        device_number: 4005,
+        trans_type: 5,
+    };
+
+    fn meter_bench(sensor: SimSensor) -> Bench {
+        let mut radio = SimRadio::new(Some(NetworkKey::TEST));
+        radio.add(sensor);
+        let mut b = Bench::new(Some(NetworkKey::TEST), radio);
+        b.run(Duration::from_millis(200));
+        b.core.add_sensor(9, METER, b.now);
+        b.run(Duration::from_secs(3));
+        b
+    }
+
+    #[test]
+    fn a_torque_only_meter_gives_power_and_cadence_and_tells_what_it_is() {
+        let mut b = meter_bench(SimSensor::torque_meter(4005, 250.0, 85.0));
+        b.run(Duration::from_secs(10));
+        let e = b.events(9);
+        assert_eq!(
+            e[0],
+            DeviceEvent::Connected {
+                kind: "power meter (ANT+)"
+            }
+        );
+        let w = watts(&e);
+        assert!(w.len() > 15, "{e:?}");
+        assert!(w.iter().all(|w| (w - 250.0).abs() < 1.5), "{w:?}");
+        let rpm: Vec<f64> = e
+            .iter()
+            .filter_map(|e| match e {
+                DeviceEvent::Power { cadence_rpm, .. } => *cadence_rpm,
+                _ => None,
+            })
+            .collect();
+        assert!(rpm.iter().all(|c| (c - 85.0).abs() < 0.3), "{rpm:?}");
+        // The info: first the ids only, then the common pages' fields.
+        let i = infos(&e);
+        assert_eq!(
+            i[0],
+            SensorInfo::new(SensorSource::AntPlus {
+                device_type: 11,
+                device_number: 4005,
+                trans_type: 5
+            })
+        );
+        let last = i.last().unwrap();
+        assert_eq!(last.manufacturer, Some(255));
+        assert_eq!(last.product, Some(0x0100));
+        assert_eq!(last.serial, Some(0x0042_0000 | 4005));
+        assert_eq!(last.software_version, Some(1.2));
+        assert_eq!(last.battery_status, Some(2));
+        assert!(i.len() <= 6, "told only when it changes: {i:?}");
+        // The meter's auto zero support (off) is told once.
+        assert_eq!(calibrations(&e), [Calibration::AutoZero { on: false }]);
+        // Stopped pedalling: no new events, 0 W once.
+        b.radio.set_cadence(4005, 0.0);
+        b.run(Duration::from_secs(5));
+        let w = watts(&b.events(9));
+        assert_eq!(w.last(), Some(&0.0), "{w:?}");
+    }
+
+    #[test]
+    fn a_calibration_round_trip_and_auto_zero() {
+        let mut b = meter_bench(SimSensor::torque_meter(4005, 200.0, 90.0));
+        b.events(9);
+        assert!(
+            b.core
+                .command(9, DeviceCommand::Calibrate, b.now)
+                .is_empty()
+        );
+        b.run(Duration::from_secs(2));
+        let c = calibrations(&b.events(9));
+        assert_eq!(
+            c,
+            [Calibration::Done {
+                offset: Some(crate::ant::sim::SIM_ZERO_OFFSET),
+                auto_zero: Some(false)
+            }]
+        );
+        // The request on the air, byte for byte.
+        let got = b.radio.sensors()[0].received.clone();
+        assert_eq!(got, [[0x01, 0xAA, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]]);
+        // Auto zero on.
+        b.core.command(9, DeviceCommand::SetAutoZero(true), b.now);
+        b.run(Duration::from_secs(2));
+        assert_eq!(
+            calibrations(&b.events(9)),
+            [Calibration::Done {
+                offset: Some(512),
+                auto_zero: Some(true)
+            }]
+        );
+        // The cranks move: the meter says it failed.
+        b.radio.sensor(4005).unwrap().calibration_fails = true;
+        b.core.command(9, DeviceCommand::Calibrate, b.now);
+        b.run(Duration::from_secs(2));
+        assert_eq!(
+            calibrations(&b.events(9)),
+            [Calibration::Failed { offset: Some(512) }]
+        );
+        // Other commands are not for a power meter.
+        assert!(
+            b.core
+                .command(9, DeviceCommand::SetTargetPower(200.0), b.now)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_lost_request_is_sent_again_and_no_answer_is_said() {
+        let mut b = meter_bench(SimSensor::torque_meter(4005, 200.0, 90.0));
+        b.events(9);
+        // Two transfers fail, the third gets through.
+        b.radio.sensor(4005).unwrap().ack_failures = 2;
+        b.core.command(9, DeviceCommand::Calibrate, b.now);
+        b.run(Duration::from_secs(2));
+        assert!(matches!(
+            calibrations(&b.events(9))[..],
+            [Calibration::Done { .. }]
+        ));
+        assert_eq!(b.radio.sensors()[0].received.len(), 1);
+        // Every transfer fails: after three tries, no answer.
+        b.radio.sensor(4005).unwrap().ack_failures = 10;
+        b.core.command(9, DeviceCommand::Calibrate, b.now);
+        b.run(Duration::from_secs(2));
+        assert_eq!(calibrations(&b.events(9)), [Calibration::NoAnswer]);
+        // Delivered but never answered: no answer after the wait.
+        b.radio.sensor(4005).unwrap().ack_failures = 0;
+        b.radio.sensor(4005).unwrap().calibration_silent = true;
+        b.core.command(9, DeviceCommand::Calibrate, b.now);
+        b.run(CALIBRATION_WAIT - Duration::from_secs(1));
+        assert!(calibrations(&b.events(9)).is_empty());
+        b.run(Duration::from_secs(2));
+        assert_eq!(calibrations(&b.events(9)), [Calibration::NoAnswer]);
+        // A meter not received: no answer at once.
+        b.radio.set_present(4005, false);
+        b.run(Duration::from_secs(3));
+        let o = b.core.command(9, DeviceCommand::Calibrate, b.now);
+        assert_eq!(
+            o,
+            [Output::Event(
+                9,
+                DeviceEvent::Calibration(Calibration::NoAnswer)
+            )]
+        );
+    }
+
+    #[test]
+    fn speed_and_cadence_sensors_give_cadence_and_wheel_speed() {
+        let mut radio = SimRadio::new(Some(NetworkKey::TEST));
+        radio.add(SimSensor::speed_cadence(
+            2222,
+            AntProfile::SpeedCadence,
+            92.0,
+            32.0,
+        ));
+        radio.add(SimSensor::speed_cadence(
+            2223,
+            AntProfile::Cadence,
+            75.0,
+            0.0,
+        ));
+        radio.add(SimSensor::speed_cadence(2224, AntProfile::Speed, 0.0, 25.0));
+        let mut b = Bench::new(Some(NetworkKey::TEST), radio);
+        b.run(Duration::from_millis(200));
+        // The scan finds all three in their profiles.
+        let until = b.now + Duration::from_secs(8);
+        b.core.start_scan(b.now, until);
+        b.run(Duration::from_secs(8));
+        let mut ids: Vec<String> = b.found().into_iter().map(|d| d.id).collect();
+        ids.sort();
+        assert_eq!(ids, ["ant:121:2222:1", "ant:122:2223:1", "ant:123:2224:1"]);
+        b.run(Duration::from_millis(500));
+        for (user, n, p) in [
+            (1, 2222, AntProfile::SpeedCadence),
+            (2, 2223, AntProfile::Cadence),
+            (3, 2224, AntProfile::Speed),
+        ] {
+            b.core.add_sensor(user, AntDeviceId::new(p, n, 1), b.now);
+        }
+        b.run(Duration::from_secs(10));
+        let rpm = |e: &[DeviceEvent]| -> Vec<f64> {
+            e.iter()
+                .filter_map(|e| match e {
+                    DeviceEvent::Cadence { rpm, .. } => Some(*rpm),
+                    _ => None,
+                })
+                .collect()
+        };
+        let kmh = |e: &[DeviceEvent]| -> Vec<f64> {
+            e.iter()
+                .filter_map(|e| match e {
+                    DeviceEvent::WheelSpeed { revs_per_s, .. } => {
+                        Some(revs_per_s * crate::ant::sim::SIM_WHEEL_M * 3.6)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let combined = b.events(1);
+        assert_eq!(
+            combined[0],
+            DeviceEvent::Connected {
+                kind: "speed/cadence sensor (ANT+)"
+            }
+        );
+        let (c, v) = (rpm(&combined), kmh(&combined));
+        assert!(
+            c.len() > 8 && c.iter().all(|c| (c - 92.0).abs() < 0.5),
+            "{c:?}"
+        );
+        assert!(
+            v.len() > 8 && v.iter().all(|v| (v - 32.0).abs() < 0.2),
+            "{v:?}"
+        );
+        let cad = b.events(2);
+        assert!(rpm(&cad).iter().all(|c| (c - 75.0).abs() < 0.5));
+        assert!(kmh(&cad).is_empty());
+        // The cadence sensor's background pages: its info.
+        let i = infos(&cad);
+        assert_eq!(i.last().unwrap().manufacturer, Some(255));
+        assert_eq!(i.last().unwrap().serial, Some(0x0042_0000 | 2223));
+        let spd = b.events(3);
+        assert!(rpm(&spd).is_empty());
+        assert!(kmh(&spd).iter().all(|v| (v - 25.0).abs() < 0.2));
+        // The rider stops pedalling: 0 rpm once.
+        b.radio.set_cadence(2222, 0.0);
+        b.run(Duration::from_secs(5));
+        let c = rpm(&b.events(1));
+        assert_eq!(c.last(), Some(&0.0), "{c:?}");
+        assert_eq!(c.iter().filter(|c| **c == 0.0).count(), 1);
+        // Calibration is not for them.
+        assert!(
+            b.core
+                .command(1, DeviceCommand::Calibrate, b.now)
+                .is_empty()
+        );
+    }
+
     #[test]
     fn a_strap_lying_still_goes_stale() {
         let mut radio = SimRadio::new(Some(NetworkKey::TEST));
@@ -1318,15 +1810,6 @@ mod tests {
         let bpm = hr(&b.events(1));
         assert_eq!(bpm.last(), Some(&0.0), "{bpm:?}");
         assert_eq!(bpm.iter().filter(|b| **b == 0.0).count(), 1, "once");
-    }
-
-    fn watts(e: &[DeviceEvent]) -> Vec<f64> {
-        e.iter()
-            .filter_map(|e| match e {
-                DeviceEvent::Power { watts, .. } => Some(*watts),
-                _ => None,
-            })
-            .collect()
     }
 
     fn sim_cmd(grade: f64, mass_kg: f64) -> DeviceCommand {

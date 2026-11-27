@@ -130,6 +130,7 @@ mod tests {
             software_version: 0,
             laps: Vec::new(),
             markers: Vec::new(),
+            devices: Vec::new(),
         }
     }
 

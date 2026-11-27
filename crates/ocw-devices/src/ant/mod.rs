@@ -10,7 +10,11 @@
 //!   lost, closed;
 //! - [`hr`] (pure): the ANT+ heart-rate pages (toggle bit, legacy straps,
 //!   beat time / count, R-R intervals, staleness, manufacturer / product /
-//!   battery pages); [`power`] (pure): the bike-power page 0x10;
+//!   battery pages); [`power`] (pure): the bike-power pages – power-only
+//!   0x10, wheel and crank torque 0x11 / 0x12, calibration 0x01;
+//!   [`spdcad`] (pure): speed and cadence sensors (types 121 – 123);
+//!   [`common`] (pure): the common pages 0x50 – 0x52 (manufacturer,
+//!   product, battery: the FIT file's `device_info`);
 //!   [`fec`] (pure): the FE-C trainer pages – data pages 16 / 25 and the
 //!   control pages 49 / 50 / 51 / 55, sent as acknowledged messages one
 //!   at a time;
@@ -42,10 +46,12 @@
 
 pub mod channel;
 pub mod codec;
+pub mod common;
 pub mod fec;
 pub mod hr;
 pub mod power;
 pub mod sim;
+pub mod spdcad;
 pub mod stick;
 pub mod web;
 
@@ -161,23 +167,46 @@ pub enum KeyError {
 pub enum AntProfile {
     /// Heart-rate monitor (device type 120, period 8070).
     HeartRate,
-    /// Bike power (device type 11, period 8182): the power-only page.
+    /// Bike power (device type 11, period 8182): the power-only page, the
+    /// torque pages, calibration.
     BikePower,
+    /// Combined speed and cadence sensor (device type 121, period 8086).
+    SpeedCadence,
+    /// Cadence sensor (device type 122, period 8102).
+    Cadence,
+    /// Speed sensor (device type 123, period 8118).
+    Speed,
     /// Fitness equipment, FE-C (device type 17, period 8192): a smart
     /// trainer, data pages 16 / 25 and control (SIM / ERG).
     FitnessEquipment,
 }
 
 impl AntProfile {
-    pub const ALL: [Self; 3] = [Self::HeartRate, Self::BikePower, Self::FitnessEquipment];
+    pub const ALL: [Self; 6] = [
+        Self::HeartRate,
+        Self::BikePower,
+        Self::SpeedCadence,
+        Self::Cadence,
+        Self::Speed,
+        Self::FitnessEquipment,
+    ];
 
     /// The ANT+ device type.
     pub fn device_type(self) -> u8 {
         match self {
             Self::HeartRate => 120,
             Self::BikePower => 11,
+            Self::SpeedCadence => 121,
+            Self::Cadence => 122,
+            Self::Speed => 123,
             Self::FitnessEquipment => 17,
         }
+    }
+
+    /// Whether it gives a cadence of its own (a cadence sensor, not a
+    /// power meter).
+    pub fn is_cadence_sensor(self) -> bool {
+        matches!(self, Self::SpeedCadence | Self::Cadence)
     }
 
     pub fn from_device_type(t: u8) -> Option<Self> {
@@ -185,11 +214,14 @@ impl AntProfile {
     }
 
     /// The channel period (1/32768 s): 8070 ≈ 4.06 Hz, 8182 ≈ 4.00 Hz,
-    /// 8192 = 4 Hz.
+    /// speed / cadence 8086, 8102, 8118 (≈ 4 Hz each), FE-C 8192 = 4 Hz.
     pub fn period(self) -> u16 {
         match self {
             Self::HeartRate => 8070,
             Self::BikePower => 8182,
+            Self::SpeedCadence => 8086,
+            Self::Cadence => 8102,
+            Self::Speed => 8118,
             Self::FitnessEquipment => 8192,
         }
     }
@@ -199,6 +231,9 @@ impl AntProfile {
         match self {
             Self::HeartRate => "heart-rate sensor (ANT+)",
             Self::BikePower => "power meter (ANT+)",
+            Self::SpeedCadence => "speed/cadence sensor (ANT+)",
+            Self::Cadence => "cadence sensor (ANT+)",
+            Self::Speed => "speed sensor (ANT+)",
             Self::FitnessEquipment => "smart trainer (ANT+ FE-C)",
         }
     }
@@ -208,6 +243,9 @@ impl AntProfile {
         match self {
             Self::HeartRate => "ANT+ heart rate",
             Self::BikePower => "ANT+ power",
+            Self::SpeedCadence => "ANT+ speed/cadence",
+            Self::Cadence => "ANT+ cadence",
+            Self::Speed => "ANT+ speed",
             Self::FitnessEquipment => "ANT+ trainer",
         }
     }
@@ -218,6 +256,7 @@ impl AntProfile {
         match self {
             Self::HeartRate => Profile::HeartRate,
             Self::BikePower => Profile::CyclingPower,
+            Self::SpeedCadence | Self::Cadence | Self::Speed => Profile::SpeedCadence,
             // A trainer, as a BLE FTMS one (it replaces the virtual
             // trainer and takes SIM / ERG).
             Self::FitnessEquipment => Profile::FitnessMachine,
@@ -442,6 +481,19 @@ mod tests {
         let p = AntDeviceId::parse("ant:11:777:5").unwrap();
         assert_eq!(p.profile, AntProfile::BikePower);
         assert_eq!(AntDeviceId::parse("ant:120:0:1"), None);
+        let c = AntDeviceId::parse("ant:121:2222:1").unwrap();
+        assert_eq!(c.profile, AntProfile::SpeedCadence);
+        assert_eq!(c.name(), "ANT+ speed/cadence 2222");
+        assert_eq!(c.found(None).profiles, [Profile::SpeedCadence]);
+        assert_eq!(
+            AntDeviceId::parse("ant:122:7:1").unwrap().profile,
+            AntProfile::Cadence
+        );
+        assert_eq!(
+            AntDeviceId::parse("ant:123:8:1").unwrap().profile,
+            AntProfile::Speed
+        );
+        assert_eq!(AntProfile::Speed.period(), 8118);
         let t = AntDeviceId::parse("ant:17:5:5").unwrap();
         assert_eq!(t.profile, AntProfile::FitnessEquipment);
         assert_eq!(t.name(), "ANT+ trainer 5");

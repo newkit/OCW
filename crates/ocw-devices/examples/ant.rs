@@ -5,6 +5,7 @@
 //! cargo run -p ocw-devices --features ant-usb --example ant -- sticks
 //! cargo run -p ocw-devices --features ant-usb --example ant -- scan [SECONDS]
 //! cargo run -p ocw-devices --features ant-usb --example ant -- monitor <ID> [SECONDS]
+//! cargo run -p ocw-devices --features ant-usb --example ant -- calibrate <ID>
 //! ```
 //!
 //! `ID` is `ant:120:<device number>:<transmission type>` as `scan` prints
@@ -22,6 +23,7 @@ use std::time::{Duration, Instant};
 use ocw_devices::ant::sim::SimSensor;
 use ocw_devices::ant::usb::UsbTransport;
 use ocw_devices::ant::{AntStick, AntTransport, NetworkKey, SimTransport};
+use ocw_devices::{DeviceCommand, DeviceEvent};
 
 /// The real sticks, as the desktop app opens them.
 #[cfg(windows)]
@@ -78,6 +80,13 @@ fn main() {
                     vec![
                         SimSensor::strap(12345, 142.0),
                         SimSensor::power_meter(4004, 230.0, 88.0),
+                        SimSensor::torque_meter(4005, 250.0, 85.0),
+                        SimSensor::speed_cadence(
+                            2222,
+                            ocw_devices::ant::AntProfile::SpeedCadence,
+                            90.0,
+                            32.0,
+                        ),
                     ],
                 ),
                 key,
@@ -118,7 +127,8 @@ fn main() {
             }
             s.shutdown();
         }
-        Some("monitor") => {
+        Some(cmd @ ("monitor" | "calibrate")) => {
+            let calibrate = cmd == "calibrate";
             let Some(id) = args.get(1) else {
                 eprintln!("monitor <ID> [SECONDS]");
                 std::process::exit(2);
@@ -135,9 +145,16 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            let until = Instant::now() + secs(2, 30);
+            let until = Instant::now() + secs(2, if calibrate { 20 } else { 30 });
+            let mut asked = false;
             while Instant::now() < until {
                 if let Ok(e) = h.events.recv_timeout(Duration::from_millis(200)) {
+                    // A power meter's manual zero once it is connected.
+                    if calibrate && !asked && matches!(e, DeviceEvent::Connected { .. }) {
+                        asked = true;
+                        let _ = h.commands.send(DeviceCommand::Calibrate);
+                        println!("calibrating (keep the cranks still) ...");
+                    }
                     println!("{e:?}");
                 }
             }
@@ -145,7 +162,9 @@ fn main() {
             s.shutdown();
         }
         _ => {
-            eprintln!("usage: ant sticks | scan [SECONDS] | monitor <ID> [SECONDS] [--sim]");
+            eprintln!(
+                "usage: ant sticks | scan [SECONDS] | monitor <ID> [SECONDS] | calibrate <ID> [--sim]"
+            );
             std::process::exit(2);
         }
     }

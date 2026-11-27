@@ -41,7 +41,7 @@ impl VirtualPower {
                 self.erg_w = None;
                 self.sim = Some(p.load(Self::TAKES_WIND));
             }
-            DeviceCommand::Shutdown => {}
+            DeviceCommand::Calibrate | DeviceCommand::SetAutoZero(_) | DeviceCommand::Shutdown => {}
         }
     }
 

@@ -4,14 +4,16 @@
 //! built from rides saved before it existed (`history.import`).
 //!
 //! Reads the subset the history needs: the `file_id`'s product name, the
-//! creator's software version, the `record`s (time, position, altitude,
+//! creator's software version, the sensors' `device_info`s, the `record`s (time, position, altitude,
 //! heart rate, cadence, distance, speed, power; also the `enhanced_`
 //! speed and altitude), the `user_marker` events (god mode, crashes) and
 //! the laps' start times. Normal and compressed-timestamp headers, both
 //! byte orders and developer fields (skipped) are understood; the header
 //! and file CRCs are checked. Pure and dependency-free (wasm).
 
-use crate::{Activity, FIT_EPOCH_OFFSET_S, Marker, MarkerKind, Record, crc16};
+use crate::{
+    Activity, DeviceInfo, FIT_EPOCH_OFFSET_S, Marker, MarkerKind, Record, SourceType, crc16,
+};
 
 /// Why a file could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +209,7 @@ pub fn decode(bytes: &[u8]) -> Result<Activity, DecodeError> {
     let mut markers: Vec<(u32, MarkerKind)> = Vec::new();
     let mut lap_starts: Vec<u32> = Vec::new();
     let mut session_start: Option<u32> = None;
+    let mut devices: Vec<(u64, DeviceInfo)> = Vec::new();
     while r.at < end {
         let h = r.u8()?;
         let (local, compressed_ts) = if h & 0x80 != 0 {
@@ -282,11 +285,35 @@ pub fn decode(bytes: &[u8]) -> Result<Activity, DecodeError> {
                 }
             }
             MESG_DEVICE_INFO => {
-                // The creator (device index 0, or none given).
-                if uint(0).is_none_or(|i| i == 0)
-                    && let Some(v) = uint(5)
-                {
-                    software_version = v as u16;
+                match uint(0) {
+                    // The creator (device index 0, or none given).
+                    None | Some(0) => {
+                        if let Some(v) = uint(5) {
+                            software_version = v as u16;
+                        }
+                    }
+                    // A sensor: the newest message of each index.
+                    Some(index) => {
+                        let d = DeviceInfo {
+                            source: uint(25).and_then(|v| SourceType::from_fit(v as u8)),
+                            device_type: uint(1).map(|v| v as u8),
+                            ant_device_number: uint(21).map(|v| v as u16),
+                            ant_transmission_type: uint(20).map(|v| v as u8),
+                            manufacturer: uint(2).map(|v| v as u16),
+                            product: uint(4).map(|v| v as u16),
+                            serial_number: uint(3).map(|v| v as u32),
+                            software_version: uint(5).map(|v| v as f64 / 100.0),
+                            hardware_version: uint(6).map(|v| v as u8),
+                            battery_voltage: uint(10).map(|v| v as f64 / 256.0),
+                            battery_status: uint(11).map(|v| v as u8),
+                            battery_level: uint(32).map(|v| v as u8),
+                            product_name: get(27).and_then(Raw::text),
+                        };
+                        match devices.iter_mut().find(|(i, _)| *i == index) {
+                            Some(slot) => slot.1 = d,
+                            None => devices.push((index, d)),
+                        }
+                    }
                 }
             }
             MESG_RECORD => {
@@ -374,6 +401,10 @@ pub fn decode(bytes: &[u8]) -> Result<Activity, DecodeError> {
                 kind,
             })
             .collect(),
+        devices: {
+            devices.sort_by_key(|(i, _)| *i);
+            devices.into_iter().map(|(_, d)| d).collect()
+        },
     })
 }
 
@@ -417,6 +448,7 @@ mod tests {
                     kind: MarkerKind::GodModeEnd,
                 },
             ],
+            devices: Vec::new(),
         }
     }
 
@@ -446,6 +478,35 @@ mod tests {
         }
         assert_eq!(b.laps, a.laps);
         assert_eq!(b.markers, a.markers);
+        assert!(b.devices.is_empty());
+    }
+
+    /// The sensors' `device_info`s read back (spec 14 Phase 17 A6).
+    #[test]
+    fn reads_back_the_sensors() {
+        let mut a = ride(30);
+        let cadence = DeviceInfo {
+            source: Some(SourceType::AntPlus),
+            device_type: Some(121),
+            ant_device_number: Some(2222),
+            ant_transmission_type: Some(1),
+            manufacturer: Some(255),
+            serial_number: Some(0x0042_08AE),
+            battery_voltage: Some(2.8984375),
+            battery_status: Some(2),
+            ..Default::default()
+        };
+        a.devices = vec![crate::tests::power_meter(), cadence.clone()];
+        let b = decode(&encode(&a)).expect("decodes");
+        assert_eq!(b.software_version, 12, "the recorder's, not a sensor's");
+        assert_eq!(b.devices.len(), 2);
+        let pm = &b.devices[0];
+        assert_eq!(pm.ant_device_number, Some(4004));
+        assert_eq!(pm.source, Some(SourceType::AntPlus));
+        assert!((pm.software_version.unwrap() - 1.2).abs() < 1e-9);
+        assert!((pm.battery_voltage.unwrap() - 3.1).abs() < 0.004);
+        assert_eq!(pm.product_name.as_deref(), Some("ANT+ power 4004"));
+        assert_eq!(b.devices[1], cadence);
     }
 
     #[test]

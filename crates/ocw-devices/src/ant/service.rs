@@ -367,6 +367,7 @@ impl<T: AntTransport> Service<T> {
             // SIM / ERG go to the stick core (an FE-C trainer takes them,
             // other sensors ignore them).
             let core = &mut self.core;
+            let mut commands = Vec::new();
             self.users.retain(|u| {
                 loop {
                     match u.commands.try_recv() {
@@ -374,11 +375,16 @@ impl<T: AntTransport> Service<T> {
                             core.remove_sensor(u.id);
                             return false;
                         }
-                        Ok(cmd) => out.extend(core.command(u.id, cmd, now)),
+                        // The core takes what is for its sensors (a power
+                        // meter's calibration) and ignores the rest.
+                        Ok(cmd) => commands.push((u.id, cmd)),
                         Err(TryRecvError::Empty) => return true,
                     }
                 }
             });
+            for (user, cmd) in commands {
+                out.extend(self.core.command(user, cmd, now));
+            }
             self.manage_link(now, &mut out);
             if let Some(mut link) = self.link.take() {
                 let mut lost = None;

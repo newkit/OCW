@@ -374,6 +374,11 @@ impl WebDevices {
                         d.samples += 1;
                     }
                     DeviceEvent::HeartRate { bpm, .. } => d.heart_rate_bpm = Some(bpm),
+                    // ANT+ sensors only (the desktop's): nothing here yet.
+                    DeviceEvent::Cadence { .. }
+                    | DeviceEvent::WheelSpeed { .. }
+                    | DeviceEvent::Calibration(_)
+                    | DeviceEvent::Info(_) => {}
                 }
                 // Device power earns hearts, the virtual trainer's does
                 // not (spec §14 Phase 4, 4E): the samples say which.
@@ -548,6 +553,9 @@ impl WebDevices {
                 link: d.state.link(),
                 remembered: remembered(&d.id),
                 heart_rate: None,
+                cadence: None,
+                reading: None,
+                calibration: None,
                 trainer: None,
             })
             .collect();
@@ -561,6 +569,9 @@ impl WebDevices {
                     link: Link::Idle,
                     remembered: true,
                     heart_rate: None,
+                    cadence: None,
+                    reading: None,
+                    calibration: None,
                     trainer: None,
                 });
             }
@@ -576,6 +587,9 @@ impl WebDevices {
                     link: Link::Idle,
                     remembered: false,
                     heart_rate: None,
+                    cadence: None,
+                    reading: None,
+                    calibration: None,
                     trainer: None,
                 });
             }

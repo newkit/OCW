@@ -2293,8 +2293,8 @@ package is installed only when all its files match the manifest.
   the browser's own list, remembered in the page's `localStorage`.
   `scripts/test-devices-menu.sh [shot|shot-wayland] DIR` walks this page
   headless with the real Bluetooth stack (own config dir; screenshots in DIR).
-- **ANT+ heart-rate straps and power meters** (desktop; spec 3.4.1, 14
-  Phase 17) through an **ANT USB stick** (ANT USB-m `0fcf:1009`, ANT USB2
+- **ANT+ heart-rate straps, power meters and speed / cadence sensors**
+  (desktop; spec 3.4.1, 14 Phase 17) through an **ANT USB stick** (ANT USB-m `0fcf:1009`, ANT USB2
   `0fcf:1008`, and the clones with these ids). The same *Scan for devices*
   finds them next to the Bluetooth devices ("ANT+ heart rate 12345",
   "heart rate, ANT+, …"); *Connect* pairs that strap by its device number
@@ -2302,7 +2302,27 @@ package is installed only when all its files match the manifest.
   `devices.toml` with `transport = "ant"` and reconnected at the next
   start. The heart rate goes the same way as a Bluetooth strap's: HUD,
   FIT recording, workouts, multiplayer; an ANT+ power meter replaces the
-  virtual trainer like a Bluetooth one.
+  virtual trainer like a Bluetooth one – also a meter that sends only
+  torque pages (crank or wheel torque, no power-only page).
+- **ANT+ speed / cadence sensors** (combined, cadence-only, speed-only):
+  a cadence sensor gives the ride's cadence; the speed is shown on the
+  sensor's page (information only – the ride's speed is the physics'),
+  measured with the wheel of `trainer.wheel_mm` (Settings → Trainer →
+  *Wheel circumference*: `bike` = the bike's tyre, road 2105 mm, gravel
+  2200 mm, MTB 2288 mm, or a tyre size). With a cadence sensor next to a
+  trainer or power meter only one cadence is used, the first that sends;
+  **Use for cadence** on the other's page (`devices.cadence ID`,
+  `devices.cadence auto`) picks it, and the choice is remembered. When the
+  chosen sensor goes, the ride has no cadence until it is back.
+- **Calibrating an ANT+ power meter:** its page has **Calibrate** (the
+  manual zero offset: unclip, cranks still, one pedal down;
+  `devices.calibrate ID`) and shows the meter's answer – *done, offset
+  512* or *failed* – and, if the meter has it, **Auto zero** on / off
+  (`devices.autozero ID on|off`).
+- **The FIT file names the sensors:** each ANT+ sensor used in the ride is
+  a `device_info` entry (source ANT+, device type and number,
+  manufacturer, product, serial, software version, battery voltage and
+  status, as far as the sensor tells them).
 - **ANT+ FE-C smart trainers** (spec 14 Phase 17, 17E): a trainer that
   speaks ANT+ FE-C ("ANT+ trainer 5005", "trainer, ANT+, …") is a
   *trainer* like a Bluetooth FTMS one: it replaces the virtual trainer,
@@ -2369,8 +2389,12 @@ package is installed only when all its files match the manifest.
   rides with a **simulated ANT stick** and these sensors (any key works;
   `fec:N:W[:RPM]` is a simulated FE-C trainer whose rider rides W watts on
   the flat: its power follows the gradient in SIM and the target in ERG);
-  `--no-ant` turns ANT+ off. `scripts/test-ant-devices.sh [shot|shot-wayland]
-  DIR` walks the pages headless with it (screenshots in DIR).
+  more kinds: `torque:N:W[:RPM]` (a crank torque meter without the
+  power-only page), `wheeltorque:N:W[:KMH]` (a power hub),
+  `spdcad:N:RPM:KMH`, `cadence:N:RPM`, `speed:N:KMH`; `--no-ant` turns
+  ANT+ off. `scripts/test-ant-devices.sh [shot|shot-wayland] DIR` and
+  `scripts/test-ant-power.sh [shot|shot-wayland] DIR` walk the pages
+  headless with it (screenshots in DIR).
 - Trainer control: **SIM** (default; the trainer simulates the road's
   gradient, scaled by `trainer.difficulty`, default 50 %), **ERG** (holds a
   power: `erg.target 200`), or `trainer.mode off`.
@@ -3202,6 +3226,9 @@ you can run are offered (no *Dev* commands on a remote server).
 | `devices.list` | Running, remembered and found devices |
 | `devices.forget ID\|NAME\|all` | Disconnect and forget a device |
 | `devices.hr ID\|NAME\|auto` | *Use for heart rate*: with two straps, use this one's heart rate (`auto`: the first that sends) |
+| `devices.cadence ID\|NAME\|auto` | *Use for cadence*: with a cadence sensor and a trainer or power meter, use this one's cadence (`auto`: the first that sends) |
+| `devices.calibrate ID\|NAME` | Calibrate an ANT+ power meter (manual zero offset; the answer shows on its page) |
+| `devices.autozero ID\|NAME on\|off` | An ANT+ power meter's auto zero |
 | `devices.trainer ID\|NAME\|auto` | *Use as trainer*: with two trainers (Bluetooth and ANT+ FE-C), use this one's power and send it SIM / ERG (`auto`: the first that sends) |
 | `ant.key.edit` / `ant.key.paste` / `ant.key.save` / `ant.key.cancel` / `ant.key.clear` | The ANT+ network key (Devices → ANT+): type it (masked), paste, save it in `secrets.toml`, cancel, remove |
 | `ant.access.install` | Linux: install the ANT stick's udev rule through `pkexec` (Devices → ANT+ → *Install access for the ANT stick*; the same as `ocw-desktop --install-udev-rule`) |
