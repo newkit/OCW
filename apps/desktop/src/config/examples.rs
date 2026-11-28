@@ -413,6 +413,20 @@ pub fn hand() -> Vec<Example> {
                 ch::SKIN_TONES.len() - 1
             ),
         ),
+        ex(
+            C,
+            rider,
+            "eyes",
+            s(&ch::list_id(&ch::EYES, 0)),
+            format!(
+                "Eye colour; default: {}; {}",
+                ch::list_id(&ch::EYES, 0),
+                (0..ch::EYES.len() as u8)
+                    .map(|i| ch::list_id(&ch::EYES, i))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
         ex(C, rider, "kit_second", s("#FDD835"), colour("The kit's second colour")),
         ex(C, rider, "kit_third", s("#1E1E22"), colour("The kit's third colour")),
         ex(
