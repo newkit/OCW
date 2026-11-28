@@ -219,11 +219,12 @@ fn forms(s: Vec3) -> Vec<Blob> {
 /// from the axis at [`PIVOT`] tilted down by `(PIVOT − h) / TURN` rad –
 /// round the chin and under the jaw to the neck. Denser round the chin's
 /// lower edge (v2: the corner from the chin's front to its underside read
-/// as a box from the side); the last rows reach down the throat (v3: the
-/// jaw's underside slopes into it, the user's decision of 2026-11-28).
+/// as a box from the side). The last row stays near the head's joint: the
+/// head turns against the neck while riding, and a face reaching further
+/// down the throat stood out of the neck as a flap (v3, tried with −0.135).
 const ROWS: [f32; 24] = [
     0.052, 0.043, 0.035, 0.029, 0.023, 0.017, 0.011, 0.005, -0.001, -0.007, -0.014, -0.021, -0.028,
-    -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.087, -0.096, -0.110, -0.135,
+    -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.087, -0.096, -0.106, -0.120,
 ];
 /// The grid's columns: the angle round the head's axis (degrees, 0 the
 /// middle of the face; mirrored).
@@ -1012,7 +1013,7 @@ fn soft_jaw(f: &Face) -> Parts {
     for side in [-1.0f32, 1.0] {
         let (c, d) = f.surface(side * 34f32.to_radians(), -0.084);
         p.slot("skin").ellipsoid(
-            c - d * 0.0085,
+            c - d * 0.0108,
             Vec3::new(0.012, 0.010, 0.014),
             Quat::IDENTITY,
             3,
@@ -1145,7 +1146,7 @@ pub const UNDER_STRAPS: f32 = 0.0015;
 /// 1 on the front of the face, 0 where the straps lie.
 fn off_straps(a: f32, h: f32) -> f32 {
     (1.0 - smooth((a.abs() - 28f32.to_radians()) / 22f32.to_radians()))
-        * smooth((h + 0.094) / 0.010)
+        * smooth((h + 0.089) / 0.010)
 }
 
 /// The beards of `ocw_core::character::BEARDS` after "None", in
