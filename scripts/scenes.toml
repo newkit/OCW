@@ -6127,6 +6127,50 @@ video = 16
 max_video_mb = 30
 pick = false
 
+[[scene]]
+name = "air-closeup-tenerife-helicopter-medium-video"
+description = "Video, 1080p: the medium transport helicopter (18G, from the user's reference photos) on a tour from a Tenerife heliport, close up from the front left at midday – glazed nose, twin engine cowlings, the five-blade rotor turning, fuel tanks and outrigger pylons, fixed tricycle gear; the unicorn flies off its right front, apart from it in the picture, not in line with it (air.follow pick helicopter,medium)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 13:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body b --hair bun --hair-colour #6B3E26 --skin 6", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,medium --below 250 --in 6", "4=air.follow unicorn 9 3 10", "4=air.follow key 0 -30 6 30 0 2 0", "4=air.follow key 6 -26 4 24 0 2 0", "4=air.follow key 12 -24 3 21 0 2 0", "12=air.follow play"]
+warmup = 12
+video = 12
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-closeup-tenerife-helicopter-medium-afternoon-video"
+description = "Video, 1080p: the medium transport helicopter (18G, from the user's reference photos) on a tour from a Tenerife heliport, close up from the front left in the afternoon – glazed nose, twin engine cowlings, the five-blade rotor turning, fuel tanks and outrigger pylons, fixed tricycle gear; the unicorn flies off its right front, apart from it in the picture, not in line with it (air.follow pick helicopter,medium)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 16:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body b --hair bun --hair-colour #6B3E26 --skin 6", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,medium --below 250 --in 6", "4=air.follow unicorn 9 3 10", "4=air.follow key 0 -30 6 30 0 2 0", "4=air.follow key 6 -26 4 24 0 2 0", "4=air.follow key 12 -24 3 21 0 2 0", "12=air.follow play"]
+warmup = 12
+video = 12
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-closeup-tenerife-airliner-detail-video"
+description = "Video, 1080p: the detailed narrow-body twinjet (18G) on its approach to Tenerife, gear down, close up from the front left – cockpit windows, the cabin's window row and door outlines, the high-bypass nacelles with their fan faces, pylons, flap-track fairings, the wing tips, the fin and tailplane; the unicorn flies ahead of the right wing, apart from it in the picture, not in line with it (air.follow pick airliner,arrival)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 17:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair short --hair-colour #1A1A1A --skin 12 --glasses 1", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,arrival --below 700 --in 10", "4=air.follow unicorn 21 6 16", "4=air.follow key 0 -48 9 62 0 1 0", "4=air.follow key 6 -44 7 56 0 1 0", "4=air.follow key 12 -42 6 52 0 1 0", "14=air.follow play"]
+warmup = 14
+video = 12
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-closeup-tenerife-airliner-split-winglet-video"
+description = "Video, 1080p: the second narrow-body (18G: split winglets, flatter nacelles) on its approach to Tenerife, gear down, from the front left; the unicorn ahead of the right wing, apart from it in the picture (air.follow pick airliner,arrival,split)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 17:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body c --hair ponytail --hair-colour #D8B26E --skin 3", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,arrival,split --below 700 --in 10", "4=air.follow unicorn 21 6 16", "4=air.follow key 0 -48 9 62 0 1 0", "4=air.follow key 6 -44 7 56 0 1 0", "4=air.follow key 12 -42 6 52 0 1 0", "14=air.follow play"]
+warmup = 14
+video = 12
+max_video_mb = 30
+pick = false
+
 # --- UFOs (spec 14 Phase 18, 18C, 18E T9) -------------------------------------
 
 [[scene]]

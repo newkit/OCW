@@ -1275,6 +1275,14 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "vehicles/airliner-twinjet-split-winglet.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::AirlinerTwinjetSplitWinglet.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "vehicles/airliner-twinjet.glb"
 kind = "vehicle"
 generator = "ocw_assets::vehicles::Vehicle::AirlinerTwinjet.model()"
@@ -1334,6 +1342,14 @@ author = "Open Cycling World contributors"
 file = "vehicles/helicopter-light.glb"
 kind = "vehicle"
 generator = "ocw_assets::vehicles::Vehicle::HelicopterLight.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "vehicles/helicopter-medium-transport.glb"
+kind = "vehicle"
+generator = "ocw_assets::vehicles::Vehicle::HelicopterMediumTransport.model()"
 license = "MIT OR Apache-2.0"
 source = "own work, generic shape made by the OCW generator ocw_assets::vehicles (spec 14 Phase 18, 18E T6)"
 author = "Open Cycling World contributors"

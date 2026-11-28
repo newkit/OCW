@@ -378,13 +378,14 @@ fn follow_air(world: &mut World) {
 }
 
 /// Whether a flight matches every comma-separated term of `what` (a kind
-/// or a mission, by its start: `airliner,arrival`).
+/// or a mission, by its start, or a part of its model's file name:
+/// `airliner,arrival`, `helicopter,medium`, `split-winglet`).
 fn matches_terms(f: &Flight, what: &str) -> bool {
+    let model = f.model_id().rsplit('/').next().unwrap_or_default();
     what == "any"
-        || what
-            .split(',')
-            .filter(|w| !w.is_empty())
-            .all(|w| f.kind.key().starts_with(w) || f.mission.key().starts_with(w))
+        || what.split(',').filter(|w| !w.is_empty()).all(|w| {
+            f.kind.key().starts_with(w) || f.mission.key().starts_with(w) || model.contains(w)
+        })
 }
 
 fn follow_command() -> Command {
@@ -467,10 +468,11 @@ fn follow_action(world: &mut World, m: &clap::ArgMatches) -> Result<String, Stri
                 );
             }
             let line = format!(
-                "following the {} {} (flight {}){}",
+                "following the {} {} (flight {}, {}){}",
                 f.kind.key(),
                 f.mission.key(),
                 f.id,
+                f.model_id(),
                 if ms != 0 {
                     format!(", the clock stepped {step_s:+.0} s")
                 } else {
