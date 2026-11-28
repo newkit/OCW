@@ -2875,8 +2875,9 @@ mod tests {
         assert!((1500..6000).contains(&tris), "{tris} triangles");
         // Every variant at once (one hand shape per hand is drawn; six
         // shapes since the handshake grip, Q31).
-        // (With the sculpted face and the seven beards on it, 4N *Faces*.)
-        assert!(m.triangles() < 21_500, "all variants: {}", m.triangles());
+        // (With the sculpted face and the seven beards on it, 4N *Faces*;
+        // v2: the beards' soft edges, one ring of cells more each.)
+        assert!(m.triangles() < 22_500, "all variants: {}", m.triangles());
         let low = build(Detail::Low);
         let low_tris = triangles(&low, &base_only(&low));
         assert!(low_tris * 2 < tris, "far LOD {low_tris} vs {tris}");

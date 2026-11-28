@@ -11,7 +11,7 @@
 
 use glam::Vec3;
 use ocw_assets::model::Model;
-use ocw_assets::pose::nodes::HEAD;
+use ocw_assets::pose::nodes::{HEAD, NECK};
 use ocw_assets::rider::{self, Detail};
 use ocw_core::character::{Age, BEARDS, EYES, HAIR_STYLES, MOUSTACHES, hair_parse, list_parse};
 use ocw_core::{BaseBody, Character, Rgb};
@@ -53,6 +53,8 @@ struct Tri {
     p: [Vec3; 3],
     n: [Vec3; 3],
     c: [f32; 3],
+    /// The skin's shade under facial hair (the vertex colour's green).
+    g: [f32; 3],
     paint: Vec3,
     hair: bool,
     glossy: bool,
@@ -94,7 +96,9 @@ fn triangles(m: &Model, c: &Character, helmet: bool) -> Vec<Tri> {
     let skin = linear(c.skin_colour());
     let mut out = Vec::new();
     for (i, node) in m.nodes.iter().enumerate() {
-        if !(i == head || m.is_below(i, head)) {
+        // The head and everything on it, and the neck's own skin (the
+        // jaw's seam into it).
+        if !(i == head || m.is_below(i, head) || node.name == NECK) {
             continue;
         }
         // An optional node, or one below it, shows only with the look.
@@ -130,6 +134,7 @@ fn triangles(m: &Model, c: &Character, helmet: bool) -> Vec<Tri> {
                     n: [0, 1, 2]
                         .map(|k| w.transform_vector3(Vec3::from(p.normals[v(k)])).normalize()),
                     c: [0, 1, 2].map(|k| p.colors.get(v(k)).map_or(1.0, |c| c[0])),
+                    g: [0, 1, 2].map(|k| p.colors.get(v(k)).map_or(1.0, |c| c[1])),
                     paint,
                     hair,
                     glossy,
@@ -216,7 +221,8 @@ fn render(tris: &[Tri], skin: Vec3, yaw: f32, pitch: f32, img: &mut [u8], x0: us
                 let albedo = if t.hair {
                     let dots = hash(at) * 0.9;
                     let cover = ((shade * 1.15 - dots) / 0.25).clamp(0.0, 1.0);
-                    skin + (t.paint - skin) * cover
+                    let under = skin * (t.g[0] * w[0] + t.g[1] * w[1] + t.g[2] * w[2]);
+                    under + (t.paint - under) * cover
                 } else {
                     t.paint * shade
                 };

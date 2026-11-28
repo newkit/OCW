@@ -547,7 +547,7 @@ fn fragment(
     // Hair, eyebrows, moustaches and beards (spec 14 Phase 4, 4N Faces):
     // fine strands, and where the mesh carries the hair's density (the
     // vertex colour's red; 1 without one) less of it thins into the
-    // skin's colour (look.first) in dots the size of single hairs, from
+    // skin's colour (look.first, shaded by the green) in dots the size of single hairs, from
     // afar into an even mix. (Skin, eyes and lips are standard materials:
     // Bevy multiplies their vertex colours, a shade, with the paint.)
     var vc = vec4<f32>(1.0, 1.0, 1.0, 1.0);
@@ -561,7 +561,8 @@ fn fragment(
         let dens = clamp(vc.r, 0.0, 1.0);
         let dots = noise3(p * 1400.0) * 0.9;
         let cover = mix(dens, smoothstep(dots, dots + 0.4, dens * 1.3), close);
-        albedo = mix(look.first.rgb, hair, cover);
+        // (Green: the shade of the skin under the hair, v2.)
+        albedo = mix(look.first.rgb * vc.g, hair, cover);
         rough = mix(0.65, rough, cover);
     }
 

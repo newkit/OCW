@@ -20,7 +20,9 @@
 //! Vertex colours (`COLOR_0`): on skin, eyes and lips a shade the paint
 //! colour is multiplied with (the lid's shadow on the eye, the pupil and
 //! the iris' dark rim, the line between the lips); on `hair` and
-//! `facial_hair` the hair's density (red = green = blue, 0 … 1).
+//! `facial_hair` the hair's density (red and blue, 0 … 1) and in green
+//! the shade of the skin under it, which the hair thins into (v2; 1 on
+//! the brows).
 //!
 //! Everything here is a pure function of constants: the same bytes on
 //! every machine.
@@ -138,7 +140,7 @@ fn forms(s: Vec3) -> Vec<Blob> {
         [0.0, -0.083, -0.083],
         [0.021, 0.0135, 0.015],
         0.0,
-        0.010,
+        0.016,
         false,
     );
     // The neck under the jaw (so the jaw's underside runs into it).
@@ -171,26 +173,30 @@ fn forms(s: Vec3) -> Vec<Blob> {
         0.016,
         true,
     );
-    // The nose: the bridge down to the tip, the tip, the wings.
+    // The nose: the bridge down to the tip – narrow, so its sides turn
+    // away from the light seen from the front –, the tip a little
+    // forward of it, and the wings, joined to the tip and the cheeks with
+    // a small fillet so a crease runs round them (v2: the first nose read
+    // flat from the front).
     add(
-        [0.0, -0.007, -0.094],
-        [0.0068, 0.020, 0.0085],
-        0.49,
-        0.006,
+        [0.0, -0.0065, -0.0955],
+        [0.0054, 0.0215, 0.0098],
+        0.46,
+        0.004,
         false,
     );
     add(
-        [0.0, -0.025, -0.1075],
-        [0.0085, 0.0082, 0.0090],
-        0.0,
-        0.005,
-        false,
-    );
-    add(
-        [0.0118, -0.029, -0.097],
-        [0.0068, 0.0062, 0.0090],
+        [0.0, -0.0255, -0.1095],
+        [0.0086, 0.0084, 0.0096],
         0.0,
         0.004,
+        false,
+    );
+    add(
+        [0.0126, -0.0294, -0.0978],
+        [0.0074, 0.0068, 0.0090],
+        0.0,
+        0.0025,
         true,
     );
     // The mound of the mouth.
@@ -207,10 +213,12 @@ fn forms(s: Vec3) -> Vec<Blob> {
 /// The grid's rows as heights `h` (m from the skull's centre): above
 /// [`PIVOT`] a row is the horizontal rays at that height; below, the rays
 /// from the axis at [`PIVOT`] tilted down by `(PIVOT − h) / TURN` rad –
-/// round the chin and under the jaw to the neck.
+/// round the chin and under the jaw to the neck. Denser round the chin's
+/// lower edge (v2: the corner from the chin's front to its underside read
+/// as a box from the side).
 const ROWS: [f32; 24] = [
     0.052, 0.043, 0.035, 0.029, 0.023, 0.017, 0.011, 0.005, -0.001, -0.007, -0.014, -0.021, -0.028,
-    -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.089, -0.099, -0.109, -0.118,
+    -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.087, -0.095, -0.105, -0.118,
 ];
 /// The grid's columns: the angle round the head's axis (degrees, 0 the
 /// middle of the face; mirrored).
@@ -499,7 +507,16 @@ fn grid(
             }
             let p = |k: usize| verts[v[k] as usize];
             facing += (p(1) - p(0)).cross(p(2) - p(0)).dot(out(i, j));
-            for t in [[v[0], v[1], v[2]], [v[1], v[3], v[2]]] {
+            // The cells' diagonals mirrored at the grid's middle, so a
+            // mirrored part is mirrored triangle for triangle (v2: with one
+            // diagonal everywhere a beard's edge ran smooth on one cheek
+            // and in steps on the other).
+            let cells = if 2 * i > nx - 2 {
+                [[v[0], v[1], v[3]], [v[0], v[3], v[2]]]
+            } else {
+                [[v[0], v[1], v[2]], [v[1], v[3], v[2]]]
+            };
+            for t in cells {
                 // Cells folded to nothing (a tapered end) are left out.
                 let [a, b, c] = t.map(|k| verts[k as usize]);
                 if (b - a).cross(c - a).length() < 1e-10 {
@@ -533,11 +550,14 @@ fn grid(
 fn skin(f: &Face, s: &mut Shape) {
     let size = f.size();
     let eyes = eye_centres(f.skull);
-    // No shade on the skin itself: on a grid this coarse a darkened
-    // socket shows as blotches, and the lids beside it as light patches
-    // (seen in the first renders); the light does the work.
+    // No shade on the sockets: on a grid this coarse a darkened socket
+    // shows as blotches, and the lids beside it as light patches (seen in
+    // the first renders); the light does the work there. Only the nose's
+    // base gets a little (v2: seen from the front with the light behind
+    // the camera, a nose reads by the shadow under its tip and in the
+    // creases round its wings): soft, over several of the grid's cells.
     let _ = eyes;
-    let shade = |_: Vec3| 1.0;
+    let shade = |p: Vec3| skin_shade(f, p);
     grid(
         s,
         size,
@@ -548,6 +568,26 @@ fn skin(f: &Face, s: &mut Shape) {
         |i, j| f.vertex(i, j).1,
         |_, _| true,
     );
+}
+
+/// The shade of the face's skin at `p` (1: none): the nose's underside
+/// and the creases round its wings (see [`skin`]).
+fn skin_shade(f: &Face, p: Vec3) -> f32 {
+    let q = p - f.skull;
+    let blob = |x: f32, y: f32, rx: f32, ry: f32| {
+        let d = Vec3::new((q.x - x) / rx, (q.y - y) / ry, 0.0).length();
+        1.0 - smooth(d)
+    };
+    let under = blob(0.0, at::NOSE_BASE_Y + 0.003, 0.013, 0.006);
+    let creases = blob(-0.018, at::NOSE_BASE_Y + 0.005, 0.006, 0.010)
+        + blob(0.018, at::NOSE_BASE_Y + 0.005, 0.006, 0.010);
+    1.0 - 0.16 * under - 0.18 * creases.min(1.0)
+}
+
+/// The vertex colour of facial hair: its density and the shade of the
+/// skin under it.
+fn hair_rgba(dense: f32, shade: f32) -> [f32; 4] {
+    [dense, shade, dense, 1.0]
 }
 
 /// A point of an eye's surface: `px` towards the temple and `py` up from
@@ -816,7 +856,7 @@ fn brows(f: &Face, s: &mut Shape) {
                 };
                 let (p, d) = f.on(x, y);
                 let ends = smooth(t / 0.12) * smooth((1.0 - t) / 0.2);
-                (p + d * lift, grey(dense * (0.35 + 0.65 * ends)))
+                (p + d * lift, hair_rgba(dense * (0.35 + 0.65 * ends), 1.0))
             },
             |_, _| Vec3::NEG_Z,
             |_, _| true,
@@ -1071,13 +1111,18 @@ fn chin_strap(_: &Face, _: Vec3, a: f32, h: f32) -> (f32, f32) {
 /// How far the long beard hangs below a point of the chin's and the
 /// jaw's front (m): the hair's own weight, not its length off the skin.
 fn hang(q: Vec3, h: f32) -> f32 {
-    // (Only from the chin's front: behind it the straps meet.)
+    // (Only from the chin's front: behind it the straps meet. From the
+    // chin's foremost point down – v2: from higher up, the shell from the
+    // lower lip to the hanging hair cut through the chin.)
     let _ = h;
     0.036
-        * smooth((-0.064 - q.y) / 0.026)
-        * (1.0 - smooth((q.x.abs() - 0.02) / 0.032))
-        * smooth((-0.074 - q.z) / 0.016)
+        * smooth((-0.082 - q.y) / 0.014)
+        * (1.0 - smooth((q.x.abs() - 0.03) / 0.024))
+        * smooth((-0.066 - q.z) / 0.018)
 }
+
+/// How far a beard's bare vertices lie over the skin (m).
+pub const BARE_OVER: f32 = 0.00012;
 
 /// The helmets' straps run over the beards (`crate::helmet` checks it):
 /// beside the face, where they come down in front of the ears, and under
@@ -1122,6 +1167,15 @@ fn beard(f: &Face, (grow, hangs): (Growth, bool)) -> Parts {
             }
         })
         .collect();
+    // The bare vertices next to the hair lie on the skin; one ring of
+    // cells further out the shell goes under it – so the shell's normals
+    // where the hair thins out are the skin's (v2: with the shell's edge
+    // right there, its own normals showed the grid's cells in steps).
+    let dense_at = |i: usize, j: usize| growth[j * nx + i].0 > 0.0;
+    let near = |i: usize, j: usize| {
+        (i.saturating_sub(1)..(i + 2).min(nx))
+            .any(|ii| (j.saturating_sub(1)..(j + 2).min(ny)).any(|jj| dense_at(ii, jj)))
+    };
     let mut p = Parts::new();
     grid(
         p.slot("facial_hair"),
@@ -1129,8 +1183,11 @@ fn beard(f: &Face, (grow, hangs): (Growth, bool)) -> Parts {
         |i, j| {
             let (at, d) = f.vertex(i, j);
             let (dense, thick) = growth[j * nx + i];
-            // A beard thins to nothing at its edge; bare vertices lie
-            // just under the skin.
+            // A beard thins to nothing at its edge. Its bare vertices lie
+            // just over the skin, in the skin's colour (v2: under it, the
+            // shell met the skin along the grid's cells and the beard's
+            // edge showed their steps; now the edge is where the density
+            // thins out).
             let q = at - f.skull;
             let lift = if dense > 0.0 {
                 let long = thick * smooth(dense * 2.0);
@@ -1140,22 +1197,34 @@ fn beard(f: &Face, (grow, hangs): (Growth, bool)) -> Parts {
                 // no step in the light.
                 let short = 0.00015 + (LIP_SHORT - 0.00015) * smooth(dense * 3.0);
                 short + (long - short).max(0.0) * by_lips(q)
+            } else if near(i, j) && !(i == 0 || j == 0 || i + 1 == nx || j + 1 == ny) {
+                BARE_OVER
             } else {
                 -0.0001
             };
-            let down = if hangs && dense > 0.0 {
-                // (Down and a little back towards the chest.)
-                Vec3::new(0.0, -1.0, 0.3) * hang(q, f.h[j]) * by_lips(q)
-            } else {
-                Vec3::ZERO
-            };
-            (at + d * lift + down, grey(dense))
+            let mut pos = at + d * lift;
+            if hangs && dense > 0.0 {
+                // Straight down, and in front of the chin all the way: the
+                // shell from the lower lip down to the hanging hair must
+                // not cut through the chin (v2: it did, and a band of skin
+                // showed across the beard).
+                let fall = hang(q, f.h[j]) * by_lips(q);
+                pos.y -= fall;
+                let w = smooth(fall / 0.012);
+                // (The face's foremost point in this column round here.)
+                let front = (j.saturating_sub(3)..(j + 3).min(ny))
+                    .map(|k| f.vertex(i, k).0.z)
+                    .fold(f32::MAX, f32::min)
+                    - 0.005;
+                pos.z += (pos.z.min(front) - pos.z) * w;
+            }
+            (pos, hair_rgba(dense, skin_shade(f, at)))
         },
         |i, j| f.vertex(i, j).1,
         |i, j| {
             [(0, 0), (1, 0), (0, 1), (1, 1)]
                 .iter()
-                .any(|(di, dj)| growth[(j + dj) * nx + i + di].0 > 0.0)
+                .any(|(di, dj)| near(i + di, j + dj))
         },
     );
     p
@@ -1207,7 +1276,7 @@ fn moustache(f: &Face, style: usize) -> Parts {
                 -0.0004
             };
             let (at, d) = f.on(x, y);
-            (at + d * lift, grey(dense))
+            (at + d * lift, hair_rgba(dense, skin_shade(f, at)))
         },
         |_, _| Vec3::NEG_Z,
         |_, _| true,
@@ -1233,7 +1302,7 @@ fn moustache(f: &Face, style: usize) -> Parts {
                     } else {
                         -0.0004
                     };
-                    (at + d * lift, grey(dense))
+                    (at + d * lift, hair_rgba(dense, skin_shade(f, at)))
                 },
                 |_, _| Vec3::NEG_Z,
                 |_, _| true,
