@@ -2063,7 +2063,7 @@ mod tests {
         let b = g.bike("road-aero-2").unwrap();
         assert_eq!(b.profile(), ProfileId::RoadAero);
         assert_eq!(b.paint(), Some(ocw_core::bike::NEWKIT_LIVERY));
-        assert_eq!(g.label(cat(), b), "newk it");
+        assert_eq!(g.label(cat(), b), "newk it 2", "numbered like every bought bike");
         assert_eq!(
             g.part_on(cat(), b, Slot::Frame).unwrap().model,
             ocw_assets::livery::FRAME_VARIANT

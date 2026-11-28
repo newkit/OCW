@@ -1583,8 +1583,8 @@ mod tests {
         let paint = rows(cat(), g, b, Slot::Paint);
         assert_eq!(
             paint.len(),
-            14,
-            "the palette, the rider's colour, bare carbon"
+            15,
+            "the palette, the rider's colour, bare carbon, the \"newk it\" livery"
         );
         assert_eq!(paint[0].kind, Kind::Paint(None), "the current colour first");
         assert_eq!(

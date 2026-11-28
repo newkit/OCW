@@ -554,8 +554,9 @@ mod tests {
             let builds = rows(cat(), g, BenchPage::Builds(t));
             assert!(builds.len() <= 6 && !builds.is_empty());
         }
-        // Road: the alloy, carbon, climbing and aero framesets.
-        assert_eq!(framesets(cat(), BikeType::Road).len(), 4);
+        // Road: the alloy, carbon, climbing and aero framesets, and the
+        // "newk it" frameset (spec 14 Phase 15, 15Q).
+        assert_eq!(framesets(cat(), BikeType::Road).len(), 5);
         // Nothing to sell and nothing on the shelf at the start.
         assert!(rows(cat(), g, BenchPage::Sell).is_empty());
         assert!(rows(cat(), g, BenchPage::Spares).is_empty());
