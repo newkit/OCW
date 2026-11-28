@@ -81,6 +81,22 @@ pub mod opt {
     pub const GLOVE_GEL: [&str; 2] = ["glove_gel_l", "glove_gel_r"];
     pub const GLOVE_FULL: [&str; 2] = ["glove_full_l", "glove_full_r"];
     pub const GLOVE_WINTER: [&str; 2] = ["glove_winter_l", "glove_winter_r"];
+    /// The gloves' cuffs on the forearms (2026-11-28, the user: "whats
+    /// the black cloth at the end of the arm? that does not look right"):
+    /// a thin shell over the wrist that moves with the forearm, so it
+    /// hugs the arm whatever the wrist does (the glove nodes above are on
+    /// the hands).
+    pub const GLOVE_MITT_CUFF: [&str; 2] = ["glove_mitt_cuff_l", "glove_mitt_cuff_r"];
+    pub const GLOVE_GEL_CUFF: [&str; 2] = ["glove_gel_cuff_l", "glove_gel_cuff_r"];
+    pub const GLOVE_FULL_CUFF: [&str; 2] = ["glove_full_cuff_l", "glove_full_cuff_r"];
+    pub const GLOVE_WINTER_CUFF: [&str; 2] = ["glove_winter_cuff_l", "glove_winter_cuff_r"];
+    /// The base mitts: hands and cuffs.
+    pub const GLOVE_MITT_ALL: [&str; 4] = [
+        GLOVE_MITT[0],
+        GLOVE_MITT[1],
+        GLOVE_MITT_CUFF[0],
+        GLOVE_MITT_CUFF[1],
+    ];
     pub const HAIR_CAP: &str = "hair_cap";
     pub const HAIR_BUZZ: &str = "hair_buzz";
     pub const HAIR_LONG: &str = "hair_long";
@@ -233,8 +249,11 @@ pub mod hand {
     /// the hood's arc (2026-11-28, from riders' hands on the hoods: the
     /// index finger reaches over the hood's front towards the lever, the
     /// others curl round under the hood, the little finger most; before,
-    /// all four ran on straight down in front of the lever).
-    pub const HOODS_CURL: [[f32; 2]; 4] = [[0.1, 0.1], [0.25, 0.2], [0.28, 0.2], [0.4, 0.25]];
+    /// all four ran on straight down in front of the lever). Second pass
+    /// (v2): the index finger and the little finger curl further; the
+    /// middle and ring fingers lie over the hood's nose and curl as far as
+    /// it leaves room (`pose::hand_tests::sweep_the_hoods_curl`).
+    pub const HOODS_CURL: [[f32; 2]; 4] = [[0.5, 0.3], [0.4, 0.24], [0.28, 0.2], [0.6, 0.36]];
     /// A finger's radius at its base and at its tip.
     pub const FINGER_RADIUS: f32 = 0.0085;
     pub const TIP_RADIUS: f32 = 0.0068;
@@ -245,6 +264,15 @@ pub mod hand {
     pub const KNUCKLE_Y: f32 = -0.085;
     /// Where a grip's bar crosses the hand's long axis (y).
     pub const BAR_Y: f32 = -0.07;
+    /// The wrap's oblique grip (2026-11-28, from riders' hands in the
+    /// drops: "how riders grab the handlebar"): the bar runs across the
+    /// palm at this angle (rad) from straight across, from the base of
+    /// the index finger to the heel of the hand at the little finger's
+    /// side, as a hand holds a bar in a power grip – the fingers each
+    /// curl round it a little further towards the little finger. So the
+    /// hand lies more along the forearm round a bar that runs forward
+    /// (the drops, the TT bars) and the wrist stays nearly straight.
+    pub const WRAP_OBLIQUE: f32 = 0.55;
     /// The wrap thumb's joints' angles round the bar (rad, in the hand's
     /// (x, y) plane about the bar's centre: 0 = the side away from the
     /// palm, π/2 = towards the wrist): from the palm's edge over the
@@ -323,12 +351,39 @@ pub mod hand {
         if side == 0 { 1.0 } else { -1.0 }
     }
 
-    /// The centre of the bar `shape` wraps, in the hand's frame (its axis
-    /// along z): beside the palm's inner face, level with the base of the
-    /// fingers.
+    /// The centre of the bar `shape` wraps, in the hand's frame (on its
+    /// axis, [`bar_axis`], where it crosses the hand's long axis): beside
+    /// the palm's inner face, level with the base of the fingers.
     pub fn bar_centre(shape: HandShape, side: usize) -> Option<Vec3> {
         let r = shape.wrap_radius()?;
         Some(Vec3::new(palm_sign(side) * (PALM_HALF[0] + r), BAR_Y, 0.0))
+    }
+
+    /// How far the bar `shape` wraps runs obliquely across the palm (rad,
+    /// [`WRAP_OBLIQUE`] for the wrap; the others straight across).
+    pub fn oblique(shape: HandShape) -> f32 {
+        if shape == HandShape::Wrap {
+            WRAP_OBLIQUE
+        } else {
+            0.0
+        }
+    }
+
+    /// The axis of the bar `shape` wraps in the hand's frame (both hands
+    /// alike): along z (the knuckle line), tilted by [`oblique`] towards
+    /// the wrist (+y) on the little finger's side (+z).
+    pub fn bar_axis(shape: HandShape) -> Vec3 {
+        let (s, c) = oblique(shape).sin_cos();
+        Vec3::new(0.0, s, c)
+    }
+
+    /// The bar's centre (u towards the bar, y) in the plane of the digit
+    /// at knuckle `z`, and the radius of its section there (the bar runs
+    /// obliquely, so the section is an ellipse; the circle round its long
+    /// side holds it).
+    fn bar_in_plane(shape: HandShape, z: f32, r: f32) -> (f32, f32, f32) {
+        let o = oblique(shape);
+        (PALM_HALF[0] + r, BAR_Y + z * o.tan(), r / o.cos())
     }
 
     /// The palm's ends (y): the heel's rounded end at the wrist and the
@@ -458,6 +513,11 @@ pub mod hand {
 
     /// The four fingers of `shape` on hand `side` (index first).
     pub fn fingers(shape: HandShape, side: usize) -> Vec<Digit> {
+        fingers_curled(shape, side, HOODS_CURL)
+    }
+
+    /// [`fingers`] with the hoods' curl `curl` ([`HOODS_CURL`]).
+    pub fn fingers_curled(shape: HandShape, side: usize, curl: [[f32; 2]; 4]) -> Vec<Digit> {
         let n = palm_sign(side);
         // In the hand's frame across the palm: u towards the bar (n·x), v
         // = y.
@@ -469,10 +529,18 @@ pub mod hand {
                 let spread = (i as f32 - 1.5) * 0.004;
                 match shape.wrap_radius() {
                     Some(r) => {
-                        // Round the bar at its radius plus a finger's.
-                        let (bu, bv) = (PALM_HALF[0] + r, BAR_Y);
-                        let rf = r + FINGER_RADIUS + 0.0008;
-                        let phi0 = (knuckle.1 - bv).atan2(knuckle.0 - bu);
+                        // Round the bar at its radius plus a finger's
+                        // (where the oblique bar crosses this finger).
+                        let (bu, bv, rs) = bar_in_plane(shape, *z, r);
+                        let rf = rs + FINGER_RADIUS + 0.0008;
+                        // From the knuckle straight to where the finger
+                        // meets the bar (a knuckle further from the bar
+                        // than the finger wraps it), then round it.
+                        let (ku, kv) = (knuckle.0 - bu, knuckle.1 - bv);
+                        let kd = (ku * ku + kv * kv).sqrt();
+                        let reach = (kd * kd - rf * rf).max(0.0).sqrt();
+                        let phi0 = kv.atan2(ku) + (rf / kd.max(rf)).min(1.0).acos();
+                        let k0 = (bu + rf * phi0.cos(), bv + rf * phi0.sin());
                         // Over a hood's (or a bar end's) front and the
                         // phone's edge only partly: then straight on.
                         // On the hoods (2026-11-28, from riders' hands on
@@ -489,15 +557,24 @@ pub mod hand {
                         // On the hoods the middle and outer joints bend
                         // on beyond the arc (HOODS_CURL); elsewhere none.
                         let kinks = if shape == HandShape::Hoods {
-                            HOODS_CURL[i]
+                            curl[i]
                         } else {
                             [0.0, 0.0]
                         };
-                        let l0 = lens[0];
+                        // The base joint's share round the bar.
+                        let l0 = (lens[0] - reach).max(0.0);
                         sampled(
                             *lens,
                             *z,
                             |t| {
+                                if t < reach {
+                                    let f = t / reach;
+                                    return (
+                                        knuckle.0 + (k0.0 - knuckle.0) * f,
+                                        knuckle.1 + (k0.1 - knuckle.1) * f,
+                                    );
+                                }
+                                let t = t - reach;
                                 let base = if kinks == [0.0, 0.0] { t } else { t.min(l0) };
                                 let a = (base / rf).min(limit);
                                 let mut dir = phi0 + a;
@@ -588,8 +665,11 @@ pub mod hand {
         match bar_centre(shape, side).filter(|_| shape != HandShape::Phone) {
             Some(b) => {
                 let r = shape.wrap_radius().unwrap_or(WRAP_RADIUS);
-                let rf = r + FINGER_RADIUS + 0.0008;
-                let on = |z: f32, phi: f32| b + Vec3::new(n * rf * phi.cos(), rf * phi.sin(), z);
+                let on = |z: f32, phi: f32| {
+                    let (_, bv, rs) = bar_in_plane(shape, z, r);
+                    let rf = rs + FINGER_RADIUS + 0.0008;
+                    Vec3::new(b.x + n * rf * phi.cos(), bv + rf * phi.sin(), z)
+                };
                 let [a, m, e] = WRAP_THUMB_PHI;
                 Digit {
                     points: vec![base, on(-0.03, a), on(-0.026, m), on(-0.024, e)],
@@ -621,6 +701,95 @@ pub mod hand {
                     base_end: 2,
                 }
             }
+        }
+    }
+}
+
+/// The gloves' cuffs (2026-11-28, the user: "whats the black cloth at
+/// the end of the arm? that does not look right"): a thin shell over the
+/// wrist and the end of the forearm, on the forearm's node (so it moves
+/// with the arm, never standing off it when the wrist bends, and widens
+/// with the arm's girth), tapering with the arm a few millimetres over
+/// the skin, its end over the wrist rounded in round the heel of the hand
+/// (the glove's palm comes out of it), its top a soft rolled edge closing
+/// onto the skin; the winter glove's longer, with a tab.
+pub mod glove {
+    use super::{Parts, body};
+    use crate::mesh::{Cap, Ring};
+    use glam::{Quat, Vec3};
+
+    /// A glove's cuff: how far it reaches up the forearm from the wrist
+    /// and how far it stands off the skin (m); whether it has a tab.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Cuff {
+        pub len: f32,
+        pub off: f32,
+        pub tab: bool,
+    }
+
+    pub const MITT: Cuff = Cuff {
+        len: 0.012,
+        off: 0.002,
+        tab: false,
+    };
+    pub const GEL: Cuff = Cuff {
+        len: 0.016,
+        off: 0.0022,
+        tab: false,
+    };
+    pub const FULL: Cuff = Cuff {
+        len: 0.022,
+        off: 0.0025,
+        tab: false,
+    };
+    pub const WINTER: Cuff = Cuff {
+        len: 0.05,
+        off: 0.0035,
+        tab: true,
+    };
+    pub const ALL: [Cuff; 4] = [MITT, GEL, FULL, WINTER];
+
+    /// The forearm's skin radius `d` (m) above the wrist (the forearm's
+    /// tube: 3.7 cm at the elbow, 2.6 cm at the wrist).
+    pub fn forearm_radius(d: f32) -> f32 {
+        let t = (d / body::FOREARM).clamp(0.0, 1.0);
+        0.026 + (0.037 - 0.026) * t
+    }
+
+    /// How far below the wrist the cuff's rounded end reaches (m).
+    pub const END_DEPTH: f32 = 0.011;
+
+    /// The cuff `c` round the forearm whose wrist (rest pose) is at
+    /// `wrist`, on the side whose palm faces `ns`·x, with `sides` sides.
+    pub fn cuff(p: &mut Parts, wrist: Vec3, c: Cuff, ns: f32, sides: u32) {
+        // The arm hangs along −y at rest: rings like the forearm's own
+        // (the same axis, so the same facets), from the top down.
+        let ring = |d: f32, r: f32| Ring::circle(wrist + Vec3::Y * d, Vec3::NEG_Y, r);
+        let at = |d: f32, extra: f32| ring(d, forearm_radius(d) + extra);
+        let r0 = forearm_radius(0.0) + c.off;
+        let rings = [
+            // The soft edge onto the skin, the rolled rim.
+            at(c.len + 0.004, 0.0006),
+            at(c.len, c.off + 0.001),
+            at(0.0, c.off),
+            // Rounded in round the heel of the hand.
+            ring(-0.5 * END_DEPTH, r0 * 0.87),
+        ];
+        p.slot("glove").loft(
+            &rings,
+            sides,
+            false,
+            Cap::Open,
+            Cap::Point(wrist - Vec3::Y * END_DEPTH),
+        );
+        if c.tab {
+            // The strap's tab on the back of the wrist.
+            let d = c.len - 0.013;
+            p.slot("glove").cuboid(
+                wrist + Vec3::new(-ns * (forearm_radius(d) + c.off + 0.0012), d, 0.0),
+                Vec3::new(0.0015, 0.009, 0.012),
+                Quat::IDENTITY,
+            );
         }
     }
 }
@@ -808,17 +977,32 @@ pub const VARIANTS: &[Variant] = &[
     var(
         "gloves-gel",
         "gloves",
-        &[opt::GLOVE_GEL[0], opt::GLOVE_GEL[1]],
+        &[
+            opt::GLOVE_GEL[0],
+            opt::GLOVE_GEL[1],
+            opt::GLOVE_GEL_CUFF[0],
+            opt::GLOVE_GEL_CUFF[1],
+        ],
     ),
     var(
         "gloves-full",
         "gloves",
-        &[opt::GLOVE_FULL[0], opt::GLOVE_FULL[1]],
+        &[
+            opt::GLOVE_FULL[0],
+            opt::GLOVE_FULL[1],
+            opt::GLOVE_FULL_CUFF[0],
+            opt::GLOVE_FULL_CUFF[1],
+        ],
     ),
     var(
         "gloves-winter",
         "gloves",
-        &[opt::GLOVE_WINTER[0], opt::GLOVE_WINTER[1]],
+        &[
+            opt::GLOVE_WINTER[0],
+            opt::GLOVE_WINTER[1],
+            opt::GLOVE_WINTER_CUFF[0],
+            opt::GLOVE_WINTER_CUFF[1],
+        ],
     ),
 ];
 
@@ -834,7 +1018,7 @@ pub fn base_nodes(slot: &str) -> &'static [&'static str] {
     match slot {
         "helmet" => &[HELMET_ROAD],
         "shoes" => &opt::SHOE_ROAD,
-        "gloves" => &opt::GLOVE_MITT,
+        "gloves" => &opt::GLOVE_MITT_ALL,
         _ => &[],
     }
 }
@@ -1055,7 +1239,10 @@ pub fn body_region(m: &Model, i: usize) -> ocw_core::kit::BodyRegion {
     let mut at = Some(i);
     while let Some(n) = at {
         let name = m.nodes[n].name.as_str();
-        let region = if name == PELVIS || name == TORSO {
+        let region = if name.starts_with("glove_") {
+            // The gloves' cuffs ride on the forearms, but are the gloves.
+            Some(BodyRegion::Hand)
+        } else if name == PELVIS || name == TORSO {
             Some(BodyRegion::Torso)
         } else if name == HEAD || name == NECK {
             Some(BodyRegion::Head)
@@ -2836,32 +3023,35 @@ pub fn build(detail: Detail) -> Model {
             p.slot("jersey")
                 .tube(elbow, wrist + Vec3::Y * 0.01, 0.041, 0.03, n, false)
         });
+        let ns = hand::palm_sign(s);
+        // (Before the hand's node: the files list a node's children in
+        // order.) The cuffs (near model): on the forearm, hugging it (bug
+        // 2026-11-28: a stiff tube on the hand, far wider than the wrist,
+        // that floated off the arm when the wrist bent).
+        for (names, cuff) in [
+            (opt::GLOVE_MITT_CUFF, glove::MITT),
+            (opt::GLOVE_GEL_CUFF, glove::GEL),
+            (opt::GLOVE_FULL_CUFF, glove::FULL),
+            (opt::GLOVE_WINTER_CUFF, glove::WINTER),
+        ] {
+            opt_node(&mut m, names[s], fore, |p| {
+                if hi {
+                    glove::cuff(p, wrist, cuff, ns, n);
+                }
+            });
+        }
         let hand = m.add(Node::new(HAND[s], Some(fore), Vec3::NEG_Y * body::FOREARM));
         // Gloves round the bar: fingers forward of the grip point.
         let palm = wrist - Vec3::Y * 0.06 + Vec3::Z * -0.005;
-        let cuff = |p: &mut Parts, r: f32, len: f32| {
-            p.slot("glove").tube(
-                wrist + Vec3::Y * 0.004,
-                wrist - Vec3::Y * len,
-                r,
-                r * 0.95,
-                n,
-                false,
-            );
-        };
-        let ns = hand::palm_sign(s);
         opt_node(&mut m, opt::GLOVE_MITT[s], hand, |p| {
-            if hi {
-                // The hand shapes are the glove; a short cuff at the wrist.
-                cuff(p, 0.03, 0.012);
-            } else {
+            // Near: the hand shapes are the glove.
+            if !hi {
                 p.slot("glove")
                     .ellipsoid(palm, Vec3::new(0.03, 0.055, 0.03), Quat::IDENTITY, 4, n)
             }
         });
         opt_node(&mut m, opt::GLOVE_GEL[s], hand, |p| {
             if hi {
-                cuff(p, 0.03, 0.014);
                 // The padded back in a light grey, on the back of the hand.
                 p.slot("glove_pad").ellipsoid(
                     wrist + Vec3::new(-ns * (hand::PALM_HALF[0] + 0.002), hand::PALM_Y, 0.0),
@@ -2885,7 +3075,6 @@ pub fn build(detail: Detail) -> Model {
         });
         opt_node(&mut m, opt::GLOVE_FULL[s], hand, |p| {
             if hi {
-                cuff(p, 0.031, 0.02);
                 return;
             }
             p.slot("glove").ellipsoid(
@@ -2897,23 +3086,15 @@ pub fn build(detail: Detail) -> Model {
             )
         });
         opt_node(&mut m, opt::GLOVE_WINTER[s], hand, |p| {
-            if !hi {
-                p.slot("glove").ellipsoid(
-                    palm - Vec3::Y * 0.01,
-                    Vec3::new(0.038, 0.075, 0.038),
-                    Quat::IDENTITY,
-                    4,
-                    n,
-                );
+            if hi {
+                return;
             }
-            // The cuff over the wrist.
-            p.slot("glove").tube(
-                wrist + Vec3::Y * 0.05,
-                wrist - Vec3::Y * 0.01,
-                0.034,
-                0.036,
+            p.slot("glove").ellipsoid(
+                palm - Vec3::Y * 0.01,
+                Vec3::new(0.038, 0.075, 0.038),
+                Quat::IDENTITY,
+                4,
                 n,
-                false,
             );
         });
         // The hands' shapes (4N, the hands): near model only.
@@ -3046,8 +3227,9 @@ mod tests {
                 else {
                     continue;
                 };
+                let axis = hand::bar_axis(shape);
                 for q in &v {
-                    let d = glam::Vec2::new(q.x - c.x, q.y - c.y).length();
+                    let d = (*q - c).cross(axis).length();
                     assert!(d >= r - 0.0004, "{shape:?} {side}: {q} {d:.4} < {r}");
                 }
             }
@@ -3950,7 +4132,12 @@ mod tests {
                 .sum::<usize>()
         };
         let hand_tris = tris(hand::node(HandShape::Wrap, 0));
-        for g in [opt::GLOVE_MITT[0], opt::GLOVE_FULL[0]] {
+        for g in [
+            opt::GLOVE_MITT_CUFF[0],
+            opt::GLOVE_GEL_CUFF[1],
+            opt::GLOVE_FULL_CUFF[0],
+            opt::GLOVE_WINTER_CUFF[1],
+        ] {
             assert!(tris(g) > 0 && tris(g) < hand_tris, "{g}");
         }
         let low = build(Detail::Low);
@@ -3959,6 +4146,137 @@ mod tests {
             low.nodes[i].primitives.iter().any(|p| p.triangles() > 20),
             "the far mitten"
         );
+    }
+
+    /// Regression (2026-11-28, the user: "whats the black cloth at the
+    /// end of the arm? that does not look right" – a stiff tube on the
+    /// hand, wider than the wrist, floating off the arm when the wrist
+    /// bent): every glove's cuff rides on the forearm and hugs it – each
+    /// vertex up the arm 1 – 6 mm over the forearm's skin, the rounded end
+    /// within as much of the wrist, never into the skin; short (the winter
+    /// glove longer); in the gloves' body region; for every glove, both
+    /// sides, posed on every bike's grips (a cuff on the forearm keeps
+    /// its fit whatever the wrist does) and for every build (it takes the
+    /// forearm's girth).
+    #[test]
+    fn the_glove_cuffs_hug_the_forearm_in_every_pose() {
+        use crate::pose::{BodyFit, PoseParams, RiderRig};
+        let m = build(Detail::High);
+        let rig = RiderRig::from_model(&m).unwrap();
+        let cuffs = [
+            (opt::GLOVE_MITT_CUFF, glove::MITT),
+            (opt::GLOVE_GEL_CUFF, glove::GEL),
+            (opt::GLOVE_FULL_CUFF, glove::FULL),
+            (opt::GLOVE_WINTER_CUFF, glove::WINTER),
+        ];
+        // Each glove variant shows its cuffs.
+        for (id, names) in [
+            ("gloves-gel", opt::GLOVE_GEL_CUFF),
+            ("gloves-full", opt::GLOVE_FULL_CUFF),
+            ("gloves-winter", opt::GLOVE_WINTER_CUFF),
+        ] {
+            let v = variant(id).unwrap();
+            assert!(names.iter().all(|n| v.nodes.contains(n)), "{id}");
+        }
+        assert!(
+            opt::GLOVE_MITT_CUFF
+                .iter()
+                .all(|n| base_nodes("gloves").contains(n))
+        );
+        let mut worst = (f32::MAX, 0.0f32);
+        let mut check = |m: &Model, what: &str, limb: f32| {
+            for s in 0..2 {
+                let fore = m.node(FOREARM[s]).unwrap();
+                let hand_i = m.node(HAND[s]).unwrap();
+                let fw = m.world(fore);
+                // The forearm's axis (posed): elbow → wrist.
+                let elbow = fw.transform_point3(Vec3::ZERO);
+                let wrist = m.world(hand_i).transform_point3(Vec3::ZERO);
+                let down = (wrist - elbow).normalize();
+                for (names, c) in cuffs {
+                    let i = m.node(names[s]).unwrap();
+                    assert_eq!(m.nodes[i].parent, Some(fore), "{}", names[s]);
+                    assert_eq!(
+                        body_region(m, i),
+                        ocw_core::kit::BodyRegion::Hand,
+                        "{}",
+                        names[s]
+                    );
+                    let w = m.world(i);
+                    let mut top = f32::MIN;
+                    for prim in &m.nodes[i].primitives {
+                        for q in &prim.positions {
+                            let q = w.transform_point3(Vec3::from(*q));
+                            let d = (wrist - q).dot(down);
+                            top = top.max(d);
+                            let skin = limb * glove::forearm_radius(d.max(0.0));
+                            let gap = if d >= 0.0 {
+                                let radial = ((q - wrist) + down * d).length();
+                                // The tab stands a little further out.
+                                if c.tab && radial > skin + 0.0055 {
+                                    continue;
+                                }
+                                radial - skin
+                            } else {
+                                q.distance(wrist) - skin
+                            };
+                            if d >= 0.0 {
+                                worst.0 = worst.0.min(gap);
+                            }
+                            worst.1 = worst.1.max(gap);
+                            assert!(
+                                gap < 0.006 && (d < 0.0 || gap > 0.0004),
+                                "{what} {}: {gap:.4} m off the forearm at {d:.3} m",
+                                names[s]
+                            );
+                        }
+                    }
+                    let max_len = if c.tab { 0.06 } else { 0.03 };
+                    assert!(
+                        top > c.len && top < max_len,
+                        "{what} {}: reaches {top:.3} m up the arm",
+                        names[s]
+                    );
+                }
+            }
+        };
+        check(&m, "rest", 1.0);
+        for profile in ocw_core::ProfileId::ALL {
+            let bike = crate::bikes::rig(profile);
+            let body = BodyFit::new(&rig, &bike, 1.0);
+            for params in [
+                PoseParams::default(),
+                PoseParams {
+                    drops: 1.0,
+                    tuck: 1.0,
+                    ..Default::default()
+                },
+                PoseParams {
+                    tops: 1.0,
+                    stand: 1.0,
+                    ..Default::default()
+                },
+                crate::anim::targets(crate::anim::Riding::Sprinting, 15.0, 0.0, bike.aero_bars),
+            ] {
+                let mut posed = m.clone();
+                crate::pose::pose(&body.rider, &body.bike, &body.fit, &params).apply(&mut posed);
+                check(&posed, &format!("{profile:?}"), 1.0);
+            }
+        }
+        // Every build: the cuff takes the forearm's girth.
+        for shape in ocw_core::BodyShape::ALL {
+            let c = ocw_core::Character {
+                shape,
+                ..Default::default()
+            };
+            let fore = m.node(FOREARM[0]).unwrap();
+            assert_eq!(
+                girth(&m, m.node(opt::GLOVE_WINTER_CUFF[0]).unwrap(), &c),
+                girth(&m, fore, &c),
+                "{shape:?}"
+            );
+        }
+        eprintln!("the cuffs {:.4} … {:.4} m over the skin", worst.0, worst.1);
     }
 
     /// The helmet off (spec §14 Phase 4, 4N Q28): no helmet or cap shown,
