@@ -9,6 +9,15 @@
 # `cargo run -p ocw-render --example export-flora`); keep it sorted.
 
 [[asset]]
+file = "bikes/bike-folding.glb"
+kind = "bike"
+profile = "folding"
+generator = "ocw_assets::bikes::build(folding)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "bikes/bike-gravel.glb"
 kind = "bike"
 profile = "gravel"
@@ -24,6 +33,15 @@ profile = "mtb"
 generator = "ocw_assets::bikes::build(mtb)"
 license = "MIT OR Apache-2.0"
 source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "bikes/bike-road-aero-newkit.glb"
+kind = "bike"
+profile = "road-aero"
+generator = 'ocw_assets::bikes::build_with(road-aero, ["frame-aero-newkit"])'
+license = "MIT OR Apache-2.0"
+source = """own work, exported from the OCW generators (spec §14 Phase 15, M1); the "newk it" name and livery are the user's own design, used with permission"""
 author = "Open Cycling World contributors"
 
 [[asset]]

@@ -3,7 +3,7 @@
 //! spare parts) in `<data dir>/ocw/workshop.toml` and the hearts in an
 //! append-only ledger, `hearts-ledger.jsonl`. Bevy-free.
 //!
-//! Rules: every rider starts with the six starter bikes (one per physics
+//! Rules: every rider starts with the seven starter bikes (one per physics
 //! profile, base parts) and 500 ♥; parts are bought at the catalogue's
 //! price, only if they fit the bike (bike type, or the frame's profile
 //! for framesets) and the balance covers them; a bought part is equipped
@@ -112,6 +112,19 @@ pub struct Bike {
 }
 
 impl Bike {
+    /// The starter bike of profile `p`: base parts, the profile's own
+    /// paint (the folding bike's sky blue, 2026-11-28) or the rider's.
+    pub fn starter(p: ProfileId) -> Self {
+        Self {
+            id: p.id().into(),
+            profile: p.id().into(),
+            paint: p.default_paint().map(|c| c.to_string()),
+            parts: BTreeMap::new(),
+            starter: true,
+            condition: BTreeMap::new(),
+        }
+    }
+
     pub fn profile(&self) -> ProfileId {
         ProfileId::from_wire(Some(&self.profile))
     }
@@ -292,27 +305,45 @@ fn first_item() -> u32 {
 }
 
 impl Garage {
-    /// The six starter bikes, base parts, the default road bike active.
+    /// A bike's name on cards and in lists: [`Bike::label`], or a named
+    /// frameset's name in place of the profile's ("newk it 2", spec 14
+    /// Phase 15, *The "newk it" bike*).
+    pub fn label(&self, cat: &Catalogue, bike: &Bike) -> String {
+        let named = self
+            .part_on(cat, bike, Slot::Frame)
+            .is_some_and(|f| f.model == ocw_assets::livery::FRAME_VARIANT);
+        let label = bike.label();
+        if named {
+            label.replacen(bike.name(), ocw_assets::livery::NAME, 1)
+        } else {
+            label
+        }
+    }
+
+    /// The starter bikes (one per profile), base parts, the default road
+    /// bike active.
     pub fn starter(rider: &str, active: ProfileId) -> Self {
         Self {
             rider: rider.into(),
             active: active.id().into(),
-            bikes: ProfileId::ALL
-                .iter()
-                .map(|p| Bike {
-                    id: p.id().into(),
-                    profile: p.id().into(),
-                    paint: None,
-                    parts: BTreeMap::new(),
-                    starter: true,
-                    condition: BTreeMap::new(),
-                })
-                .collect(),
+            bikes: ProfileId::ALL.into_iter().map(Bike::starter).collect(),
             items: Vec::new(),
             next_item: 1,
             kit: BTreeMap::new(),
             injury: None,
             kit_colours: None,
+        }
+    }
+
+    /// Adds the starter bike of every profile the garage has none of (a
+    /// garage saved before a new bike type came, e.g. the folding bike of
+    /// 2026-11-28), while a hook is free.
+    pub fn add_missing_starters(&mut self) {
+        for p in ProfileId::ALL {
+            let has = self.bikes.iter().any(|b| b.starter && b.profile() == p);
+            if !has && self.bikes.len() < MAX_BIKES && self.bike(p.id()).is_none() {
+                self.bikes.push(Bike::starter(p));
+            }
         }
     }
 
@@ -813,7 +844,9 @@ impl Wallet {
                 self.book(rider, i64::from(START_HEARTS), "start", String::new());
             }
         }
-        self.garages.get_mut(rider).expect("just inserted")
+        let g = self.garages.get_mut(rider).expect("just inserted");
+        g.add_missing_starters();
+        g
     }
 
     /// The garage, if the rider has one.
@@ -1147,6 +1180,9 @@ impl Wallet {
         g.bikes.push(Bike {
             id: id.clone(),
             parts: BTreeMap::from([(Slot::Frame.id().to_string(), item)]),
+            // The "newk it" frameset comes in its livery (spec 14 Phase 4,
+            // 4B).
+            paint: ocw_assets::livery::default_paint(&f.model).map(|c| c.to_string()),
             ..probe
         });
         self.book(rider, -i64::from(f.hearts), "purchase", f.id.clone());
@@ -1507,10 +1543,17 @@ mod tests {
     }
 
     #[test]
-    fn a_new_rider_has_six_starter_bikes_and_500_hearts() {
+    fn a_new_rider_has_seven_starter_bikes_and_500_hearts() {
         let mut w = wallet();
         let g = w.garage("Ann", ProfileId::Road);
-        assert_eq!(g.bikes.len(), 6);
+        assert_eq!(g.bikes.len(), 7);
+        // The folding bike comes in its sky blue, the others in the
+        // rider's frame colour.
+        assert_eq!(
+            g.bike("folding").unwrap().paint(),
+            Some(ocw_core::Rgb(0x6FB3E0))
+        );
+        assert_eq!(g.bike("road").unwrap().paint(), None);
         assert!(g.bikes.iter().all(|b| b.starter && b.parts.is_empty()));
         assert_eq!(g.active, "road");
         assert_eq!(w.balance("Ann"), 500);
@@ -2029,6 +2072,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The "newk it" bike (spec 14 Phase 15, 15Q): its frameset is bought
+    /// at the bench like any other, hangs as "newk it", comes in its
+    /// livery (the reserved frame colour) and rides the road-aero profile;
+    /// the livery is a paint row for every road bike, not for others.
+    #[test]
+    fn the_newkit_frameset_is_a_named_bike_in_its_livery() {
+        let mut w = wallet();
+        w.grant("Ann", 12_000); // two aero framesets
+        let r = w
+            .buy_bike(cat(), "Ann", "frame.road-aero.newkit", &[])
+            .unwrap();
+        assert_eq!(r.bike, "road-aero-2");
+        let g = w.get("Ann").unwrap();
+        let b = g.bike("road-aero-2").unwrap();
+        assert_eq!(b.profile(), ProfileId::RoadAero);
+        assert_eq!(b.paint(), Some(ocw_core::bike::NEWKIT_LIVERY));
+        assert_eq!(
+            g.label(cat(), b),
+            "newk it 2",
+            "numbered like every bought bike"
+        );
+        assert_eq!(
+            g.part_on(cat(), b, Slot::Frame).unwrap().model,
+            ocw_assets::livery::FRAME_VARIANT
+        );
+        // Another aero frame keeps the profile's name and no paint.
+        w.buy_bike(cat(), "Ann", "frame.road-aero.top", &[])
+            .unwrap();
+        let g = w.get("Ann").unwrap();
+        let other = g.bike("road-aero-3").unwrap();
+        assert_eq!(other.paint(), None);
+        assert_eq!(g.label(cat(), other), "Road - aero 3");
+        // The paint rows.
+        let livery = crate::workshop::picker::Kind::Paint(Some(ocw_core::bike::NEWKIT_LIVERY));
+        let rows = |id: &str| {
+            let g = w.get("Ann").unwrap();
+            crate::workshop::picker::rows(cat(), g, g.bike(id).unwrap(), Slot::Paint)
+        };
+        for id in ["road", "road-climbing", "road-aero-3"] {
+            assert!(rows(id).iter().any(|r| r.kind == livery), "{id}");
+        }
+        for id in ["tt", "gravel", "mtb"] {
+            assert!(!rows(id).iter().any(|r| r.kind == livery), "{id}");
+        }
+        // The newk it bike's own paint first.
+        assert_eq!(rows("road-aero-2")[0].kind, livery);
+    }
+
     /// The bench (spec 4D): a frameset is bought as a new bike with the
     /// base parts on a new hook; it needs the balance, a paid frameset and
     /// room on the wall; the stand keeps its bike.
@@ -2041,7 +2132,7 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("more needed"), "{e}");
         assert_eq!(w.balance("Ann"), 500);
-        assert_eq!(w.get("Ann").unwrap().bikes.len(), 6);
+        assert_eq!(w.get("Ann").unwrap().bikes.len(), 7);
         // Base frames and other parts are not framesets for sale.
         assert!(w.buy_bike(cat(), "Ann", "frame.road.base", &[]).is_err());
         assert!(w.buy_bike(cat(), "Ann", "tyres.road.race", &[]).is_err());
@@ -2050,7 +2141,7 @@ mod tests {
         assert_eq!((r.bike.as_str(), r.paid), ("road-2", 2_839));
         assert_eq!(w.balance("Ann"), 3_500 - 2_839);
         let g = w.get("Ann").unwrap();
-        assert_eq!(g.bikes.len(), 7);
+        assert_eq!(g.bikes.len(), 8);
         assert_eq!(g.active, "road", "the stand keeps its bike");
         let b = g.bike("road-2").unwrap();
         assert!(!b.starter);
@@ -2074,7 +2165,7 @@ mod tests {
         assert_eq!(r.bike, "road-3");
         // The wall holds 24 bikes.
         w.grant("Ann", 1_390 * 20);
-        for _ in 0..(MAX_BIKES - 8) {
+        for _ in 0..(MAX_BIKES - 9) {
             w.buy_bike(cat(), "Ann", "frame.road.mid", &[]).unwrap();
         }
         assert_eq!(w.get("Ann").unwrap().bikes.len(), MAX_BIKES);
@@ -2111,7 +2202,7 @@ mod tests {
             );
         }
         assert_eq!(w.balance("Ann"), before);
-        assert_eq!(w.get("Ann").unwrap().bikes.len(), 6);
+        assert_eq!(w.get("Ann").unwrap().bikes.len(), 7);
         let r = w.buy_bike(cat(), "Ann", "frame.road.upper", &with).unwrap();
         let sum = 2_839 + 1_441 + 600;
         assert_eq!(r.paid, sum, "no discount");
@@ -2164,7 +2255,7 @@ mod tests {
         assert_eq!(w.balance("Ann"), before + i64::from(refund));
         let g = w.get("Ann").unwrap();
         assert!(g.bike(&r.bike).is_none());
-        assert_eq!(g.bikes.len(), 6);
+        assert_eq!(g.bikes.len(), 7);
         assert_eq!(g.active, "road", "the first bike on the stand");
         assert!(g.item(tyres.item).is_none(), "its parts went with it");
         assert!(

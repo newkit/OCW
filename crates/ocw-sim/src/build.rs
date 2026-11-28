@@ -177,7 +177,9 @@ pub const EQUAL_PROFILE: ProfileId = ProfileId::Road;
 /// The mass floor of a bike type (spec 4G).
 pub fn min_bike_mass_kg(bike: BikeType) -> f64 {
     match bike {
-        BikeType::Mountain => MIN_MTB_MASS_KG,
+        // The folding bike's steel frame, fenders and rack: no lighter
+        // than a mountain bike either.
+        BikeType::Mountain | BikeType::Folding => MIN_MTB_MASS_KG,
         _ => MIN_BIKE_MASS_KG,
     }
 }
@@ -1183,7 +1185,9 @@ mod tests {
                     b.params.bike_mass_kg,
                     kinds.join(" | ")
                 );
-                assert!(!b.parts.is_empty());
+                // The folding bike (spec 2.5.1) has no bike parts for sale
+                // yet: only the kit helps it.
+                assert!(!b.parts.is_empty() || (profile == ProfileId::Folding && !kit));
             }
         }
     }
@@ -1209,8 +1213,10 @@ mod tests {
     #[test]
     fn the_shipped_table_parses_and_has_a_base_for_every_slot() {
         let table = t();
-        // 99 + the 20 cranksets, cassettes and chains of the groupsets (v3.15).
-        assert_eq!(table.parts().len(), 119);
+        // 99 + the 20 cranksets, cassettes and chains of the groupsets (v3.15)
+        // + the "newk it" frameset (v7.15) + the folding bike's 10 base
+        // parts (v7.17).
+        assert_eq!(table.parts().len(), 130);
         for profile in ProfileId::ALL {
             for slot in table.slots() {
                 assert!(table.base(slot, profile).is_some(), "{slot} {profile:?}");
@@ -1311,7 +1317,11 @@ mod tests {
     #[test]
     fn stacked_best_builds_hit_exactly_the_kind_budgets() {
         let mut hit = 0;
-        for profile in ProfileId::ALL {
+        // Not the folding bike (spec 2.5.1): no bike parts for sale yet.
+        for profile in ProfileId::ALL
+            .into_iter()
+            .filter(|p| *p != ProfileId::Folding)
+        {
             let parts = best_parts(profile);
             let b = build(t(), profile, &parts);
             assert!(b.flat_gain <= FLAT_CAP + 1e-12, "{profile:?}: {b:?}");

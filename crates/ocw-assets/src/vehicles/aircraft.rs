@@ -33,9 +33,18 @@ pub(super) struct AirlinerSpec {
     /// The nose tip and the tail cone's end (z).
     nose: f32,
     tail: f32,
-    /// The nose: (dz from the tip, r / `r`, lift / `r`), the last one the
-    /// cabin's start.
-    nose_prof: &'static [(f32, f32, f32)],
+    /// The nose's stations (v7.08, not round: a blunt radome drooping
+    /// below the centre line, the upper surface rising steeply at the
+    /// windshield to the crown): (dz from the tip, the centre's offset,
+    /// the height above it, the depth below it, the half width), all but dz
+    /// over `r`; the first is the tip (a point), the last the cabin's
+    /// start (round).
+    nose_prof: &'static [(f32, f32, f32, f32, f32)],
+    /// The cockpit's panes on the left (mirrored right): polygons in (dz
+    /// from the tip, angle from the top in degrees), clipped onto the
+    /// nose's facets – the two windshields meeting at the centre post,
+    /// two side windows sweeping down and aft.
+    panes: &'static [&'static [(f32, f32)]],
     /// The tail: (dz before the end, r / `r`, lift / `r`), the first one
     /// the cabin's end.
     tail_prof: &'static [(f32, f32, f32)],
@@ -70,14 +79,27 @@ pub(super) const AIRLINER_SHARKLET: AirlinerSpec = AirlinerSpec {
     nose: -18.8,
     tail: 18.9,
     nose_prof: &[
-        (0.0, 0.0, -0.16),
-        (0.15, 0.21, -0.15),
-        (0.5, 0.43, -0.13),
-        (1.0, 0.62, -0.09),
-        (1.7, 0.78, -0.05),
-        (2.5, 0.91, -0.02),
-        (3.6, 0.985, 0.0),
-        (4.8, 1.0, 0.0),
+        (0.0, -0.25, 0.0, 0.0, 0.0),
+        (0.15, -0.25, 0.18, 0.2, 0.24),
+        (0.45, -0.22, 0.33, 0.4, 0.44),
+        (0.9, -0.18, 0.43, 0.58, 0.6),
+        (1.4, -0.13, 0.45, 0.72, 0.72),
+        (1.9, -0.09, 0.57, 0.82, 0.81),
+        (2.4, -0.05, 0.73, 0.9, 0.88),
+        (3.1, -0.02, 0.9, 0.96, 0.95),
+        (4.0, 0.0, 1.0, 1.0, 1.0),
+    ],
+    // Type 1: the aft side window's lower rear corner cut off.
+    panes: &[
+        &[(1.45, 3.5), (2.35, 3.5), (2.45, 37.0), (1.6, 39.0)],
+        &[(1.7, 43.0), (2.5, 41.0), (2.75, 62.0), (1.95, 66.0)],
+        &[
+            (2.85, 46.0),
+            (3.5, 46.0),
+            (3.55, 64.0),
+            (3.35, 73.0),
+            (2.95, 74.0),
+        ],
     ],
     tail_prof: &[
         (-9.3, 1.0, 0.0),
@@ -97,7 +119,7 @@ pub(super) const AIRLINER_SHARKLET: AirlinerSpec = AirlinerSpec {
     tailplane: [[0.9, 0.45, 14.2, 17.4, 0.3], [6.2, 0.85, 17.3, 18.5, 0.1]],
     fin: [1.2, 12.4, 18.4, 8.25, 16.4, 18.45, 10.4],
     gear: [-12.4, 0.38, 3.8, 1.0, 0.6],
-    doors: [-13.5, 7.9],
+    doors: [-14.4, 7.9],
     exits: &[-1.25, -0.35],
     cargo: [-9.2, 4.6],
     body: 0xF2F3F4,
@@ -112,14 +134,28 @@ pub(super) const AIRLINER_SPLIT: AirlinerSpec = AirlinerSpec {
     nose: -19.6,
     tail: 19.4,
     nose_prof: &[
-        (0.0, 0.0, -0.2),
-        (0.2, 0.2, -0.19),
-        (0.7, 0.42, -0.16),
-        (1.4, 0.62, -0.11),
-        (2.2, 0.78, -0.06),
-        (3.1, 0.9, -0.025),
-        (4.2, 0.98, 0.0),
-        (5.4, 1.0, 0.0),
+        (0.0, -0.3, 0.0, 0.0, 0.0),
+        (0.2, -0.3, 0.17, 0.19, 0.22),
+        (0.6, -0.27, 0.32, 0.38, 0.42),
+        (1.1, -0.22, 0.42, 0.56, 0.58),
+        (1.7, -0.16, 0.47, 0.71, 0.71),
+        (2.25, -0.11, 0.6, 0.81, 0.8),
+        (2.8, -0.06, 0.76, 0.9, 0.88),
+        (3.6, -0.02, 0.91, 0.96, 0.95),
+        (4.5, 0.0, 1.0, 1.0, 1.0),
+    ],
+    // Type 2: a more pointed nose, a V-shaped lower edge on the aft side
+    // window.
+    panes: &[
+        &[(1.75, 3.5), (2.65, 3.5), (2.75, 36.0), (1.9, 38.0)],
+        &[(2.0, 42.0), (2.8, 40.0), (3.05, 60.0), (2.25, 64.0)],
+        &[
+            (3.15, 45.0),
+            (3.85, 45.0),
+            (3.9, 66.0),
+            (3.5, 74.0),
+            (3.15, 67.0),
+        ],
     ],
     tail_prof: &[
         (-10.0, 1.0, 0.0),
@@ -139,7 +175,7 @@ pub(super) const AIRLINER_SPLIT: AirlinerSpec = AirlinerSpec {
     tailplane: [[0.85, 0.5, 14.6, 17.8, 0.3], [6.4, 0.9, 17.9, 19.0, 0.1]],
     fin: [1.2, 12.0, 18.8, 8.7, 16.6, 18.9, 8.8],
     gear: [-14.0, 0.36, 3.5, 1.4, 0.56],
-    doors: [-14.2, 8.6],
+    doors: [-14.7, 8.6],
     exits: &[-0.6],
     cargo: [-10.0, 5.2],
     body: 0xEEF0F2,
@@ -257,6 +293,151 @@ fn wing_at(w: &[[f32; 5]; 3], x: f32) -> [f32; 4] {
     [l(1), l(2), l(3), l(4)]
 }
 
+/// The airliner's nose: rings at its stations, each an oval with its own
+/// height above and depth below a centre that droops towards the tip, on
+/// `n` vertices from the top (left −X first, as the fuselage's lathe, so
+/// the last ring meets the cabin's first); flat triangles, each quad split
+/// along its first diagonal.
+struct Nose<'a> {
+    stations: &'a [(f32, f32, f32, f32, f32)],
+    z0: f32,
+    cy: f32,
+    r: f32,
+    n: u32,
+}
+
+impl Nose<'_> {
+    /// Vertex `j` of station `i`.
+    fn vertex(&self, i: usize, j: u32) -> Vec3 {
+        let (dz, c, t, b, w) = self.stations[i];
+        let th = j as f32 * TAU / self.n as f32;
+        let (sn, cs) = th.sin_cos();
+        let h = if cs >= 0.0 { t } else { b };
+        v3(
+            -w * sn * self.r,
+            self.cy + (c + h * cs) * self.r,
+            self.z0 + dz,
+        )
+    }
+
+    /// The centre of station `i`.
+    fn axis(&self, i: usize) -> Vec3 {
+        let (dz, c, ..) = self.stations[i];
+        v3(0.0, self.cy + c * self.r, self.z0 + dz)
+    }
+
+    /// The quad of station `i` to `i + 1`, facet `j`: [a, b, c, d] =
+    /// (i, j), (i, j + 1), (i + 1, j + 1), (i + 1, j).
+    fn quad(&self, i: usize, j: u32) -> [Vec3; 4] {
+        let k = (j + 1) % self.n;
+        [
+            self.vertex(i, j),
+            self.vertex(i, k),
+            self.vertex(i + 1, k),
+            self.vertex(i + 1, j),
+        ]
+    }
+
+    fn draw(&self, s: &mut Shape) {
+        for i in 0..self.stations.len() - 1 {
+            let mid = (self.axis(i) + self.axis(i + 1)) / 2.0;
+            for j in 0..self.n {
+                let q = self.quad(i, j);
+                let fm = q.iter().copied().sum::<Vec3>() / 4.0;
+                // Two triangles along a–c (at the tip one has no area).
+                tri_out(s, q[0], q[1], q[2], fm - mid);
+                tri_out(s, q[0], q[2], q[3], fm - mid);
+            }
+        }
+    }
+
+    /// A pane: the polygon `pts` (dz, degrees from the top on the left;
+    /// `side` +1 mirrors it to the right) clipped to each triangle of the
+    /// nose's skin and lifted off it a little, into `s` (the glass).
+    fn pane(&self, s: &mut Shape, pts: &[(f32, f32)], side: f32) {
+        let step = 360.0 / self.n as f32;
+        let pts: Vec<(f32, f32)> = pts
+            .iter()
+            .map(|&(d, a)| (d, if side > 0.0 { 360.0 - a } else { a }))
+            .collect();
+        let (amin, amax) = pts
+            .iter()
+            .fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p.1), m.1.max(p.1)));
+        let j0 = (amin / step).floor().max(0.0) as u32;
+        let j1 = (amax / step).ceil() as u32;
+        for i in 0..self.stations.len() - 1 {
+            let (za, zb) = (self.stations[i].0, self.stations[i + 1].0);
+            let mid = (self.axis(i) + self.axis(i + 1)) / 2.0;
+            for j in j0..j1 {
+                let q = self.quad(i, j % self.n);
+                // In the cell's (u across, v along) coordinates.
+                let cell: Vec<(f32, f32)> = pts
+                    .iter()
+                    .map(|&(d, a)| ((a - j as f32 * step) / step, (d - za) / (zb - za)))
+                    .collect();
+                let mut cell = clip(&cell, |p| p.0);
+                cell = clip(&cell, |p| 1.0 - p.0);
+                cell = clip(&cell, |p| p.1);
+                cell = clip(&cell, |p| 1.0 - p.1);
+                // The two triangles: a–b–c (v ≤ u) and a–c–d (v ≥ u).
+                for low in [true, false] {
+                    let half = if low {
+                        clip(&cell, |p| p.0 - p.1)
+                    } else {
+                        clip(&cell, |p| p.1 - p.0)
+                    };
+                    if half.len() < 3 {
+                        continue;
+                    }
+                    let (t, map): ([Vec3; 3], [Vec3; 2]) = if low {
+                        ([q[0], q[1], q[2]], [q[1] - q[0], q[2] - q[1]])
+                    } else {
+                        ([q[0], q[2], q[3]], [q[2] - q[3], q[3] - q[0]])
+                    };
+                    let mut nrm = (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero();
+                    if nrm == Vec3::ZERO {
+                        continue;
+                    }
+                    if nrm.dot((t[0] + t[1] + t[2]) / 3.0 - mid) < 0.0 {
+                        nrm = -nrm;
+                    }
+                    let world: Vec<Vec3> = half
+                        .iter()
+                        .map(|&(u, v)| q[0] + map[0] * u + map[1] * v + nrm * 0.012)
+                        .collect();
+                    poly(s, &world, nrm);
+                }
+            }
+        }
+    }
+}
+
+/// A triangle facing `out` (none without area).
+fn tri_out(s: &mut Shape, a: Vec3, b: Vec3, c: Vec3, out: Vec3) {
+    if (b - a).cross(c - a).dot(out) < 0.0 {
+        tri(s, a, c, b);
+    } else {
+        tri(s, a, b, c);
+    }
+}
+
+/// A polygon clipped to `f(p) ≥ 0` (`f` linear; Sutherland–Hodgman).
+fn clip(pts: &[(f32, f32)], f: impl Fn((f32, f32)) -> f32) -> Vec<(f32, f32)> {
+    let mut out = Vec::new();
+    for k in 0..pts.len() {
+        let (a, b) = (pts[k], pts[(k + 1) % pts.len()]);
+        let (fa, fb) = (f(a), f(b));
+        if fa >= 0.0 {
+            out.push(a);
+        }
+        if (fa >= 0.0) != (fb >= 0.0) {
+            let t = fa / (fa - fb);
+            out.push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+        }
+    }
+    out
+}
+
 /// A narrow-body twinjet.
 pub(super) fn airliner(b: &mut Build, s: &AirlinerSpec) {
     let far = b.far();
@@ -267,31 +448,54 @@ pub(super) fn airliner(b: &mut Build, s: &AirlinerSpec) {
     let fuselage = Lathe::new(v3(0.0, cy, 0.0), Vec3::Z, Vec3::Y, sides_n);
     let np = s.nose_prof.len();
     let tp = s.tail_prof.len();
-    let prof: Vec<(f32, f32, f32)> = if far {
-        let n = s.nose_prof;
-        let t = s.tail_prof;
-        [n[0], n[4], n[np - 1], t[0], t[2], t[tp - 1]]
-            .iter()
-            .enumerate()
-            .map(|(i, &(dz, rf, lf))| {
-                let z = if i < 3 { s.nose + dz } else { s.tail + dz };
-                (z, rf * r, lf * r)
-            })
-            .collect()
-    } else {
-        s.nose_prof
-            .iter()
-            .map(|&(dz, rf, lf)| (s.nose + dz, rf * r, lf * r))
-            .chain(
-                s.tail_prof
-                    .iter()
-                    .map(|&(dz, rf, lf)| (s.tail + dz, rf * r, lf * r)),
-            )
-            .collect()
-    };
-    fuselage.draw(b.root(), &prof, |_, _| "body", "body");
-    let end = *prof.last().expect("a tail");
     let zc0 = s.nose + s.nose_prof[np - 1].0;
+    // The fuselage from the cabin's start to the tail cone (the nose is
+    // its own shape).
+    let cabin = (zc0, r, 0.0);
+    let tail_points: Vec<(f32, f32, f32)> = if far {
+        let t = s.tail_prof;
+        vec![t[0], t[2], t[tp - 1]]
+    } else {
+        s.tail_prof.to_vec()
+    };
+    let prof: Vec<(f32, f32, f32)> = std::iter::once(cabin)
+        .chain(
+            tail_points
+                .iter()
+                .map(|&(dz, rf, lf)| (s.tail + dz, rf * r, lf * r)),
+        )
+        .collect();
+    fuselage.draw(b.root(), &prof, |_, _| "body", "body");
+    // The nose and the cockpit's glazing on it (lod1: fewer stations, one
+    // dark band).
+    let stations: Vec<(f32, f32, f32, f32, f32)> = if far {
+        [0, 4, 6, np - 1].iter().map(|&i| s.nose_prof[i]).collect()
+    } else {
+        s.nose_prof.to_vec()
+    };
+    let nose = Nose {
+        stations: &stations,
+        z0: s.nose,
+        cy,
+        r,
+        n: sides_n,
+    };
+    nose.draw(b.root().slot("body"));
+    for side in [-1.0f32, 1.0] {
+        if far {
+            let (d0, d1) = (s.panes[0][0].0, s.panes[2][1].0);
+            nose.pane(
+                b.root().slot("glass"),
+                &[(d0, 0.0), (d1, 0.0), (d1, 70.0), (d0, 60.0)],
+                side,
+            );
+        } else {
+            for pane in s.panes {
+                nose.pane(b.root().slot("glass"), pane, side);
+            }
+        }
+    }
+    let end = *prof.last().expect("a tail");
     let zc1 = s.tail + s.tail_prof[0].0;
     if !far {
         let p = b.root();
@@ -320,43 +524,9 @@ pub(super) fn airliner(b: &mut Build, s: &AirlinerSpec) {
             }
         };
         let both = [-1.0f32, 1.0];
-        // The cockpit: two windscreen panels a side, then the side window.
         let ring = |i: usize| prof[i];
-        side_patch(
-            p,
-            "glass",
-            ring(4),
-            ring(5),
-            1,
-            (0.12, 0.92),
-            (0.2, 0.92),
-            0.012,
-            &both,
-        );
-        side_patch(
-            p,
-            "glass",
-            ring(4),
-            ring(5),
-            2,
-            (0.06, 0.8),
-            (0.2, 0.92),
-            0.012,
-            &both,
-        );
-        side_patch(
-            p,
-            "glass",
-            ring(5),
-            ring(6),
-            2,
-            (0.1, 0.75),
-            (0.05, 0.42),
-            0.012,
-            &both,
-        );
         // The cabin: one band from zc0 to zc1.
-        let (a, c) = (ring(np - 1), ring(np));
+        let (a, c) = (ring(0), ring(1));
         let v = |z: f32| (z - zc0) / (zc1 - zc0);
         // A thin cheat line in the livery colour below the windows.
         side_patch(

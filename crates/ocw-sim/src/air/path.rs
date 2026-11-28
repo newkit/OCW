@@ -309,6 +309,28 @@ impl FlightPath {
             .map_or_else(|| self.duration_s(), |w| w[1].t)
     }
 
+    /// Standing still on the ground at `t` (s from the start): the time
+    /// since the hold began, until it ends and whether it is the start of
+    /// the path (`None` when moving or in the air).
+    pub fn hold_at(&self, t: f64) -> Option<(f64, f64, bool)> {
+        self.v.iter().enumerate().find_map(|(i, v)| {
+            (v.ground && v.hold_s > 0.0 && t >= v.t && t <= v.t + v.hold_s).then_some((
+                t - v.t,
+                v.t + v.hold_s - t,
+                i == 0,
+            ))
+        })
+    }
+
+    /// When the wheels leave the ground (s from the start; `None` when it
+    /// never takes off): the end of the first ground run.
+    pub fn time_of_liftoff(&self) -> Option<f64> {
+        self.v
+            .windows(2)
+            .find(|w| w[0].ground && !w[1].ground)
+            .map(|w| w[0].t + w[0].hold_s)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.v.len() < 2
     }

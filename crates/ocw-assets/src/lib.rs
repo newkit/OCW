@@ -46,6 +46,7 @@ pub mod kinds;
 pub mod ktx2;
 pub mod library;
 pub mod licence;
+pub mod livery;
 pub mod manifest;
 pub mod materials;
 pub mod mesh;
@@ -233,13 +234,25 @@ mod tests {
         let checked =
             manifest::validate(shipped::MANIFEST, &files).unwrap_or_else(|e| panic!("{e:#?}"));
         for p in ProfileId::ALL {
-            let n = checked
+            // The profile's own bike, and named bikes on its frame (the
+            // "newk it" bike on road-aero, spec 14 Phase 15).
+            let files: Vec<&str> = checked
                 .iter()
                 .filter(|c| c.entry.profile.as_deref() == Some(p.id()))
-                .count();
-            assert_eq!(n, 1, "{p:?}");
+                .map(|c| c.entry.file.as_str())
+                .collect();
+            assert!(files.contains(&export::bike_file(p)), "{p:?}");
+            let named = usize::from(p == ProfileId::RoadAero);
+            assert_eq!(files.len(), 1 + named, "{p:?}: {files:?}");
             assert_eq!(shipped::bike_rig(p).aero_bars, p == ProfileId::TimeTrial);
         }
+        // The "newk it" bike rides like every road-aero bike: the same rig.
+        let newkit = shipped::model(kinds::id_of(livery::FILE));
+        let rig = pose::BikeRig::from_model(&newkit).expect("newk it rig");
+        let aero = shipped::bike_rig(ProfileId::RoadAero);
+        assert!(rig.saddle.distance(aero.saddle) < 1e-4);
+        assert!(rig.hoods[1].distance(aero.hoods[1]) < 1e-4);
+        assert!((rig.wheelbase - aero.wheelbase).abs() < 1e-4);
         assert!(shipped::rider_rig().leg() > 0.8);
         assert!(RiderRig::from_model(shipped::rider_low_model()).is_ok());
     }

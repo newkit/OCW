@@ -6171,6 +6171,50 @@ video = 12
 max_video_mb = 30
 pick = false
 
+[[scene]]
+name = "air-gear-tenerife-takeoff-video"
+description = "Video, 1080p: an airliner's take-off at Tenerife from beside the runway – the run, the lift-off and the gear swinging up into its bays a few seconds later, the climb-out with clean belly (v7.08: gear by the flight's phase); the unicorn flies ahead of it on the camera's side, apart from the aircraft in the picture (air.follow pick airliner,departure)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 10:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body b --hair long --hair-colour #3B2A20 --skin 4 --glasses 2", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,departure --below 3 --in 8", "4=air.follow unicorn -25 14 32", "4=air.follow key 0 -60 6 40 0 1 0", "4=air.follow key 10 -55 8 35 0 1 0", "4=air.follow key 22 -50 10 30 0 1 0", "4=air.follow key 26 -48 12 20 0 1 0", "12=air.follow play"]
+warmup = 12
+video = 24
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-gear-tenerife-landing-video"
+description = "Video, 1080p: an airliner on final into Tenerife, about 9 km out and 500 m up – gear and doors still up, then the gear swinging down over five seconds (v7.08: down only on final, the last ~2 minutes before touchdown); the unicorn flies ahead of it on the camera's side, apart from the aircraft in the picture (air.follow pick airliner,arrival)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 17:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair short --hair-colour #8D5524 --skin 9", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,arrival --below 540 --in 6", "4=air.follow unicorn -18 12 30", "4=air.follow key 0 -45 -6 35 0 1 0", "4=air.follow key 10 -42 -8 30 0 1 0", "4=air.follow key 20 -40 -9 26 0 1 0", "12=air.follow play"]
+warmup = 12
+video = 22
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-rotor-tenerife-helicopter-medium-spool-video"
+description = "Video, 720p: the medium transport helicopter on its heliport pad spooling up (25 s from standing blades to flight rpm, ~215 rpm main, ~1,150 rpm tail) and lifting off – the blades turn solid while slow, then blur into a translucent disc as they reach speed (v7.08); the unicorn stands off to the side, apart from it in the picture (air.follow pick helicopter,medium,tour)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1280x720"]
+at = ["0.5=time 2026-07-15 13:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body c --hair afro --hair-colour #1A1A1A --skin 14", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,medium,tour --below 1 --in 30", "4=air.follow unicorn -10 9 18", "4=air.follow key 0 -24 13 22 0 3 0", "4=air.follow key 34 -22 15 20 0 3 0", "10=air.follow play"]
+warmup = 10
+video = 36
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-rotor-tenerife-helicopter-light-video"
+description = "Video, 720p: the light helicopter lifting off from a Tenerife pad – its three-blade rotor (~450 rpm) and tail rotor (~2,000 rpm) spooling up and blurring into discs (v7.08); the unicorn off to the side, apart from it in the picture (air.follow pick helicopter,light,tour)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1280x720"]
+at = ["0.5=time 2026-07-15 13:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair bun --hair-colour #B3482A --skin 2", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,light,tour --below 1 --in 20", "4=air.follow unicorn -6 6 12", "4=air.follow key 0 -14 9 13 0 1.5 0", "4=air.follow key 26 -13 10 12 0 1.5 0", "10=air.follow play"]
+warmup = 10
+video = 26
+max_video_mb = 30
+pick = false
+
 # --- UFOs (spec 14 Phase 18, 18C, 18E T9) -------------------------------------
 
 [[scene]]
@@ -6315,4 +6359,127 @@ world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-25712,-7061", "--bots", "0", "--power", "150"]
 at = ["0.3=time 2026-11-28 12:00", "0.3=weather clear", "0.5=character --body a --hair ponytail --hair-colour #8D5524 --skin 4", "0.6=set --temp traffic.live_road on", "2=camera.orbit 20 30 25", "4=traffic road busy"]
 shot = 30
+pick = false
+
+# --- The "newk it" bike (spec 14 Phase 15, *The "newk it" bike*) --------------
+# The user's own bike design and brand, used with permission: the frameset
+# bought at the bench (it comes in its livery) and ridden; made-up riders in
+# varied looks. OCW Studio's views of the file: scripts/newkit-shots.sh.
+
+[[scene]]
+name = "newkit-workshop-stand"
+description = "The \"newk it\" bike on the workshop's repair stand (bought at the bench, in its livery): the black flake frame with its holographic glints fading to magenta, \"newk it\" in pink along the down tube, the unicorn on the head tube, pink inner fork and bar tape, the rims' letters"
+args = ["--route", "hills", "--bots", "0", "--power", "0"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2=workshop open", "3=workshop select", "4.5=workshop orbit -35", "5=workshop zoom 2"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "newkit-kaiserstuhl-vineyards"
+description = "A made-up rider (Mira Valley: ponytail, pink sash kit) on the \"newk it\" bike between the vineyards of the Kaiserstuhl on a September morning, side camera close (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0", "--power", "210"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-12 10:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2A20 --skin 4 --glasses 1", "0.7=kit.design --pattern sash --jersey #FF2A93 --second #1E1E22 --shorts #1E1E22 --socks #F2F2EE", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2.5=camera.orbit 140 8 6"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "newkit-kaiserstuhl-vineyards-video"
+description = "Video: the \"newk it\" bike riding through the Kaiserstuhl vineyards, the camera from the front quarter (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0", "--power", "230"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-12 10:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2A20 --skin 4 --glasses 1", "0.7=kit.design --pattern sash --jersey #FF2A93 --second #1E1E22 --shorts #1E1E22 --socks #F2F2EE", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2=camera.orbit 140 8 6"]
+video = 6
+pick = false
+
+[[scene]]
+name = "newkit-freiburg-dreisam"
+description = "Another made-up rider (Theo Brook: short hair and beard, yellow stripes kit) on the \"newk it\" bike on the bridge over the Dreisam at the Schwabentor in Freiburg, the river and the town behind (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-7639,-7817", "--bots", "0", "--power", "40"]
+riders = "active = \"Theo Brook\"\n[[rider]]\nname = \"Theo Brook\"\nweight_kg = 78.0\nheight_cm = 184.0\nbike = \"road-aero\"\njersey_color = \"#FDD835\"\nhelmet_color = \"#1E1E22\"\nkit = \"stripes\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-03-21 11:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #5A3825 --skin 10 --beard 2", "0.7=kit.design --pattern stripes --jersey #FDD835 --second #1E1E22 --shorts #1E1E22", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2.5=camera.orbit 100 16 16"]
+shot = 7
+pick = false
+
+# --- The folding bike (spec 2.5, 2026-11-28, after the user's photo) -------
+# A 20-inch city folding bike in sky blue with hot pink tyres, grips and
+# pedals; made-up riders with different looks; never the unicorn here.
+
+[[scene]]
+name = "folding-freiburg-autumn"
+description = "The folding bike (spec 2.5, 2026-11-28): Fenna Faltrad (made-up) rides the sky-blue 20-inch folding bike with hot pink tyres, chrome fenders and rack upright through Freiburg's old town on an autumn afternoon (no HUD), the camera beside her"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "2", "--power", "150"]
+riders = """
+active = "Fenna Faltrad"
+
+[[rider]]
+name = "Fenna Faltrad"
+weight_kg = 61.0
+height_cm = 168.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#F4E3C1"
+helmet_color = "#2E7D32"
+kit = "plain"
+"""
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-22 15:30", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair ponytail --hair-colour auburn --skin 3 --glasses 1", "2.5=camera.orbit 120 8 4.5"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "folding-freiburg-front"
+description = "The folding bike from the front (spec 2.5): Milo Klapp (made-up) sits upright on it, the hands on the swept-back bar's pink grips, in Freiburg's old town in autumn (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "0", "--power", "130"]
+riders = """
+active = "Milo Klapp"
+
+[[rider]]
+name = "Milo Klapp"
+weight_kg = 82.0
+height_cm = 184.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#37474F"
+helmet_color = "#F2F2EE"
+kit = "band"
+"""
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-22 16:10", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --age 50s --shape normal --hair short --hair-colour #4A4A4A --skin 9 --beard short-boxed", "2.5=camera.orbit 160 6 4"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "folding-freiburg-video"
+description = "Video: the folding bike (spec 2.5) in Freiburg's old town in autumn – Fenna Faltrad (made-up) pedalling upright, the small 20-inch wheels turning, two bots on road bikes"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "2", "--power", "160"]
+riders = """
+active = "Fenna Faltrad"
+
+[[rider]]
+name = "Fenna Faltrad"
+weight_kg = 61.0
+height_cm = 168.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#F4E3C1"
+helmet_color = "#2E7D32"
+kit = "plain"
+"""
+at = ["0.5=set display.quality high", "0.5=time 2026-10-22 15:30", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair ponytail --hair-colour auburn --skin 3 --glasses 1", "1=camera.orbit 100 10 5"]
+video = 6
+pick = false
+
+[[scene]]
+name = "folding-workshop-stand"
+description = "The workshop (spec 14 Phase 4): the folding bike on the repair stand in its sky blue, the garage's other bikes on the wall; Rosa Pedal (made-up)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Rosa Pedal\"\n[[rider]]\nname = \"Rosa Pedal\"\nweight_kg = 70.0\nheight_cm = 175.0\nbike = \"folding\"\n"
+at = ["2.2=workshop open"]
+shot = 10
 pick = false

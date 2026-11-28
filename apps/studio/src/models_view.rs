@@ -1644,6 +1644,9 @@ pub enum ModelCmd {
         distance: Option<f32>,
     },
     Zoom(f32),
+    /// The point the camera orbits and looks at (model space, m): a
+    /// close-up of a detail (the "newk it" bike's head tube).
+    Target(Vec3),
     Frame,
     Try(TryOn),
     Pose(RidePose),
@@ -1760,6 +1763,11 @@ pub fn parse(words: &[String]) -> Result<ModelCmd, String> {
             distance: w(3).map(|_| num(w(3), "distance (m)")).transpose()?,
         }),
         Some("zoom") => Ok(ModelCmd::Zoom(num(w(1), "distance (m)")?)),
+        Some("target") => Ok(ModelCmd::Target(Vec3::new(
+            num(w(1), "x (m)")?,
+            num(w(2), "y (m)")?,
+            num(w(3), "z (m)")?,
+        ))),
         Some("frame") => Ok(ModelCmd::Frame),
         Some("pose") => {
             let p = w(1).and_then(|s| RidePose::parse(s)).ok_or_else(|| {
@@ -1794,7 +1802,7 @@ pub fn parse(words: &[String]) -> Result<ModelCmd, String> {
         },
         Some(x) => Err(format!("model: unknown `{x}`")),
         None => Err(
-            "model: open, list, info, show, light, lod, select, orbit, zoom, frame, try, pose"
+            "model: open, list, info, show, light, lod, select, orbit, zoom, target, frame, try, pose"
                 .into(),
         ),
     }
@@ -1927,6 +1935,10 @@ pub fn run(view: &mut ModelView, cmd: ModelCmd) -> Result<String, String> {
             view.orbit.distance = d.max(0.05);
             Ok(format!("distance {d:.1} m"))
         }
+        ModelCmd::Target(at) => {
+            view.orbit.target = at;
+            Ok(String::new())
+        }
         ModelCmd::Frame => {
             view.frame();
             Ok(String::new())
@@ -2003,6 +2015,11 @@ mod tests {
             Ok(ModelCmd::Light(LightPreset::Overcast))
         );
         assert_eq!(parse(&words("lod lod1")), Ok(ModelCmd::Lod(LodMode::Far)));
+        assert_eq!(
+            parse(&words("target 0 0.8 -0.35")),
+            Ok(ModelCmd::Target(Vec3::new(0.0, 0.8, -0.35)))
+        );
+        assert!(parse(&words("target 0 0.8")).is_err());
         assert_eq!(
             parse(&words("try rider fat 190")),
             Ok(ModelCmd::Try(TryOn::Rider {

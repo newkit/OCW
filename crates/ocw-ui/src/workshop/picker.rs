@@ -488,6 +488,14 @@ pub fn rows(cat: &Catalogue, garage: &Garage, bike: &Bike, slot: Slot) -> Vec<Ro
             part: None,
             kind: Kind::Paint(Some(ocw_core::bike::BARE_CARBON)),
         });
+        // The "newk it" livery on the road frames (spec 14 Phase 15, *The
+        // "newk it" bike*: the user's design, used with permission).
+        if bike.profile().bike() == ocw_core::BikeType::Road {
+            out.push(Row {
+                part: None,
+                kind: Kind::Paint(Some(ocw_core::bike::NEWKIT_LIVERY)),
+            });
+        }
         // The current colour first.
         if let Some(i) = out.iter().position(|r| r.kind == Kind::Paint(now)) {
             let r = out.remove(i);
@@ -564,6 +572,7 @@ pub fn colour_name(c: Option<Rgb>) -> String {
     match c {
         None => "Rider's frame colour".into(),
         Some(ocw_core::bike::BARE_CARBON) => "Bare carbon (clear coat)".into(),
+        Some(ocw_core::bike::NEWKIT_LIVERY) => "\"newk it\" livery (flake, unicorn)".into(),
         Some(c) => format!("Paint {c}"),
     }
 }
@@ -1574,8 +1583,8 @@ mod tests {
         let paint = rows(cat(), g, b, Slot::Paint);
         assert_eq!(
             paint.len(),
-            14,
-            "the palette, the rider's colour, bare carbon"
+            15,
+            "the palette, the rider's colour, bare carbon, the \"newk it\" livery"
         );
         assert_eq!(paint[0].kind, Kind::Paint(None), "the current colour first");
         assert_eq!(

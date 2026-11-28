@@ -676,7 +676,7 @@ pub fn state_json(world: &World) -> String {
             ),
         ),
         // The faster / slower zones (the top / bottom of the screen; no
-        // power buttons since v7.13): on, where the top zone ends and
+        // power buttons since v7.18): on, where the top zone ends and
         // the bottom zone starts (logical px from the top), the zone
         // held, the feedback's text.
         ("power", t.is_some_and(|t| t.power).to_string()),

@@ -550,7 +550,7 @@ impl Workshop {
         {
             self.caption = Some(format!(
                 "The {} hangs on a new hook – Confirm on it to put it on the stand and build it up.",
-                b.label()
+                g.label(ocw_assets::shipped::catalogue(), b)
             ));
         }
         self.hotspot = 0;
@@ -1045,7 +1045,7 @@ pub(crate) mod tests {
             let mut wallet = Wallet::in_memory();
             wallet.now_unix = Some(1_794_000_000);
             wallet.garage("Ann", ProfileId::Road);
-            let layout = ocw_assets::workshop::layout(6);
+            let layout = ocw_assets::workshop::layout(ProfileId::ALL.len());
             // A ring of anchors around the stand bike's middle.
             let c = layout.stand_bike.0 + Vec3::Y * 0.55;
             let anchors = Slot::ALL
@@ -1158,14 +1158,14 @@ pub(crate) mod tests {
     fn left_right_cycle_the_bikes_stand_first_and_wrap() {
         let world = World::new();
         let mut w = world.open();
-        assert_eq!(w.bikes.len(), 6);
+        assert_eq!(w.bikes.len(), 7);
         assert_eq!((w.stand, w.focus, w.view()), (0, 0, View::Overview));
         world.step(&mut w, &[Act::Right]);
         assert_eq!((w.focus, w.view()), (1, View::Wall(1)));
-        for _ in 0..4 {
+        for _ in 0..5 {
             world.step(&mut w, &[Act::Right]);
         }
-        assert_eq!(w.focus, 5);
+        assert_eq!(w.focus, 6);
         world.step(&mut w, &[Act::Right]);
         assert_eq!(
             (w.focus, w.view()),
@@ -1173,7 +1173,7 @@ pub(crate) mod tests {
             "wraps to the stand"
         );
         world.step(&mut w, &[Act::Left]);
-        assert_eq!(w.focus, 5);
+        assert_eq!(w.focus, 6);
         // Touch: a swipe to the left shows the next bike.
         world.step(&mut w, &[Act::Swipe(-1)]);
         assert_eq!(w.focus, 0);
@@ -1453,8 +1453,8 @@ pub(crate) mod tests {
             )
             .unwrap();
         world.step(&mut w, &[]);
-        assert_eq!(w.bikes.len(), 7);
-        assert_eq!(w.bikes[6], "road-2");
+        assert_eq!(w.bikes.len(), 8);
+        assert_eq!(w.bikes[7], "road-2");
         assert_eq!(w.stand, 0, "the stand keeps its bike");
         assert!(w.caption.as_deref().unwrap().contains("new hook"));
         // Back: the top page (on the Road row), Back: closed, at the bench.
@@ -1466,7 +1466,7 @@ pub(crate) mod tests {
         assert_eq!(w.view(), View::Bench);
         // The "+" hook opens the same catalogue, the camera on the hook.
         world.step(&mut w, &[Act::Catalogue { plus: true }]);
-        assert_eq!(w.view(), View::Wall(7));
+        assert_eq!(w.view(), View::Wall(8));
         assert_eq!(w.picker.as_ref().unwrap().bench, Some(BenchPage::Top));
         // Selling it from the bench's last page frees the hook.
         let sell = w.picker.as_ref().unwrap().rows.len() - 1;
@@ -1479,7 +1479,7 @@ pub(crate) mod tests {
         assert_eq!(out, vec![Out::Line("bikes.sell road-2".into())]);
         world.wallet.sell_bike("Ann", "road-2").unwrap();
         world.step(&mut w, &[]);
-        assert_eq!(w.bikes.len(), 6);
+        assert_eq!(w.bikes.len(), 7);
     }
 
     /// Opens the mirror's picker of kit `slot`.
