@@ -6225,3 +6225,50 @@ args = ["--world", "{world}", "--free-ride", "--bots", "0", "--power", "220", "-
 at = ["0.6=character --body a --hair short --hair-colour #D9B26F --skin 2 --beard 1", "0.8=traffic air live"]
 shot = 24
 pick = false
+
+# --- Live road events (spec 14 Phase 18, 18E T13): Tenerife's DGT feed ------
+# Render on marge with the recorded feed of the tests (our own fetch,
+# CC BY, "Fuente: DGT"), so the pictures do not depend on the night's feed:
+#   OCW_LIVE_ROAD_FILE=$PWD/services/server/src/live_road/fixtures/dgt-2026-11-28.xml \
+#     scripts/render-scenes.sh --only 'live-road-*'
+# Without it the desktop's server fetches the live feed (two minutes apart).
+# Places: the TF-5 east of Icod de los Vinos (-23372,-7617; the reported
+# stationary jam of the fixture, westbound km 60.5 – 60.0), the TF-82 at
+# El Tanque (-25712,-7061; closed both ways, km 9.0 – 9.5).
+
+[[scene]]
+name = "live-road-tf5-statistics"
+description = "Before: the TF-5 east of Icod de los Vinos from above (the rider stands in the lane, so vehicles also wait behind them), with busy road traffic from the statistics (Live traffic data off): free flow both ways; a rider on a white road bike in a stripes kit"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-23372,-7617", "--bots", "0", "--power", "0"]
+at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body b --hair ponytail --hair-colour #3B2A1A --skin 3", "0.6=set --temp traffic.live_road off", "2=camera.orbit 180 72 520", "4=traffic road busy"]
+shot = 50
+pick = false
+
+[[scene]]
+name = "live-road-tf5-jam"
+description = "After: the same stretch with Live traffic data on – the DGT's reported stationary jam westbound (km 60.5 – 60.0) as a queue at walking pace towards Icod while the eastbound side flows; \"Live traffic: Fuente: DGT\" in the HUD; a rider on a green gravel bike in a chevron kit"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-23372,-7617", "--bots", "0", "--power", "0"]
+at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body a --hair short --hair-colour #C9A26B --skin 2 --beard 1", "0.6=set --temp traffic.live_road on", "2=camera.orbit 180 72 520", "4=traffic road busy"]
+shot = 50
+pick = false
+
+[[scene]]
+name = "live-road-tf5-jam-video"
+description = "Video: the reported jam on the TF-5 (Live traffic data on, the DGT's feed) – cars and lorries creeping westbound in the queue, the other side flowing; a rider on a blue time-trial bike in a sash kit"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-23372,-7617", "--bots", "0", "--power", "0"]
+at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body b --hair ponytail --hair-colour #111111 --skin 5", "0.6=set --temp traffic.live_road on", "2=camera.orbit 150 38 110", "4=traffic road busy"]
+warmup = 30
+video = 8
+pick = false
+
+[[scene]]
+name = "live-road-tf82-closed"
+description = "A closed road: the TF-82 at El Tanque, closed both ways in the DGT's feed (roadworks, km 9.0 – 9.5) – no cars on it, the traffic around it; the rider may still ride it and is told \"Road closed: TF-82 - no cars here\"; a rider on a red road bike in a sash kit"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-25712,-7061", "--bots", "0", "--power", "150"]
+at = ["0.3=time 2026-11-28 12:00", "0.3=weather clear", "0.5=character --body a --hair ponytail --hair-colour #8D5524 --skin 4", "0.6=set --temp traffic.live_road on", "2=camera.orbit 20 30 25", "4=traffic road busy"]
+shot = 30
+pick = false

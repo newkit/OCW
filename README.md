@@ -1942,8 +1942,19 @@ host's (`ocw-server --traffic-control host|anyone|nobody`), in an event the
 organiser's (none unless the organiser asks, races included); a guest sees
 them dimmed with who decides. Road traffic is in the desktop app only;
 *Aircraft* (off, simulated, live) and *UFOs* (off, rare, often) are yours, in
-both apps; *Sound and live data* has the sounds, *Aircraft: live* and the
-dimmed *Live traffic data* row. **Aircraft: live** (spec 14 Phase 18, 18J)
+both apps; *Sound and live data* has the sounds, *Aircraft: live* and
+*Live traffic data*. **Live traffic data** (spec 14 Phase 18, 18K; desktop
+only) lays the live road events of the world's source over the simulated
+traffic: on Tenerife the closures, roadworks and reported jams of the
+Spanish traffic authority's DATEX II feed (DGT, CC BY, "Fuente: DGT" in the
+HUD while they apply) – the game server fetches it every two minutes while
+you ride with it on (the host decides in a shared ride), closed roads get no
+cars (you may still ride them; "Road closed ahead: TF-82 in 400 m"),
+roadworks and jams slow the cars down to their queue. Worlds without a
+source show the row dimmed ("no live data for this world yet"); when the feed
+does not answer the traffic follows the statistics again and the row says so.
+`OCW_LIVE_ROAD_OFFLINE=1` turns fetching off, `OCW_LIVE_ROAD_FILE=FEED.xml`
+uses a recorded feed. **Aircraft: live** (spec 14 Phase 18, 18J)
 shows the real aircraft around you: the game server (the desktop's own one in
 single player, the host's or the public server in a shared ride) asks
 [adsb.lol](https://adsb.lol) for the aircraft within 65 km about once a
@@ -2819,7 +2830,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `traffic.air` | off / simulated / live (simulated): aircraft in your sky, for you only (the same flights for every rider of a ride, from the server's air seed); live: the real aircraft from adsb.lol through the game server, the simulated sky while they cannot be had | at once |
 | `traffic.ufo` | off / rare / often (off): UFOs, for you only; never in events | at once |
 | `traffic.sound` | on / off (on): the sounds of vehicles and aircraft | at once |
-| `traffic.live_road` | on / off (off): live traffic data where a world has a source (none yet: shown greyed); desktop app only | at once |
+| `traffic.live_road` | on / off (off): live traffic data where a world has a source – Tenerife: the DGT's closures, roadworks and reported jams in the road traffic ("Fuente: DGT"); greyed elsewhere; desktop app only | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
@@ -5257,6 +5268,13 @@ Third-party assets keep their own licences, listed next to them:
   recorded answers the tests use are in
   [`services/server/src/live_air/fixtures/`](services/server/src/live_air/fixtures/manifest.toml)
   (ODbL, identities replaced).
+- Live road events (*Live traffic data*, Tenerife): the incidents of the
+  Dirección General de Tráfico's National Access Point (DATEX II v3.7,
+  [dataset](https://nap.dgt.es/en/dataset/incidencias-dgt-datex2-v3-7)) under
+  Creative Commons Attribution, credited in the app while they apply
+  ("Fuente: DGT"); the recorded excerpt the tests use is
+  [`services/server/src/live_road/fixtures/dgt-2026-11-28.xml`](services/server/src/live_road/fixtures/dgt-2026-11-28.xml)
+  (its header names the source, the licence and the changes).
 - UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
   into `ocw-desktop`: SIL Open Font License 1.1, see
   [`crates/ocw-render/assets/fonts/`](crates/ocw-render/assets/fonts/README.md).

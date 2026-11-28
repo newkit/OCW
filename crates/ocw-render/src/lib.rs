@@ -206,6 +206,9 @@ pub struct RideView {
     pub vehicle_cues: Vec<traffic::VehicleCue>,
     /// Road vehicles are heard (`traffic.enabled` and `traffic.sound`).
     pub vehicle_sound: bool,
+    /// The live road source's credit while its events apply to the road
+    /// traffic (spec 18E T13: "Fuente: DGT"; `None`: the statistics).
+    pub live_road_credit: Option<String>,
     /// The simulated aircraft (spec 14 Phase 18, T8; `None`: none drawn –
     /// `traffic.air off`, or no ride).
     pub air: Option<aircraft::AirView>,
@@ -373,6 +376,7 @@ impl RideView {
             parked: Vec::new(),
             vehicle_cues: Vec::new(),
             vehicle_sound: false,
+            live_road_credit: None,
             air: None,
             ufo: None,
         }

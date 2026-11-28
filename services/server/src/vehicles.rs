@@ -103,8 +103,8 @@ pub struct TrafficSent {
 
 /// The running road traffic of a session.
 pub(crate) struct RoadRun {
-    sim: TrafficSim,
-    net: Arc<RoadNetwork>,
+    pub(crate) sim: TrafficSim,
+    pub(crate) net: Arc<RoadNetwork>,
     region: Region,
     zone: Option<ocw_sky::Zone>,
     /// The demand's time, recomputed once a second.
@@ -120,7 +120,7 @@ pub(crate) struct RoadRun {
 /// connection has.
 #[derive(Default)]
 pub(crate) struct ServerVehicles {
-    run: Option<RoadRun>,
+    pub(crate) run: Option<RoadRun>,
     /// A route course's road as a network (no road graph: the test
     /// routes, route files), made once per route.
     route_net: Option<(u64, Arc<RoadNetwork>)>,
@@ -308,6 +308,10 @@ impl GameServer {
                 pending: Vec::new(),
                 parked,
             });
+            // Live road events already fetched hold from the first fill on
+            // (spec 18E T13): the vehicles spawn with their speeds.
+            let now = self.clock.real(self.session_time_s());
+            self.apply_live_road(now);
         }
         // The riders: bubbles around the connected ones, every rider on
         // the road as a road user.

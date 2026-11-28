@@ -594,6 +594,10 @@ impl super::TrafficSim {
             if out.len() >= 30 || metres > 2000.0 {
                 break;
             }
+            // A live closure (T13): the bus goes no farther.
+            if !self.rules[e].allows(VehicleClass::Bus, forward) {
+                break;
+            }
             let st = routing::make_step(&self.rules, VehicleClass::Bus, e, forward, factor);
             routing::link_turn(net, &mut out, &st);
             metres += net.geometry(e).length();

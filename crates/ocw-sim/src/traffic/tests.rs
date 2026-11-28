@@ -40,7 +40,7 @@ pub(super) fn graph(vertices: &[[f64; 2]], edges: &[(u32, u32, RoadClass)]) -> R
 
 /// An n × n grid of `block` m with tertiary roads, every third line a
 /// primary; vertex (i, j) is i + j·n.
-fn grid(n: u32, block: f64) -> RoadGraph {
+pub(super) fn grid(n: u32, block: f64) -> RoadGraph {
     let mut v = Vec::new();
     for j in 0..n {
         for i in 0..n {

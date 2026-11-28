@@ -7183,6 +7183,7 @@ dependencies = [
  "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
+ "quick-xml",
  "quinn",
  "rcgen",
  "rustls",

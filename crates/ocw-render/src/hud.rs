@@ -1357,13 +1357,23 @@ pub fn compact_conditions(view: &RideView) -> String {
 }
 
 /// " | Weather: MET Norway, CC BY 4.0" while the weather is real (spec
-/// §14 Phase 9, S7: the provider's credit stays on screen), else "".
+/// §14 Phase 9, S7: the provider's credit stays on screen), and " | Live
+/// traffic: Fuente: DGT" while live road events apply (18E T13), else "".
 pub fn attribution_suffix(view: &RideView) -> String {
-    view.weather
+    let weather = view
+        .weather
         .as_ref()
         .and_then(|w| w.attribution.as_deref())
         .map(|a| format!(" | {a}"))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // The live road events' credit while they apply (spec 18E T13, CC BY).
+    let road = view
+        .live_road_credit
+        .as_deref()
+        .filter(|a| !a.is_empty())
+        .map(|a| format!(" | Live traffic: {a}"))
+        .unwrap_or_default();
+    format!("{weather}{road}")
 }
 
 fn format_time(seconds: f64) -> String {

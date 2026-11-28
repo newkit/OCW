@@ -140,6 +140,9 @@ toml = "1"
 dirs = "6"
 serde_json = "1"
 ureq = "3"
+# The DGT's DATEX II feed, stream-parsed on the game server (spec 18E T13;
+# MIT): already in the tree through the Wayland scanner.
+quick-xml = "0.41"
 # Package signatures (spec §4.7). ed25519-dalek: BSD-3-Clause; sha2: MIT OR Apache-2.0.
 # Pure Rust, no default features (no OS randomness), so ocw-world stays wasm-safe.
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize", "fast"] }

@@ -779,7 +779,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "traffic.live_road",
         kind: Kind::Bool,
         default: "off",
-        description: "Live traffic data: live road events or density where the world has a suitable source (none yet: the traffic follows the statistics)",
+        description: "Live traffic data: live road events or density where the world has a suitable source (Tenerife: closures, roadworks and reported jams of the DGT; elsewhere the traffic follows the statistics)",
         scope: Scope::Live,
         apply: Apply::Command("traffic live_road {}"),
     },

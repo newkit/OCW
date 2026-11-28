@@ -22,6 +22,10 @@ pub mod hosting;
 // Live aircraft (spec 14 Phase 18, 18E T10): the session's feed (pure)
 // and the HTTP requests (native only, `live_air::http`).
 pub mod live_air;
+// Live road events (spec 14 Phase 18, 18E T13): the per-world sources, the
+// DGT's DATEX II feed (pure) and the HTTP requests (native only).
+pub mod live_road;
+mod live_road_server;
 pub mod local;
 // Real weather (spec §14 Phase 9, S7): the session's feed (pure) and the
 // HTTP requests (native only, `realweather::http`).
@@ -396,6 +400,14 @@ pub struct GameServer {
     live_air: live_air::LiveAirFeed,
     live_wish: BTreeSet<ConnectionId>,
     air_fetcher: Option<std::sync::Mutex<Box<dyn live_air::AirFetcher>>>,
+    /// Live road events (spec 14 Phase 18, 18E T13): the world's feed, the
+    /// connections whose riders want them, who performs the requests
+    /// (`None`: none – the browser's local server, most tests) and the
+    /// events in force on the traffic.
+    live_road: live_road::LiveRoadFeed,
+    road_wish: BTreeSet<ConnectionId>,
+    road_fetcher: Option<std::sync::Mutex<Box<dyn live_road::RoadFetcher>>>,
+    road_events: live_road_server::RoadEvents,
     /// (lat, lon) of the course's local metres.
     geo_origin: Option<(f64, f64)>,
     /// The season the leaves on the road lie in (spec 4.6.2 Q6), from the
@@ -623,6 +635,10 @@ impl GameServer {
             ),
             live_wish: BTreeSet::new(),
             air_fetcher: None,
+            live_road: live_road::LiveRoadFeed::new(geo_origin),
+            road_wish: BTreeSet::new(),
+            road_fetcher: None,
+            road_events: Default::default(),
             geo_origin,
             leaf_season: Default::default(),
             real_pressure_y_m: None,
@@ -723,6 +739,8 @@ impl GameServer {
     /// (the embedding knows it; spec §14 Phase 9, S7).
     pub fn set_geo_origin(&mut self, origin: Option<(f64, f64)>) {
         self.geo_origin = origin;
+        // The world's live road source (spec 18E T13).
+        self.live_road.set_place(origin);
     }
 
     /// The real weather's state, while it is on.
@@ -786,6 +804,9 @@ impl GameServer {
         self.vehicles.world_changed();
         // The live aircraft were for the old place (18E T10).
         self.live_air.world_changed();
+        // … and the live road events for the old graph (18E T13).
+        self.live_road.set_place(self.geo_origin);
+        self.road_events = Default::default();
         let conns: Vec<ConnectionId> = std::mem::take(&mut self.riders).into_keys().collect();
         self.event_dirty = false;
         self.pending_world = None;
@@ -1231,6 +1252,7 @@ impl GameServer {
         self.voice_hearing.remove(&conn);
         self.not_hearing_you.remove(&conn);
         self.live_wish.remove(&conn);
+        self.road_wish.remove(&conn);
         self.directed.retain(|(c, _)| *c != conn);
         self.vehicles.disconnect(conn);
         if let Some(rider) = self.riders.remove(&conn) {
@@ -1334,6 +1356,10 @@ impl GameServer {
             (C::Traffic(req), Some(rider)) => Some(self.traffic_request(rider, &req)),
             (C::LiveAir(w), Some(_)) => {
                 self.live_air_wish(conn, w.on);
+                None
+            }
+            (C::LiveRoad(w), Some(_)) => {
+                self.live_road_wish(conn, w.on);
                 None
             }
             (C::Damage(req), Some(rider)) => {
@@ -2489,6 +2515,7 @@ impl GameServer {
         self.weather.tick(t);
         self.real_weather_tick(t);
         self.live_air_tick(t);
+        self.live_road_tick(t);
         let mut out = Vec::new();
         // The event: at once on a change, and at 2 Hz while a race or time
         // trial runs.

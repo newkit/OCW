@@ -254,6 +254,8 @@ pub struct ClientCore {
     parked: Option<Arc<ocw_sim::traffic::parked::ParkedCars>>,
     /// Live aircraft (spec 14 Phase 18, 18E T10).
     live_air: crate::live_air::LiveAirClient,
+    /// Live road events (spec 18E T13).
+    live_road: crate::live_road::LiveRoadClient,
     avoid: ocw_sim::avoid::AvoidState,
     was_down: bool,
     proximity_cue: bool,
@@ -376,6 +378,7 @@ impl ClientCore {
             vehicles: Default::default(),
             parked: None,
             live_air: Default::default(),
+            live_road: Default::default(),
             avoid: Default::default(),
             was_down: false,
             proximity_cue: false,
@@ -842,6 +845,7 @@ impl ClientCore {
                 // A new session: its server sends the vehicles again.
                 self.vehicles.clear();
                 self.live_air.on_welcome();
+                self.live_road.on_welcome();
                 self.damage.on_welcome(&w);
                 // A ghost to the others again for the first seconds, as
                 // the server keeps a joining rider (spec §14 Phase 12A).
@@ -894,6 +898,10 @@ impl ClientCore {
                 self.live_air.on_update(&u);
                 None
             }
+            S::LiveRoad(u) => {
+                self.live_road.on_update(&u);
+                None
+            }
             S::NotHearingYou(n) => {
                 self.not_hearing_you = n.riders.into_iter().map(RiderId).collect();
                 None
@@ -917,6 +925,7 @@ impl ClientCore {
                 self.rider_id = None;
                 self.vehicles.clear();
                 self.live_air.clear();
+                self.live_road.on_welcome();
                 Some(Notice::WorldChange(c))
             }
             S::Event(e) => {
@@ -1873,7 +1882,13 @@ impl ClientCore {
             _ => own
                 .dead_end_ahead(d)
                 .filter(|m| *m < DEAD_END_WARNING_M)
-                .map(|m| format!("Dead end in {:.0} m", round(m.max(0.0)))),
+                .map(|m| format!("Dead end in {:.0} m", round(m.max(0.0))))
+                // A live closure on the way ahead (spec 18E T13): only the
+                // cars are kept off.
+                .or_else(|| {
+                    self.live_road
+                        .closure_ahead(own, own.network().fingerprint(), d)
+                }),
         }
     }
 
@@ -2392,6 +2407,18 @@ impl ClientCore {
     pub fn live_air_wish(&mut self, wanted: bool) -> Option<Vec<u8>> {
         self.rider_id?;
         self.live_air.wish_message(wanted)
+    }
+
+    /// The live road events as the server sent them (spec 18E T13).
+    pub fn live_road(&self) -> &crate::live_road::LiveRoadClient {
+        &self.live_road
+    }
+
+    /// The `LiveRoadWish` to send for the rider's *Live traffic data*,
+    /// when it changed or the session is new (spec 18E T13).
+    pub fn live_road_wish(&mut self, wanted: bool) -> Option<Vec<u8>> {
+        self.rider_id?;
+        self.live_road.wish_message(wanted)
     }
 
     /// The session's traffic as the server sent it (spec 14 Phase 18).

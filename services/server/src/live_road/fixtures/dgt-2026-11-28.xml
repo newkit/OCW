@@ -1,0 +1,1737 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Recorded excerpt of the DGT's incident feed for the live road events
+  tests (spec 14 Phase 18, 18E T13; services/server/src/live_road/tests.rs).
+  Source: https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml
+  (DGT National Access Point, dataset "Incidencias DGT DATEX2 v3.7"),
+  our own fetch on 2026-11-28 01:48 UTC (publicationTime 02:47:45 +01:00),
+  455 situations for Spain; kept: every situation on the Canary Islands
+  (Tenerife, Gran Canaria, La Palma), two from the mainland (Asturias,
+  Cantabria) as they were, and one made for the test (below).
+  Licence: Creative Commons Attribution (named on the dataset page,
+  https://nap.dgt.es/en/dataset/incidencias-dgt-datex2-v3-7, free of
+  charge). Attribution: "Fuente: DGT".
+  Changes: situations left out; situation 9000001 is the Asturias record
+  25901572 copied onto the TF-5 east of Icod de los Vinos (westbound,
+  stationary traffic, km 60.5 - 60.0, its times and places changed): the
+  feed held no reported jam on Tenerife at the time of the fetch.
+-->
+<d2:payload xsi:type="sit:SituationPublication" lang="es" modelBaseVersion="3" profileName="DGT (Spain) Profile RTTI SituationPublication" profileVersion="3.7_3.1" xsi:schemaLocation="http://levelC/schema/3/d2Payload https://nap.dgt.es/datex2/v3/dgt/SituationPublication/xsd/3.7_1.0/LevelC_3_D2Payload.xsd" xmlns:com="http://levelC/schema/3/common" xmlns:loc="http://levelC/schema/3/locationReferencing" xmlns:cse="http://levelC/schema/3/commonSpanishExtension" xmlns:sse="http://levelC/schema/3/situationSpanishExtension" xmlns:d2="http://levelC/schema/3/d2Payload" xmlns:sit="http://levelC/schema/3/situation" xmlns:ns3="http://levelC/schema/3/locationExtension" xmlns:lse="http://levelC/schema/3/locationReferencingSpanishExtension" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <com:feedDescription>
+        <com:values>
+            <com:value>Publicación de incidencias de trafico activas en las carreteras Españolas.</com:value>
+        </com:values>
+    </com:feedDescription>
+    <com:publicationTime>2026-11-28T02:47:45.268+01:00</com:publicationTime>
+    <com:publicationCreator>
+        <com:country>es</com:country>
+        <com:nationalIdentifier>DGT</com:nationalIdentifier>
+    </com:publicationCreator>
+    
+    <sit:situation id="8212884">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="11374304" version="1">
+            <sit:situationRecordCreationTime>2024-12-23T11:09:11.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2024-12-23T11:09:11.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2024-12-23T11:09:11.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>rightLane</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadDestination>Haría</loc:roadDestination>
+                        <loc:roadName>LZ-10</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>unknown</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>29.144152</loc:latitude>
+                            <loc:longitude>-13.499893</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>21.37</lse:kilometerPoint>
+                                <lse:municipality>Haría</lse:municipality>
+                                <lse:province>Las Palmas</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>29.127375</loc:latitude>
+                            <loc:longitude>-13.514344</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>16.8</lse:kilometerPoint>
+                                <lse:municipality>Haría</lse:municipality>
+                                <lse:province>Las Palmas</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>positive</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+                <com:grossWeightCharacteristic>
+                    <com:comparisonOperator>greaterThan</com:comparisonOperator>
+                    <com:grossVehicleWeight>5.5</com:grossVehicleWeight>
+                    <com:typeOfWeight>maximumPermitted</com:typeOfWeight>
+                </com:grossWeightCharacteristic>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>weightRestrictionInOperation</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="11374305" version="1">
+            <sit:situationRecordCreationTime>2024-12-23T11:09:11.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2024-12-23T11:09:11.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2024-12-23T11:09:11.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>rightLane</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadDestination>Haría</loc:roadDestination>
+                        <loc:roadName>LZ-10</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>unknown</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>29.144152</loc:latitude>
+                            <loc:longitude>-13.499893</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>21.37</lse:kilometerPoint>
+                                <lse:municipality>Haría</lse:municipality>
+                                <lse:province>Las Palmas</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>29.127375</loc:latitude>
+                            <loc:longitude>-13.514344</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>16.8</lse:kilometerPoint>
+                                <lse:municipality>Haría</lse:municipality>
+                                <lse:province>Las Palmas</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>positive</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+                <com:lengthCharacteristic>
+                    <com:comparisonOperator>greaterThan</com:comparisonOperator>
+                    <com:vehicleLength>10.0</com:vehicleLength>
+                </com:lengthCharacteristic>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>doNotUseSpecifiedLanesOrCarriageways</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="17264754">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="21185369" version="2">
+            <sit:situationRecordCreationReference>TRZ_OB20260311/006496.2981932.2.2</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-06-22T11:06:15.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-06-22T11:06:15.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-06-22T11:06:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-03-11T00:00:00.000+01:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-82</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>northWestBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.354633</loc:latitude>
+                            <loc:longitude>-16.784475</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>9.0</lse:kilometerPoint>
+                                <lse:municipality>El Tanque</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.352394</loc:latitude>
+                            <loc:longitude>-16.780691</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>9.5</lse:kilometerPoint>
+                                <lse:municipality>El Tanque</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+                <com:widthCharacteristic>
+                    <com:comparisonOperator>greaterThan</com:comparisonOperator>
+                    <com:vehicleWidth>1.0</com:vehicleWidth>
+                </com:widthCharacteristic>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>doNotUseSpecifiedLanesOrCarriageways</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="21185368" version="3">
+            <sit:situationRecordCreationReference>TRZ_OB20260311/006496.2981932.0.1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-06-22T11:06:18.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-06-22T11:06:18.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-06-22T11:06:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-03-11T00:00:00.000+01:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-82</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>southEastBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.352394</loc:latitude>
+                            <loc:longitude>-16.780691</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>9.5</lse:kilometerPoint>
+                                <lse:municipality>El Tanque</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.354633</loc:latitude>
+                            <loc:longitude>-16.784475</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>9.0</lse:kilometerPoint>
+                                <lse:municipality>El Tanque</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>positive</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+                <com:widthCharacteristic>
+                    <com:comparisonOperator>greaterThan</com:comparisonOperator>
+                    <com:vehicleWidth>1.0</com:vehicleWidth>
+                </com:widthCharacteristic>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>doNotUseSpecifiedLanesOrCarriageways</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="17678388">
+        <sit:overallSeverity>highest</sit:overallSeverity>
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="21629371" version="1">
+            <sit:situationRecordCreationTime>2026-03-26T14:49:49.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-03-26T14:49:49.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:severity>highest</sit:severity>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-03-26T14:49:49.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>environmentalObstruction</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:environmentalObstructionType>rockfalls</sit:environmentalObstructionType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>GC-605</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>unknown</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>27.939915</loc:latitude>
+                            <loc:longitude>-15.635939</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>5.6</lse:kilometerPoint>
+                                <lse:municipality>Tejeda</lse:municipality>
+                                <lse:province>Las Palmas</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>27.95788</loc:latitude>
+                            <loc:longitude>-15.610431</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.0</lse:kilometerPoint>
+                                <lse:municipality>Tejeda</lse:municipality>
+                                <lse:province>Las Palmas</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>both</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>roadClosed</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="20405610">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="24529720" version="3">
+            <sit:situationRecordCreationReference>TRZ_OB20260622/018549.3108787.2.1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-08-03T09:41:03.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-08-03T09:41:03.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-08-03T09:41:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-06-30T00:00:00.000+02:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-5</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>eastBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.3587</loc:latitude>
+                            <loc:longitude>-16.760796</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>61.0</lse:kilometerPoint>
+                                <lse:municipality>Garachico</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.357725</loc:latitude>
+                            <loc:longitude>-16.773008</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>62.1</lse:kilometerPoint>
+                                <lse:municipality>El Tanque</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>newRoadworksLayout</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:SpeedManagement" id="24529718" version="2">
+            <sit:situationRecordCreationReference>TRZ_OB20260622/018549.3108786.0.1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-08-03T09:41:00.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-08-03T09:41:00.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-08-03T09:40:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-06-30T00:00:00.000+02:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-5</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>westBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.357725</loc:latitude>
+                            <loc:longitude>-16.773008</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>62.1</lse:kilometerPoint>
+                                <lse:municipality>El Tanque</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.3587</loc:latitude>
+                            <loc:longitude>-16.760796</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>61.0</lse:kilometerPoint>
+                                <lse:municipality>Garachico</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>positive</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:speedManagementType>speedRestrictionInOperation</sit:speedManagementType>
+            <sit:temporarySpeedLimit>1.0</sit:temporarySpeedLimit>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:SpeedManagement" id="24529719" version="5">
+            <sit:situationRecordCreationReference>TRZ_OB20260622/018549.3108786.2.2</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-08-03T09:41:18.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-08-03T09:41:18.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-08-03T09:41:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-06-30T00:00:00.000+02:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-5</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>eastBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.3587</loc:latitude>
+                            <loc:longitude>-16.760796</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>61.0</lse:kilometerPoint>
+                                <lse:municipality>Garachico</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.357725</loc:latitude>
+                            <loc:longitude>-16.773008</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>62.1</lse:kilometerPoint>
+                                <lse:municipality>El Tanque</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:speedManagementType>speedRestrictionInOperation</sit:speedManagementType>
+            <sit:temporarySpeedLimit>1.0</sit:temporarySpeedLimit>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="20406797">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:SpeedManagement" id="24530931" version="2">
+            <sit:situationRecordCreationReference>TRZ_OB20260622/018556.3108808.0.1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-06-23T10:57:38.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-06-23T10:57:38.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-06-23T10:57:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-06-21T00:00:00.000+02:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:infrastructureDescriptor>onRoundabout</loc:infrastructureDescriptor>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-375</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>southEastBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.290081</loc:latitude>
+                            <loc:longitude>-16.810015</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.5</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.29113</loc:latitude>
+                            <loc:longitude>-16.81388</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.0</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>positive</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:speedManagementType>speedRestrictionInOperation</sit:speedManagementType>
+            <sit:temporarySpeedLimit>1.0</sit:temporarySpeedLimit>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:SpeedManagement" id="24530932" version="4">
+            <sit:situationRecordCreationReference>TRZ_OB20260622/018556.3108808.2.2</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-06-23T10:57:46.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-06-23T10:57:46.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-06-23T10:57:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-06-21T00:00:00.000+02:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:infrastructureDescriptor>onRoundabout</loc:infrastructureDescriptor>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-375</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>westBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.29113</loc:latitude>
+                            <loc:longitude>-16.81388</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.0</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.290121</loc:latitude>
+                            <loc:longitude>-16.809832</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.5</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:speedManagementType>speedRestrictionInOperation</sit:speedManagementType>
+            <sit:temporarySpeedLimit>1.0</sit:temporarySpeedLimit>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="24530929" version="5">
+            <sit:situationRecordCreationReference>TRZ_OB20260622/018556.3108807.0.1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-06-23T10:57:59.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-06-23T10:57:59.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-06-23T10:57:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-06-21T00:00:00.000+02:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:infrastructureDescriptor>onRoundabout</loc:infrastructureDescriptor>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-375</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>southEastBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.290081</loc:latitude>
+                            <loc:longitude>-16.810015</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.5</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.29113</loc:latitude>
+                            <loc:longitude>-16.81388</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.0</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>positive</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>intermittentShortTermClosures</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="24530930" version="3">
+            <sit:situationRecordCreationReference>TRZ_OB20260622/018556.3108807.2.2</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-06-23T10:57:42.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-06-23T10:57:42.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-06-23T10:57:00.000+02:00</com:overallStartTime>
+                    <com:overallEndTime>2027-06-21T00:00:00.000+02:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:infrastructureDescriptor>onRoundabout</loc:infrastructureDescriptor>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-375</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>westBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.29113</loc:latitude>
+                            <loc:longitude>-16.81388</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.0</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.290121</loc:latitude>
+                            <loc:longitude>-16.809832</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>0.5</lse:kilometerPoint>
+                                <lse:municipality>Santiago del Teide</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>intermittentShortTermClosures</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="23226585">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="27492313" version="2">
+            <sit:situationRecordCreationTime>2026-09-04T13:05:01.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-09-04T13:05:01.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-09-04T13:00:00.000+02:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadOrCarriagewayOrLaneManagement</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadOrCarriagewayOrLaneManagementType>other</sit:roadOrCarriagewayOrLaneManagementType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-436</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>unknown</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.300323</loc:latitude>
+                            <loc:longitude>-16.827164</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>20.0</lse:kilometerPoint>
+                                <lse:municipality>Buenavista del Norte</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.32225</loc:latitude>
+                            <loc:longitude>-16.847021</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>10.6</lse:kilometerPoint>
+                                <lse:municipality>Buenavista del Norte</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>both</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType _extendedValue="nonAuthorizedVehicle">_extended</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>doNotUseSpecifiedLanesOrCarriageways</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="25090678">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="29468134" version="1">
+            <sit:situationRecordCreationTime>2026-10-28T09:33:39.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-10-28T09:33:39.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-10-28T09:33:39.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>leftLane</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>LP-3</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>southBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.656359</loc:latitude>
+                            <loc:longitude>-17.816822</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>15.25</lse:kilometerPoint>
+                                <lse:municipality>Breña Alta</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.657701</loc:latitude>
+                            <loc:longitude>-17.817822</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>15.0</lse:kilometerPoint>
+                                <lse:municipality>Breña Alta</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>positive</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>laneClosures</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="25125611">
+        <sit:overallSeverity>highest</sit:overallSeverity>
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="29506122" version="1">
+            <sit:situationRecordCreationTime>2026-10-29T09:53:56.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-10-29T09:53:56.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:severity>highest</sit:severity>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-10-29T09:53:56.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>environmentalObstruction</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:environmentalObstructionType>rockfalls</sit:environmentalObstructionType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-445</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>unknown</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.363974</loc:latitude>
+                            <loc:longitude>-16.887419</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>4.6</lse:kilometerPoint>
+                                <lse:municipality>Buenavista del Norte</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.36439</loc:latitude>
+                            <loc:longitude>-16.886517</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>4.5</lse:kilometerPoint>
+                                <lse:municipality>Buenavista del Norte</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>both</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>roadClosed</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="26034033">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:GenericSituationRecord" id="30481452" version="1">
+            <sit:situationRecordCreationReference>GRU_action.0344e42b-cef1-458b-b525-cdb242eaf80f_9</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-11-28T01:59:20.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-11-28T01:59:20.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT3.0</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-11-28T01:59:20.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>vehicleObstruction</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:vehicleObstructionType>vehicleStuck</sit:vehicleObstructionType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:PointLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-342</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegPointLocation xsi:type="loc:TpegSimplePoint">
+                    <loc:tpegDirection>eastBound</loc:tpegDirection>
+                    <loc:tpegSimplePointLocationType>nonLinkedPoint</loc:tpegSimplePointLocationType>
+                    <loc:point xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.37446</loc:latitude>
+                            <loc:longitude>-16.65226</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>12.781</lse:kilometerPoint>
+                                <lse:municipality>La Guancha</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:point>
+                    <loc:_tpegSimplePointExtension>
+                        <loc:extendedTpegSimplePoint>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegSimplePoint>
+                    </loc:_tpegSimplePointExtension>
+                </loc:tpegPointLocation>
+            </sit:locationReference>
+            <sit:genericSituationRecordName>incident</sit:genericSituationRecordName>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="26034133">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:GenericSituationRecord" id="30481552" version="1">
+            <sit:situationRecordCreationReference>V16_r8YMRkodyDh4-1795828382292_1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-11-28T02:14:39.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-11-28T02:14:39.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT3.0</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-11-28T02:14:39.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>vehicleObstruction</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:vehicleObstructionType>vehicleStuck</sit:vehicleObstructionType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:PointLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:roadInformation>
+                        <loc:roadName>GC-1 AM</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegPointLocation xsi:type="loc:TpegSimplePoint">
+                    <loc:tpegDirection>southEastBound</loc:tpegDirection>
+                    <loc:tpegSimplePointLocationType>nonLinkedPoint</loc:tpegSimplePointLocationType>
+                    <loc:point xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.108875</loc:latitude>
+                            <loc:longitude>-15.415088</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>4.459</lse:kilometerPoint>
+                                <lse:municipality>Las Palmas de Gran Canaria</lse:municipality>
+                                <lse:province>Las Palmas</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:point>
+                    <loc:_tpegSimplePointExtension>
+                        <loc:extendedTpegSimplePoint>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegSimplePoint>
+                    </loc:_tpegSimplePointExtension>
+                </loc:tpegPointLocation>
+            </sit:locationReference>
+            <sit:genericSituationRecordName>incident</sit:genericSituationRecordName>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="26034253">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:GenericSituationRecord" id="30481672" version="1">
+            <sit:situationRecordCreationReference>GRU_action.01161bb1-b698-420b-b829-f2638cda8c2a_9</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-11-28T02:36:16.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-11-28T02:36:16.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT3.0</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-11-28T02:36:16.000+01:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>vehicleObstruction</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:vehicleObstructionType>vehicleStuck</sit:vehicleObstructionType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:PointLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-13</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegPointLocation xsi:type="loc:TpegSimplePoint">
+                    <loc:tpegDirection>southBound</loc:tpegDirection>
+                    <loc:tpegSimplePointLocationType>nonLinkedPoint</loc:tpegSimplePointLocationType>
+                    <loc:point xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.48702</loc:latitude>
+                            <loc:longitude>-16.31162</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>1.916</lse:kilometerPoint>
+                                <lse:municipality>San Cristóbal de La Laguna</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:point>
+                    <loc:_tpegSimplePointExtension>
+                        <loc:extendedTpegSimplePoint>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegSimplePoint>
+                    </loc:_tpegSimplePointExtension>
+                </loc:tpegPointLocation>
+            </sit:locationReference>
+            <sit:genericSituationRecordName>incident</sit:genericSituationRecordName>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="17513389">
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:RoadOrCarriagewayOrLaneManagement" id="21451454" version="2">
+            <sit:situationRecordCreationReference>TRZ_OB20260319/007488.2992937.2.1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-03-20T14:24:19.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-03-20T14:24:19.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-03-20T14:24:00.000+01:00</com:overallStartTime>
+                    <com:overallEndTime>2027-03-19T20:50:00.000+01:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>A-67</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>westBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>43.394806</loc:latitude>
+                            <loc:longitude>-4.0121098</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Cantabria</lse:autonomousCommunity>
+                                <lse:kilometerPoint>187.9</lse:kilometerPoint>
+                                <lse:municipality>Polanco</lse:municipality>
+                                <lse:province>Cantabria</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>43.39755</loc:latitude>
+                            <loc:longitude>-4.004398</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Cantabria</lse:autonomousCommunity>
+                                <lse:kilometerPoint>188.6</lse:kilometerPoint>
+                                <lse:municipality>Miengo</lse:municipality>
+                                <lse:province>Cantabria</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+                <com:widthCharacteristic>
+                    <com:comparisonOperator>greaterThan</com:comparisonOperator>
+                    <com:vehicleWidth>2.0</com:vehicleWidth>
+                </com:widthCharacteristic>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:roadOrCarriagewayOrLaneManagementType>doNotUseSpecifiedLanesOrCarriageways</sit:roadOrCarriagewayOrLaneManagementType>
+        </sit:situationRecord>
+        <sit:situationRecord xsi:type="sit:SpeedManagement" id="21451455" version="3">
+            <sit:situationRecordCreationReference>TRZ_OB20260319/007488.2992941.2.1</sit:situationRecordCreationReference>
+            <sit:situationRecordCreationTime>2026-03-20T14:24:22.000+01:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-03-20T14:24:22.000+01:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-03-20T14:24:00.000+01:00</com:overallStartTime>
+                    <com:overallEndTime>2027-03-19T20:50:00.000+01:00</com:overallEndTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>roadMaintenance</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:roadMaintenanceType>roadworks</sit:roadMaintenanceType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>A-67</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>westBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>43.394806</loc:latitude>
+                            <loc:longitude>-4.0121098</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Cantabria</lse:autonomousCommunity>
+                                <lse:kilometerPoint>187.9</lse:kilometerPoint>
+                                <lse:municipality>Polanco</lse:municipality>
+                                <lse:province>Cantabria</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>43.39755</loc:latitude>
+                            <loc:longitude>-4.004398</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Cantabria</lse:autonomousCommunity>
+                                <lse:kilometerPoint>188.6</lse:kilometerPoint>
+                                <lse:municipality>Miengo</lse:municipality>
+                                <lse:province>Cantabria</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:complianceOption>mandatory</sit:complianceOption>
+            <sit:forVehiclesWithCharacteristicsOf>
+                <com:vehicleType>anyVehicle</com:vehicleType>
+            </sit:forVehiclesWithCharacteristicsOf>
+            <sit:speedManagementType>speedRestrictionInOperation</sit:speedManagementType>
+            <sit:temporarySpeedLimit>2.0</sit:temporarySpeedLimit>
+        </sit:situationRecord>
+    </sit:situation>
+    <sit:situation id="21704121">
+        <sit:overallSeverity>low</sit:overallSeverity>
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:AbnormalTraffic" id="25901572" version="1">
+            <sit:situationRecordCreationTime>2026-07-25T09:59:47.000+02:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-07-25T09:59:47.000+02:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:severity>low</sit:severity>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-07-25T09:59:47.000+02:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>environmentalObstruction</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:environmentalObstructionType>rockfalls</sit:environmentalObstructionType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>AS-15</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>unknown</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>43.29533</loc:latitude>
+                            <loc:longitude>-6.3457556</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Asturias, Principado de</lse:autonomousCommunity>
+                                <lse:kilometerPoint>28.0</lse:kilometerPoint>
+                                <lse:municipality>Tinéu</lse:municipality>
+                                <lse:province>Asturias</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>43.313194</loc:latitude>
+                            <loc:longitude>-6.311501</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Asturias, Principado de</lse:autonomousCommunity>
+                                <lse:kilometerPoint>24.0</lse:kilometerPoint>
+                                <lse:municipality>Tinéu</lse:municipality>
+                                <lse:province>Asturias</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>both</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:abnormalTrafficType>slowTraffic</sit:abnormalTrafficType>
+        </sit:situationRecord>
+    </sit:situation>
+        <!-- made for the test: see the header -->
+    <sit:situation id="9000001">
+        <sit:overallSeverity>low</sit:overallSeverity>
+        <sit:headerInformation>
+            <com:informationStatus>real</com:informationStatus>
+        </sit:headerInformation>
+        <sit:situationRecord xsi:type="sit:AbnormalTraffic" id="9000002" version="1">
+            <sit:situationRecordCreationTime>2026-11-28T01:30:00.000+00:00</sit:situationRecordCreationTime>
+            <sit:situationRecordVersionTime>2026-11-28T01:30:00.000+00:00</sit:situationRecordVersionTime>
+            <sit:probabilityOfOccurrence>certain</sit:probabilityOfOccurrence>
+            <sit:severity>low</sit:severity>
+            <sit:source>
+                <com:sourceIdentification>DGT</com:sourceIdentification>
+            </sit:source>
+            <sit:validity>
+                <com:validityStatus>active</com:validityStatus>
+                <com:validityTimeSpecification>
+                    <com:overallStartTime>2026-11-28T01:30:00.000+00:00</com:overallStartTime>
+                </com:validityTimeSpecification>
+            </sit:validity>
+            <sit:cause>
+                <sit:causeType>environmentalObstruction</sit:causeType>
+                <sit:detailedCauseType>
+                    <sit:environmentalObstructionType>rockfalls</sit:environmentalObstructionType>
+                </sit:detailedCauseType>
+            </sit:cause>
+            <sit:locationReference xsi:type="loc:SingleRoadLinearLocation">
+                <loc:supplementaryPositionalDescription>
+                    <loc:carriageway>
+                        <loc:carriageway>unspecifiedCarriageway</loc:carriageway>
+                        <loc:lane>
+                            <loc:laneUsage>allLanesCompleteCarriageway</loc:laneUsage>
+                        </loc:lane>
+                    </loc:carriageway>
+                    <loc:roadInformation>
+                        <loc:roadName>TF-5</loc:roadName>
+                    </loc:roadInformation>
+                </loc:supplementaryPositionalDescription>
+                <loc:tpegLinearLocation>
+                    <loc:tpegDirection>westBound</loc:tpegDirection>
+                    <loc:tpegLinearLocationType>segment</loc:tpegLinearLocationType>
+                    <loc:to xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.358690</loc:latitude>
+                            <loc:longitude>-16.760900</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>60.5</lse:kilometerPoint>
+                                <lse:municipality>Icod de los Vinos</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:to>
+                    <loc:from xsi:type="loc:TpegNonJunctionPoint">
+                        <loc:pointCoordinates>
+                            <loc:latitude>28.358300</loc:latitude>
+                            <loc:longitude>-16.756600</loc:longitude>
+                        </loc:pointCoordinates>
+                        <loc:_tpegNonJunctionPointExtension>
+                            <loc:extendedTpegNonJunctionPoint>
+                                <lse:autonomousCommunity>Canarias</lse:autonomousCommunity>
+                                <lse:kilometerPoint>60.0</lse:kilometerPoint>
+                                <lse:municipality>Icod de los Vinos</lse:municipality>
+                                <lse:province>Santa Cruz de Tenerife</lse:province>
+                            </loc:extendedTpegNonJunctionPoint>
+                        </loc:_tpegNonJunctionPointExtension>
+                    </loc:from>
+                    <loc:_tpegLinearLocationExtension>
+                        <loc:extendedTpegLinearLocation>
+                            <lse:tpegDirectionRoad>negative</lse:tpegDirectionRoad>
+                        </loc:extendedTpegLinearLocation>
+                    </loc:_tpegLinearLocationExtension>
+                </loc:tpegLinearLocation>
+            </sit:locationReference>
+            <sit:abnormalTrafficType>stationaryTraffic</sit:abnormalTrafficType>
+        </sit:situationRecord>
+    </sit:situation>
+</d2:payload>

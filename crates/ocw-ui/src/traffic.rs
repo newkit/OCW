@@ -14,7 +14,7 @@ use clap::{Arg, Command};
 use ocw_client::client::ClientCore;
 use ocw_client::live_air::LiveState;
 use ocw_client::menu::model::Platform;
-use ocw_client::menu::traffic::{LIVE_ROAD_NONE, TrafficMenuInfo};
+use ocw_client::menu::traffic::TrafficMenuInfo;
 use ocw_core::traffic::{AirTraffic, DriverManners, RoadRules, RoadTraffic, Ufos, ViewChoice};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 
@@ -29,7 +29,7 @@ pub struct TrafficSettings {
     pub road: RoadRules,
     /// `traffic.enabled`, `traffic.air`, `traffic.ufo`, `traffic.sound`.
     pub view: ViewChoice,
-    /// `traffic.live_road` (Q5: no world has a source yet).
+    /// `traffic.live_road` (Q5; T13: Tenerife has a source, the DGT).
     pub live_road: bool,
 }
 
@@ -78,6 +78,9 @@ pub fn live_air_state(world: &World) -> Option<LiveState> {
 /// What the Settings → Traffic page shows of the session.
 pub fn menu_info(world: &World, platform: Platform) -> TrafficMenuInfo {
     let live_air = live_air_state(world);
+    let wants_road = world
+        .get_resource::<TrafficSettings>()
+        .is_some_and(|s| s.live_road);
     match crate::client(world) {
         Some(c) if c.rider_id().is_some() => TrafficMenuInfo {
             platform,
@@ -85,11 +88,56 @@ pub fn menu_info(world: &World, platform: Platform) -> TrafficMenuInfo {
             may_change: c.may_change_traffic(),
             decided_by: c.traffic().decided_by(c.rider_id(), c.host_rider()),
             live_air,
+            live_road: c.live_road().row(wants_road),
         },
         _ => TrafficMenuInfo {
             live_air,
             ..TrafficMenuInfo::alone(platform)
         },
+    }
+}
+
+/// The world's live road data in words (spec 18E T13): its source and
+/// credit, live or why not.
+fn live_road_words(world: &World, wanted: bool) -> String {
+    use ocw_client::live_road::LiveRoadRow as R;
+    let row = crate::client(world)
+        .filter(|c| c.rider_id().is_some())
+        .map(|c| c.live_road().row(wanted))
+        .unwrap_or_default();
+    match row {
+        R::Unknown => "known in a ride".into(),
+        R::NoSource(why) | R::Unavailable(why) => why,
+        R::Available { attribution, what } => format!("{what} – {attribution}"),
+        R::Live {
+            attribution,
+            events,
+        } => format!("live: {events} edge events – {attribution}"),
+        R::Waiting { attribution, note } => format!("{note} – {attribution}"),
+    }
+}
+
+/// Tells the server whether the rider wants live road data (spec 18E
+/// T13), after every Welcome and when it changed (desktop only, Q9), and
+/// puts the source's credit in the view while its events apply.
+fn live_road_wish(world: &mut World) {
+    if platform(world) != Platform::Desktop {
+        return;
+    }
+    let wanted = world
+        .get_resource::<TrafficSettings>()
+        .is_some_and(|s| s.live_road);
+    let msg = crate::client_mut(world).and_then(|mut c| c.live_road_wish(wanted));
+    if let Some(msg) = msg {
+        crate::send(world, msg);
+    }
+    let credit = crate::client(world)
+        .and_then(|c| c.live_road().attribution().map(str::to_owned))
+        .filter(|_| wanted);
+    if let Some(mut v) = world.get_resource_mut::<ocw_render::RideView>()
+        && v.live_road_credit != credit
+    {
+        v.live_road_credit = credit;
     }
 }
 
@@ -172,8 +220,9 @@ pub fn summary(world: &World) -> String {
     }
     if platform(world) == Platform::Desktop {
         out.push(format!(
-            "live traffic data: {} ({LIVE_ROAD_NONE})",
-            if s.live_road { "on" } else { "off" }
+            "live traffic data: {} ({})",
+            if s.live_road { "on" } else { "off" },
+            live_road_words(world, s.live_road)
         ));
     }
     out.join("\n")
@@ -276,8 +325,9 @@ pub fn run(world: &mut World, what: Option<&str>, value: Option<&str>) -> Result
         "live_road" => {
             s.live_road = on_off(value)?;
             Some(format!(
-                "live traffic data {} ({LIVE_ROAD_NONE})",
-                if s.live_road { "on" } else { "off" }
+                "live traffic data {} ({})",
+                if s.live_road { "on" } else { "off" },
+                live_road_words(world, s.live_road)
             ))
         }
         _ => return Err(format!("traffic: one of {}", WHAT.join(", "))),
@@ -533,6 +583,8 @@ impl Plugin for TrafficPlugin {
         crate::configure_sets(app);
         // Road vehicles heard or not (T7: `traffic.enabled`, `traffic.sound`).
         app.add_systems(Update, vehicle_sound.in_set(crate::ViewExtrasSet));
+        // Live road events (T13): the wish and the credit.
+        app.add_systems(Update, live_road_wish.in_set(crate::ViewExtrasSet));
         // The simulated aircraft (T8).
         if !app.is_plugin_added::<crate::air::AirPlugin>() {
             app.add_plugins(crate::air::AirPlugin);
@@ -631,7 +683,10 @@ mod tests {
             "{shown}"
         );
         assert!(shown.contains("UFOs: often"), "{shown}");
-        assert!(shown.contains(LIVE_ROAD_NONE), "{shown}");
+        assert!(
+            shown.contains("live traffic data: off (known in a ride)"),
+            "{shown}"
+        );
     }
 
     /// Q9: no road traffic in the browser; the sky works.

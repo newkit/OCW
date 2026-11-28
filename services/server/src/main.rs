@@ -830,6 +830,11 @@ fn main() {
     server.set_air_fetcher(Box::new(
         ocw_server::live_air::http::HttpAirFetcher::default(),
     ));
+    // Live road events (spec 14 Phase 18, 18E T13): the world's source
+    // (Tenerife: the DGT's DATEX II feed) while a rider wants them;
+    // OCW_LIVE_ROAD_OFFLINE=1 for none, OCW_LIVE_ROAD_FILE=FEED.xml for a
+    // recorded feed.
+    server.set_road_fetcher(ocw_server::live_road::http::default_fetcher());
     if let Some(echo) = server.session().echo_rider() {
         tracing::info!(
             echo = %echo,
