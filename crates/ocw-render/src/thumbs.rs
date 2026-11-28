@@ -858,6 +858,13 @@ fn render_thumbs(
                 } else {
                     vec![part.model.clone()]
                 };
+                // The "newk it" livery's paint tile shows the livery (the
+                // other tiles show the part on the bike as it comes).
+                let variants = if part.slot == "paint" {
+                    ocw_assets::livery::with_paint(variants, Some(part.paint))
+                } else {
+                    variants
+                };
                 let built = models
                     .as_deref()
                     .cloned()

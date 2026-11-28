@@ -66,6 +66,11 @@ pub enum GearKind {
     Plastic,
     /// The padded palm of gel gloves.
     Pad,
+    /// The "newk it" livery's paint (spec 14 Phase 15, *The "newk it"
+    /// bike*): black with a holographic flake – rainbow glints that come
+    /// and go with the view – fading to deep magenta towards the rear,
+    /// under a clear coat.
+    Flake,
 }
 
 impl GearKind {
@@ -79,20 +84,32 @@ impl GearKind {
 pub fn kind_of(slot: &str, node: &str) -> GearKind {
     match slot {
         "frame" | "decal" => GearKind::Paint,
+        "flake" => GearKind::Flake,
+        s if s.starts_with("livery_") => GearKind::Paint,
         "carbon" | "rim" => GearKind::Carbon,
-        "metal" => GearKind::Metal,
+        "metal" | "anodised_green" => GearKind::Metal,
         "component" if node == ocw_assets::pose::bike_nodes::SADDLE => GearKind::Leather,
         "component" => GearKind::Metal,
         "tyre" | "tyre_wall" => GearKind::Tyre,
-        "bar_tape" => GearKind::Grip,
+        "bar_tape" | "bar_tape_pink" => GearKind::Grip,
         "jersey" if node.starts_with("suit_") => GearKind::Lycra,
         "jersey" | "sock" | "sock_aero" => GearKind::Knit,
         "shorts" | "overshoe" | "glove" => GearKind::Lycra,
         "glove_pad" => GearKind::Pad,
-        "helmet" | "shoe" | "shoe_race" | "bottle" => GearKind::Plastic,
+        "helmet" | "shoe" | "shoe_race" | "bottle" | "bottle_black" => GearKind::Plastic,
         _ => GearKind::Plain,
     }
 }
+
+/// The flake's cell (m): one flake per cell, a share of them glinting.
+pub const FLAKE_SIZE_M: f32 = 0.0011;
+
+/// The "newk it" fade (`gear.wesl`, KIND_FLAKE): along the bike's rest
+/// coordinates z + 0.35 (y − 0.7) (+z is the rear) from black at −0.06 to
+/// the magenta at 0.2 – the head tube, fork and down tube black, the top
+/// tube turning from its middle, the seat tube, stays and chainstays
+/// magenta; w: the share of cells with a flake.
+pub const FLAKE_FADE: Vec4 = Vec4::new(-0.06, 0.2, 0.35, 0.45);
 
 /// Bare carbon's share of the ambient light (`gear.wesl`'s
 /// `CARBON_AMBIENT`): with all of the warm ambient light its specular on
@@ -346,6 +363,13 @@ pub fn surface(
             roughness = 0.75;
             (strength, size) = (1.0, 0.004);
         }
+        GearKind::Flake => {
+            metallic = 0.3;
+            roughness = 0.34;
+            clearcoat = 1.0;
+            clearcoat_roughness = 0.04;
+            (strength, size) = (1.0, FLAKE_SIZE_M);
+        }
         GearKind::Plastic => {
             let f = match slot {
                 "helmet" => Some(kit.helmet_finish),
@@ -392,6 +416,9 @@ pub fn surface(
     // material per rider and part cost 10× the frame time with 30 riders).
     let (first, second, third) = if garment.is_some() {
         (lin(first), lin(kit.second), lin(kit.third))
+    } else if kind == GearKind::Flake {
+        // The fade's colour and where it runs (`gear.wesl`, KIND_FLAKE).
+        (lin(Color::srgb_u8(0x5E, 0x0F, 0x4C)), FLAKE_FADE, Vec4::ZERO)
     } else {
         (Vec4::ZERO, Vec4::ZERO, Vec4::ZERO)
     };
@@ -687,6 +714,37 @@ mod tests {
         }
         assert_eq!(garment_of("jersey"), Some(Garment::Jersey));
         assert_eq!(garment_of("accent"), None);
+    }
+
+    /// The "newk it" livery's slots (spec 14 Phase 15, 15Q): the flake
+    /// in the gear shader with its fade colour and range, the decals as
+    /// clear-coated paint (batched), anodised green, pink tape.
+    #[test]
+    fn the_newkit_livery_has_its_materials() {
+        assert_eq!(kind_of("flake", "bike"), GearKind::Flake);
+        for s in ["livery_pink", "livery_light", "livery_ink", "livery_white"] {
+            assert_eq!(kind_of(s, "bike"), GearKind::Paint, "{s}");
+        }
+        assert_eq!(kind_of("livery", "bike"), GearKind::Plain, "the bus's livery");
+        assert_eq!(kind_of("anodised_green", "wheel_front"), GearKind::Metal);
+        assert_eq!(kind_of("bar_tape_pink", "handlebar"), GearKind::Grip);
+        assert_eq!(kind_of("bottle_black", "bike"), GearKind::Plastic);
+        let c = colours(&RiderLook::default());
+        let f = surface("flake", "bike", [0.004, 0.003, 0.006, 1.0], &c);
+        assert!(f.needs_shader());
+        assert_eq!(f.look.mode.x, GearKind::Flake.code() as f32);
+        assert_eq!(f.look.second, FLAKE_FADE);
+        assert_eq!(f.look.params.z, FLAKE_SIZE_M);
+        assert!(f.clearcoat > 0.9);
+        let m = f.look.first;
+        assert!(m.x > m.y && m.z > m.y, "magenta: {m}");
+        // The same surface for every rider: one material.
+        let other = colours(&RiderLook {
+            frame: ocw_core::Rgb(0x43A047),
+            ..Default::default()
+        });
+        let g = surface("flake", "bike", [0.004, 0.003, 0.006, 1.0], &other);
+        assert_eq!(f.key(false), g.key(false));
     }
 
     fn colours(look: &RiderLook) -> AvatarColours {

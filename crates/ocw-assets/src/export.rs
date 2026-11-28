@@ -117,6 +117,37 @@ pub fn bike_extras(p: ProfileId, rig: &BikeRig) -> serde_json::Value {
     })
 }
 
+/// The "newk it" bike's file (spec 14 Phase 15, *The "newk it" bike*):
+/// the road-aero bike with the "newk it" frameset (its shape, stock build
+/// and livery; `crate::livery`). Its physics is the profile's: the file
+/// names the profile and carries no physics values, like every bike.
+pub fn newkit_bike(near: &Model, low: &Model) -> (Entry, Model) {
+    let p = ProfileId::RoadAero;
+    let mut m = bikes::build_with(p, near, low, &[crate::livery::FRAME_VARIANT]);
+    let rig = BikeRig::from_model(&m).expect("bike rig");
+    let mut e = entry(
+        crate::livery::FILE,
+        Kind::Bike,
+        &format!(
+            "ocw_assets::bikes::build_with({}, [{:?}])",
+            p.id(),
+            crate::livery::FRAME_VARIANT
+        ),
+    );
+    e.profile = Some(p.id().into());
+    e.source = format!(
+        "{SOURCE}; the \"{}\" name and livery are the user's own design, used with permission",
+        crate::livery::NAME
+    );
+    let mut extras = bike_extras(p, &rig);
+    if let Some(o) = extras.as_object_mut() {
+        o.insert("name".into(), json!(crate::livery::NAME));
+        o.insert("variants".into(), json!([crate::livery::FRAME_VARIANT]));
+    }
+    stamp(&mut m, &e, extras);
+    (e, m)
+}
+
 /// A helmet as its own file (15E: exported once at the reference skull;
 /// the fit is the anchor's transform): the root `helmet` holds the near
 /// shell in the head's frame, `lod1` the far one.
@@ -153,6 +184,10 @@ pub fn models() -> Vec<(Entry, Model)> {
         stamp(&mut m, &e, bike_extras(p, &rig));
         out.push((e, m));
     }
+    // The "newk it" bike (spec 14 Phase 15, *The "newk it" bike*): the
+    // user's own design on the aero frame, its physics the road-aero
+    // profile's.
+    out.push(newkit_bike(&near, &low));
     // The near rider without its part files (spec §14 Phase 4, 4N N8) and
     // both riders without the helmets: those are worn from their own
     // files (Phase 15 M3).
@@ -362,9 +397,10 @@ mod tests {
         // … the traffic and the UFOs' cow.
         let more =
             1 + crate::workshop::Piece::ALL.len() + 1 + crate::vehicles::Vehicle::ALL.len() + 1;
+        // Six bikes, one per profile, and the "newk it" bike.
         assert_eq!(
             a.len(),
-            6 + 2 + crate::rider_split::part_files().len() + 4 + more
+            7 + 2 + crate::rider_split::part_files().len() + 4 + more
         );
         for ((ea, ba), (eb, bb)) in a.iter().zip(&b) {
             assert_eq!(ea, eb);
@@ -376,7 +412,7 @@ mod tests {
         let checked = crate::manifest::validate(&text, &files).unwrap_or_else(|e| panic!("{e:#?}"));
         assert_eq!(
             checked.len(),
-            12 + crate::rider_split::part_files().len() + more
+            13 + crate::rider_split::part_files().len() + more
         );
     }
 

@@ -681,7 +681,11 @@ mod tests {
         // In the order of the kinds: bikes first, riders, wear, …
         assert_eq!(groups[0].folder, "bikes");
         assert_eq!(groups[0].kind, Kind::Bike);
-        assert_eq!(groups[0].entries.len(), 6);
+        // One bike per profile and the named bikes ("newk it", spec 14
+        // Phase 15, 15Q): every bike of the manifest.
+        let bikes = all.iter().filter(|e| e.kind == Kind::Bike).count();
+        assert!(bikes >= 7, "{bikes}");
+        assert_eq!(groups[0].entries.len(), bikes);
         let order: Vec<&str> = groups.iter().map(|g| g.folder.as_str()).collect();
         let bikes = order.iter().position(|f| *f == "bikes").unwrap();
         let flora = order.iter().position(|f| *f == "flora").unwrap();

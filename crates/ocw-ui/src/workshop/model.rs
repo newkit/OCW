@@ -550,7 +550,7 @@ impl Workshop {
         {
             self.caption = Some(format!(
                 "The {} hangs on a new hook – Confirm on it to put it on the stand and build it up.",
-                b.label()
+                g.label(ocw_assets::shipped::catalogue(), b)
             ));
         }
         self.hotspot = 0;

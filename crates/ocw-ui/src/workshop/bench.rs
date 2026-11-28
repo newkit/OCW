@@ -263,7 +263,7 @@ pub fn row_text(
         (Kind::SellBike(id), _) => {
             let b = g.bike(id)?;
             (
-                b.label(),
+                g.label(cat, b),
                 format!("sells for {}", hearts(i64::from(g.bike_refund(b)))),
                 false,
             )
