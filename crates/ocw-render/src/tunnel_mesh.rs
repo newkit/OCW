@@ -170,7 +170,11 @@ struct Builder<'a> {
 
 impl Builder<'_> {
     fn quad(&mut self, v: [Vec3; 4], uv: [[f32; 2]; 4], c: [[f32; 4]; 4]) {
-        // v: a, b (one ring), c, d (the next): a-b-c, b-d-c.
+        // v: a, b (one ring), c, d (the next): a-c-b, b-c-d, wound so the
+        // triangles face along `n` (the lit, double-sided materials flip the
+        // normal by the side seen: a normal against the winding lit every
+        // gallery, deck and portal as if it faced away – the dark grey
+        // gallery roofs and open roads of 2026-11-28).
         let n = (v[2] - v[0]).cross(v[1] - v[0]).normalize_or_zero();
         let base = self.m.positions.len() as u32;
         for k in 0..4 {
@@ -181,7 +185,7 @@ impl Builder<'_> {
         }
         self.m
             .indices
-            .extend([base, base + 1, base + 2, base + 1, base + 3, base + 2]);
+            .extend([base, base + 2, base + 1, base + 1, base + 2, base + 3]);
     }
 
     /// A box from `centre` with half extents along `ax` (forward), `ay`
@@ -1247,6 +1251,49 @@ mod tests {
         assert!(dark > 0 && dark < top.len() / 2, "{dark} of {}", top.len());
         // The wall reaches into the ground beside the road strip.
         assert!(m.lit.positions.iter().any(|p| p[1] < 99.9), "{low}");
+    }
+
+    #[test]
+    fn every_triangle_faces_along_its_normals() {
+        // A tube, a gallery and an open stretch, and a deck.
+        let secs = [
+            Section {
+                from: 0.0,
+                to: 40.0,
+                kind: SectionKind::Gallery { hill_right: false },
+            },
+            Section {
+                from: 40.0,
+                to: 160.0,
+                kind: SectionKind::Bored,
+            },
+            Section {
+                from: 160.0,
+                to: 200.0,
+                kind: SectionKind::Open,
+            },
+        ];
+        let mut m = tunnel_meshes(&axis(200.0), &secs, 5);
+        crossing_deck(
+            &mut m.lit,
+            Vec3::new(180.0, 108.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            3.0,
+            100.0,
+            Vec2::new(1.0, 0.0),
+            7.0,
+        );
+        for part in [&m.tube, &m.fittings, &m.glow, &m.lit] {
+            for t in part.indices.chunks(3) {
+                let p = |i: u32| Vec3::from(part.positions[i as usize]);
+                let w = (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0]));
+                if w.length() < 1e-6 {
+                    continue;
+                }
+                let n = Vec3::from(part.normals[t[0] as usize]);
+                assert!(w.dot(n) > 0.0, "{w} {n}");
+            }
+        }
     }
 
     #[test]

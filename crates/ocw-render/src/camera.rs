@@ -1129,11 +1129,14 @@ pub(crate) fn follow(
         // Never in the hill beside or over the tube while blending at a
         // portal (the chase eye behind and above the rider lies in the
         // slope there): pulled into the tube's envelope along the road.
-        let g = ground
-            .as_deref()
-            .and_then(|g| (g.0)(f64::from(blended.x), f64::from(blended.z)))
-            .map(|h| h as f32);
-        cam.translation = crate::tunnel::envelope_eye(blended, eye, g);
+        let at = |x: f32, z: f32| {
+            ground
+                .as_deref()
+                .and_then(|g| (g.0)(f64::from(x), f64::from(z)))
+                .map(|h| h as f32)
+        };
+        cam.translation =
+            crate::tunnel::envelope_eye(blended, eye, rider.translation + Vec3::Y * 1.2, &at);
         target.lerp(inside, u)
     } else {
         tilt.outside_eye = None;

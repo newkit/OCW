@@ -161,23 +161,48 @@ pub fn tunnel_eye(track: &dyn Track, distance: f64, lateral: f64) -> (Vec3, Vec3
 }
 
 /// The camera's eye while it blends into or out of the tunnel camera:
-/// `eye` as blended, unless it is in the terrain (`ground` at it higher
-/// than the eye) – then it is pulled in along the road to the tunnel eye
-/// `tunnel_eye`, no higher than a metre under the tube's crown, so it never
-/// shows the hill from inside (the Arcalís portal, 2026-11-28).
-pub fn envelope_eye(eye: Vec3, tunnel_eye: Vec3, ground: Option<f32>) -> Vec3 {
-    match ground {
-        Some(g) if g > eye.y - 0.3 => {
-            let road = tunnel_eye.y - TUNNEL_CAM_HEIGHT_M;
-            let roof = road + ocw_world::tunnels::CROWN_M as f32 - 1.0;
-            Vec3::new(
-                tunnel_eye.x,
-                eye.y.min(roof).max(tunnel_eye.y),
-                tunnel_eye.z,
-            )
-        }
-        _ => eye,
+/// `eye` as blended, unless the terrain is in the way – the eye in the
+/// hill, or the hill between it and the rider (`rider`, the head) outside
+/// the tube's envelope (the tube runs under the terrain: there the ground
+/// is above the line legitimately). Then it is pulled in along the road
+/// towards the tunnel eye `tunnel_eye` (a quarter at a time, the first
+/// clear point), no higher than a metre under the tube's crown, so it
+/// never shows the hill from inside or the mound in front of the rider
+/// (the Arcalís portal, 2026-11-28).
+pub fn envelope_eye(
+    eye: Vec3,
+    tunnel_eye: Vec3,
+    rider: Vec3,
+    ground: &dyn Fn(f32, f32) -> Option<f32>,
+) -> Vec3 {
+    let road = tunnel_eye.y - TUNNEL_CAM_HEIGHT_M;
+    let roof = road + ocw_world::tunnels::CROWN_M as f32 - 1.0;
+    // In the tube's envelope: near the road axis (the line from the
+    // tunnel eye to the rider, a little beyond), under the crown.
+    let axis = (tunnel_eye.xz(), rider.xz());
+    let in_tube = |q: Vec3| {
+        let (a, b) = axis;
+        let ab = b - a;
+        let t = ((q.xz() - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(-0.5, 1.5);
+        (a + ab * t).distance(q.xz()) < 4.0 && q.y < road + ocw_world::tunnels::CROWN_M as f32
+    };
+    let blocked = |e: Vec3| {
+        (0..=8).any(|k| {
+            let q = e.lerp(rider, k as f32 / 8.0);
+            ground(q.x, q.z).is_some_and(|g| g > q.y - 0.2) && !in_tube(q)
+        })
+    };
+    if !blocked(eye) {
+        return eye;
     }
+    for t in [0.25f32, 0.5, 0.75] {
+        let e = eye.lerp(tunnel_eye, t);
+        let e = e.with_y(e.y.min(roof).max(tunnel_eye.y));
+        if !blocked(e) {
+            return e;
+        }
+    }
+    tunnel_eye
 }
 
 /// Moves `blend` (0 chase … 1 tunnel camera) towards `wanted` over
@@ -959,18 +984,29 @@ mod tests {
 
     #[test]
     fn a_blending_eye_in_the_hill_is_pulled_into_the_tube() {
-        let tunnel = Vec3::new(10.0, 102.2, 0.0); // road at 100
-        // Over the terrain: as blended.
-        let free = Vec3::new(5.0, 108.0, 0.0);
-        assert_eq!(envelope_eye(free, tunnel, Some(104.0)), free);
-        assert_eq!(envelope_eye(free, tunnel, None), free);
-        // In the hill (terrain at 112 over an eye at 108): along the road
-        // to the tunnel eye, under the crown.
-        let e = envelope_eye(free, tunnel, Some(112.0));
-        assert_eq!((e.x, e.z), (tunnel.x, tunnel.z));
-        assert!(e.y >= tunnel.y && e.y <= 100.0 + ocw_world::tunnels::CROWN_M as f32 - 1.0 + 1e-4);
-        // The tunnel eye itself (under the hill) stays where it is.
-        assert_eq!(envelope_eye(tunnel, tunnel, Some(140.0)), tunnel);
+        // The road along x at 100, the portal at x 10: a hill (120) from
+        // there on, the tube under it; open ground (99.7) before.
+        let ground = |x: f32, _z: f32| Some(if x >= 10.0 { 120.0 } else { 99.7 });
+        let rider = Vec3::new(14.0, 101.2, 0.0);
+        let tunnel = Vec3::new(9.5, 102.2, 0.0);
+        // Behind and over the rider on the open approach, a clear view:
+        // as blended.
+        let free = Vec3::new(2.0, 104.0, 0.0);
+        assert_eq!(envelope_eye(free, tunnel, rider, &ground), free);
+        assert_eq!(envelope_eye(free, tunnel, rider, &|_, _| None), free);
+        // In the hill over the tube: pulled in, under the crown.
+        let inside = Vec3::new(12.0, 112.0, 0.0);
+        let e = envelope_eye(inside, tunnel, rider, &ground);
+        assert!(
+            e.y <= 100.0 + ocw_world::tunnels::CROWN_M as f32 - 1.0 + 1e-4,
+            "{e}"
+        );
+        // Beside the tube in the hill (12 m off the road): pulled in.
+        let beside = Vec3::new(12.0, 104.0, 12.0);
+        let e = envelope_eye(beside, tunnel, rider, &ground);
+        assert!(e.z.abs() < 12.0, "{e}");
+        // The tunnel eye itself (under the hill, in the tube) stays.
+        assert_eq!(envelope_eye(tunnel, tunnel, rider, &ground), tunnel);
     }
 
     #[test]
