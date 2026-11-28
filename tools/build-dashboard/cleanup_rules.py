@@ -463,7 +463,8 @@ def _psq(s: str) -> str:
 
 
 # (Its variables have names of their own: sh functions share the caller's.
-# OCW_TASKS_DIR moves the marker directory in the tests.)
+# OCW_TASKS_DIR moves the marker directory in the tests, OCW_GC_TMP the temp
+# directories searched: the tests must not see the machine's own.)
 POSIX_BUSY = (r'''busy() { for bm in "${OCW_TASKS_DIR:-/tmp/ocw-tasks}"/*.json; do [ -e "$bm" ] || continue; bq=${bm##*/}; bq=${bq%%-*}; '''
               r'''grep -q "\"checkout\":\"$1\"" "$bm" && ps -p "$bq" >/dev/null 2>&1 && return 0; done; return 1; }''')
 
@@ -503,7 +504,7 @@ for d in "$r" "$r"-*; do
   done
 done
 echo @@temp
-for t in "${TMPDIR:-/tmp}" /tmp; do
+for t in ${OCW_GC_TMP:-${TMPDIR:-/tmp} /tmp}; do
   for g in "$t"/ocw-chromium-*; do
     [ -d "$g" ] || continue
     u=0; pgrep -f "${g##*/}" >/dev/null 2>&1 && u=1
@@ -543,7 +544,7 @@ while read -r k n; do
     target) c=$n; x="$p/$n/target"; g="$p/$n/target.ocw-gc.$$" ;;
     checkout) c=$n; x="$p/$n"; g="$p/$n.ocw-gc.$$" ;;
     stray) c=${n%%/*}; x="$p/$n"; case "$n" in *.ocw-gc.*|*.ocw-janitor.*) ;; *) echo "@@refused $k $n"; continue ;; esac ;;
-    temp) for t in "${TMPDIR:-/tmp}" /tmp; do [ -d "$t/$n" ] && x="$t/$n"; done; case "$n" in ocw-chromium-*) ;; *) echo "@@refused $k $n"; continue ;; esac ;;
+    temp) for t in ${OCW_GC_TMP:-${TMPDIR:-/tmp} /tmp}; do [ -z "$x" ] && [ -d "$t/$n" ] && x="$t/$n"; done; case "$n" in ocw-chromium-*) ;; *) echo "@@refused $k $n"; continue ;; esac ;;
     relout) x="$HOME/$n"; case "$n" in ocw-release-[0-9]*) ;; *) echo "@@refused $k $n"; continue ;; esac ;;
     *) echo "@@refused $k $n"; continue ;;
   esac

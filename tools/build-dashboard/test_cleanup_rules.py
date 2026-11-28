@@ -399,7 +399,7 @@ class PosixRunTest(unittest.TestCase):
         put(self.tmp / "home" / "ocw-release-0.2.3" / "worlds" / "w.pkg", 100)
         put(self.tmp / "home" / "ocw-release-0.2.7-worlds" / "w.pkg", 100)
         self.env = dict(os.environ, HOME=str(self.tmp / "home"), TMPDIR=str(self.tmp / "tmp"),
-                        OCW_TASKS_DIR=str(self.tmp / "tasks"))
+                        OCW_TASKS_DIR=str(self.tmp / "tasks"), OCW_GC_TMP=str(self.tmp / "tmp"))
 
     def marker(self, pid, checkout):
         put(self.tmp / "tasks" / ("%d-1.json" % pid), 0)
