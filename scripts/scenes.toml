@@ -6272,3 +6272,126 @@ args = ["--world", "{world}", "--free-ride", "--start", "-25712,-7061", "--bots"
 at = ["0.3=time 2026-11-28 12:00", "0.3=weather clear", "0.5=character --body a --hair ponytail --hair-colour #8D5524 --skin 4", "0.6=set --temp traffic.live_road on", "2=camera.orbit 20 30 25", "4=traffic road busy"]
 shot = 30
 pick = false
+
+# The neck and the jersey (bug 2026-11-28, 4N *Fixed: the neck and the jersey*):
+# close-ups of the base of the neck riding - side, three-quarter from behind
+# and from the front - for varied riders and the poses that lift the head
+# against the torso (hoods, time-trial aero, sprint), one upright rider, and
+# one normal ride picture. The same scenes before / after. Made-up names only.
+
+[[scene]]
+name = "neck-fix-a-side"
+description = "The neck and the jersey (4N, bug 2026-11-28): from the side, riding on the hoods on the road bike (the head lifted against the leaning torso) - base body A, super-skinny, 190 cm, short black hair, light skin, blue kit, red helmet"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 68.0\nheight_cm = 190.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape super-skinny --age 30s --hair short --hair-colour #1E1E1E --skin 3", "1.6=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "4=camera.closeup face 90 0 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-a-back"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from behind, riding on the hoods on the road bike (the head lifted against the leaning torso) - base body A, super-skinny, 190 cm, short black hair, light skin, blue kit, red helmet"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 68.0\nheight_cm = 190.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape super-skinny --age 30s --hair short --hair-colour #1E1E1E --skin 3", "1.6=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "4=camera.closeup face 35 15 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-a-front"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from the front, riding on the hoods on the road bike (the head lifted against the leaning torso) - base body A, super-skinny, 190 cm, short black hair, light skin, blue kit, red helmet"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 68.0\nheight_cm = 190.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape super-skinny --age 30s --hair short --hair-colour #1E1E1E --skin 3", "1.6=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "4=camera.closeup face 140 -8 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-b-side"
+description = "The neck and the jersey (4N, bug 2026-11-28): from the side, in the aero position on the time-trial bike (the head lifted most) - base body B, skinny, 165 cm, auburn low bun, medium-dark skin, yellow chevron kit, time-trial helmet"
+args = ["--route", "hills", "--bots", "0", "--power", "330"]
+riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 56.0\nheight_cm = 165.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=hearts.grant 2000", "1.1=workshop.buy helmet.tt.top", "1.5=character --body b --shape skinny --age 20s --hair low-bun --hair-colour #8D3B1F --skin 8", "1.6=kit.design --pattern chevrons --jersey #FDD835 --second #1E1E22 --helmet #1E1E22", "4=camera.closeup face 90 0 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-b-back"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from behind, in the aero position on the time-trial bike (the head lifted most) - base body B, skinny, 165 cm, auburn low bun, medium-dark skin, yellow chevron kit, time-trial helmet"
+args = ["--route", "hills", "--bots", "0", "--power", "330"]
+riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 56.0\nheight_cm = 165.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=hearts.grant 2000", "1.1=workshop.buy helmet.tt.top", "1.5=character --body b --shape skinny --age 20s --hair low-bun --hair-colour #8D3B1F --skin 8", "1.6=kit.design --pattern chevrons --jersey #FDD835 --second #1E1E22 --helmet #1E1E22", "4=camera.closeup face 35 15 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-b-front"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from the front, in the aero position on the time-trial bike (the head lifted most) - base body B, skinny, 165 cm, auburn low bun, medium-dark skin, yellow chevron kit, time-trial helmet"
+args = ["--route", "hills", "--bots", "0", "--power", "330"]
+riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 56.0\nheight_cm = 165.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=hearts.grant 2000", "1.1=workshop.buy helmet.tt.top", "1.5=character --body b --shape skinny --age 20s --hair low-bun --hair-colour #8D3B1F --skin 8", "1.6=kit.design --pattern chevrons --jersey #FDD835 --second #1E1E22 --helmet #1E1E22", "4=camera.closeup face 140 -8 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-c-side"
+description = "The neck and the jersey (4N, bug 2026-11-28): from the side, sprinting on the aero road bike (the head up) - base body C, normal, 182 cm, crew cut, dark skin, short boxed beard, green striped kit"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --facial-hair-colour #3B2A20", "1.6=kit.design --pattern stripes --jersey #43A047 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 90 0 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-c-back"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from behind, sprinting on the aero road bike (the head up) - base body C, normal, 182 cm, crew cut, dark skin, short boxed beard, green striped kit"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --facial-hair-colour #3B2A20", "1.6=kit.design --pattern stripes --jersey #43A047 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 35 15 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-c-front"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from the front, sprinting on the aero road bike (the head up) - base body C, normal, 182 cm, crew cut, dark skin, short boxed beard, green striped kit"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --facial-hair-colour #3B2A20", "1.6=kit.design --pattern stripes --jersey #43A047 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 140 -8 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-d-side"
+description = "The neck and the jersey (4N, bug 2026-11-28): from the side, riding easy, more upright, on the gravel bike - base body A, obese, 70+, bald, grey full beard, orange sash kit"
+args = ["--route", "hills", "--bots", "0", "--power", "140"]
+riders = "active = \"Dag Tourer\"\n[[rider]]\nname = \"Dag Tourer\"\nweight_kg = 104.0\nheight_cm = 176.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape obese --age 70+ --hair bald --skin 5 --beard full --facial-hair-colour #BDBDBD", "1.6=kit.design --pattern sash --jersey #FB8C00 --second #3949AB --helmet #3949AB", "4=camera.closeup face 90 0 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-d-back"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from behind, riding easy, more upright, on the gravel bike - base body A, obese, 70+, bald, grey full beard, orange sash kit"
+args = ["--route", "hills", "--bots", "0", "--power", "140"]
+riders = "active = \"Dag Tourer\"\n[[rider]]\nname = \"Dag Tourer\"\nweight_kg = 104.0\nheight_cm = 176.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape obese --age 70+ --hair bald --skin 5 --beard full --facial-hair-colour #BDBDBD", "1.6=kit.design --pattern sash --jersey #FB8C00 --second #3949AB --helmet #3949AB", "4=camera.closeup face 35 15 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-d-front"
+description = "The neck and the jersey (4N, bug 2026-11-28): three-quarter from the front, riding easy, more upright, on the gravel bike - base body A, obese, 70+, bald, grey full beard, orange sash kit"
+args = ["--route", "hills", "--bots", "0", "--power", "140"]
+riders = "active = \"Dag Tourer\"\n[[rider]]\nname = \"Dag Tourer\"\nweight_kg = 104.0\nheight_cm = 176.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape obese --age 70+ --hair bald --skin 5 --beard full --facial-hair-colour #BDBDBD", "1.6=kit.design --pattern sash --jersey #FB8C00 --second #3949AB --helmet #3949AB", "4=camera.closeup face 140 -8 0.45"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "neck-fix-ride"
+description = "The neck and the jersey (4N, bug 2026-11-28): a normal ride on the Hills route with six bots in their own looks, three-quarter from the front - Ada Rider (super-skinny, blue kit) in front"
+args = ["--route", "hills", "--bots", "6", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 68.0\nheight_cm = 190.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud.profile off", "1.5=character --body a --shape super-skinny --age 30s --hair short --hair-colour #1E1E1E --skin 3", "1.6=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "6=camera.orbit 150 10 5"]
+shot = 12
+pick = false
