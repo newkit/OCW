@@ -3,7 +3,8 @@
 //! (`LiveAirWish`), the server's `LiveAirUpdate`s come back – the aircraft
 //! of its last fetch, with their session numbers, classes, positions and
 //! motion, no identities – and [`crate::air::AirClient`] draws them
-//! instead of the simulated sky while they are usable: the update says
+//! together with the simulated flights the update's ledger admits (Q13
+//! (c), `ocw_sim::air::mixed`) while they are usable: the update says
 //! *live*, the world clock is within the fixes' extrapolation
 //! (`ocw_sim::air::live::MAX_AGE_S`; the time machine elsewhere: the
 //! simulated sky), and otherwise the simulated sky with a note why
@@ -13,9 +14,10 @@
 
 use std::collections::HashMap;
 
-use ocw_protocol::live_air::{aircraft_from_wire, status, wish};
+use ocw_protocol::live_air::{aircraft_from_wire, ledger_from_wire, status, wish};
 use ocw_protocol::{encode, v1};
 use ocw_sim::air::live::{LiveAircraft, MAX_AGE_S};
+use ocw_sim::air::mixed::Ledger;
 use ocw_world::geo::EARTH_RADIUS_M;
 
 /// A correction after a new fetch is blended in over this (ms).
@@ -60,6 +62,8 @@ struct Received {
     attribution: String,
     fetched_ms: i64,
     aircraft: Vec<LiveAircraft>,
+    /// When the feed showed small planes and helicopters near (Q13 (c)).
+    ledger: Ledger,
 }
 
 /// A blended correction: (Δlat, Δlon, Δalt) at `from_ms`, fading out.
@@ -148,6 +152,7 @@ impl LiveAirClient {
             attribution: u.attribution.clone(),
             fetched_ms: u.fetched_ms,
             aircraft,
+            ledger: ledger_from_wire(&u.sim_busy),
         });
     }
 
@@ -204,6 +209,15 @@ impl LiveAirClient {
     pub fn aircraft(&self, t_ms: i64) -> Option<&[LiveAircraft]> {
         (self.state(t_ms) == LiveState::Live)
             .then(|| self.last.as_ref().map(|r| r.aircraft.as_slice()))
+            .flatten()
+    }
+
+    /// The server's ledger of the update drawn at `t_ms` (spec 14 Phase 18
+    /// Q13 (c)): which simulated small planes and helicopters fly beside
+    /// the live aircraft (`None`: live aircraft are not usable).
+    pub fn ledger(&self, t_ms: i64) -> Option<&Ledger> {
+        (self.state(t_ms) == LiveState::Live)
+            .then(|| self.last.as_ref().map(|r| &r.ledger))
             .flatten()
     }
 

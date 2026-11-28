@@ -1,0 +1,13 @@
+{
+ "note": "A made-up answer in adsb.lol's format for the air-mix-* scenes (spec 14 Phase 18 Q13 (c)): six airliners around Offenburg and one helicopter 37 km away. Not a recording: every value is invented (addresses f4NNNN, callsigns TESTNN). Used with OCW_LIVE_AIR_FILE; no request leaves the machine.",
+ "now": 0,
+ "ac": [
+  {"hex": "f40001", "flight": "TEST01", "category": "A3", "alt_geom": 37000, "gs": 450, "track": 30, "geom_rate": 0, "lat": 48.50, "lon": 7.85, "seen_pos": 0.0},
+  {"hex": "f40002", "flight": "TEST02", "category": "A3", "alt_geom": 35000, "gs": 440, "track": 205, "geom_rate": 0, "lat": 48.40, "lon": 8.02, "seen_pos": 0.0},
+  {"hex": "f40003", "flight": "TEST03", "category": "A5", "alt_geom": 39000, "gs": 470, "track": 265, "geom_rate": 0, "lat": 48.47, "lon": 8.05, "seen_pos": 0.0},
+  {"hex": "f40004", "flight": "TEST04", "category": "A3", "alt_geom": 36000, "gs": 455, "track": 85, "geom_rate": 0, "lat": 48.38, "lon": 7.86, "seen_pos": 0.0},
+  {"hex": "f40005", "flight": "TEST05", "category": "A3", "alt_geom": 38000, "gs": 460, "track": 150, "geom_rate": 0, "lat": 48.52, "lon": 7.98, "seen_pos": 0.0},
+  {"hex": "f40006", "flight": "TEST06", "category": "A3", "alt_geom": 12000, "gs": 280, "track": 350, "geom_rate": -1000, "lat": 48.43, "lon": 7.80, "seen_pos": 0.0},
+  {"hex": "f40007", "flight": "TEST07", "category": "A7", "alt_geom": 3000, "gs": 110, "track": 300, "geom_rate": 0, "lat": 48.20, "lon": 8.25, "seen_pos": 0.0}
+ ]
+}

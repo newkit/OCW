@@ -911,6 +911,25 @@ message LiveAirUpdate {
   repeated LiveAircraft aircraft = 5;
   // When the server expects to fetch again (s after fetched_ms).
   uint32 next_s = 6;
+  // Live and simulated aircraft together (spec 14 Phase 18 Q13 (c)): the
+  // times during which the feed showed a small plane or a helicopter
+  // within 30 km of the place the server asks for, over the last two
+  // hours. A simulated flight of such a kind flies beside the live
+  // aircraft only if it started outside these times – the same decision
+  // on every client, also for a rider who joins later. Kinds and times
+  // only: no position, nothing of an aircraft (18D *Privacy*). Absent
+  // from an older server: no such times.
+  repeated LiveAirBusy sim_busy = 7;
+}
+
+// A time during which the feed showed a kind of aircraft near the
+// session's place (spec 14 Phase 18 Q13 (c)): [from_ms, to_ms), Unix ms.
+// A time still running ends 7 minutes after the last fetch that saw the
+// kind, until the next fetch moves or closes it.
+message LiveAirBusy {
+  LiveAirClass class = 1;
+  int64 from_ms = 2;
+  int64 to_ms = 3;
 }
 
 enum LiveAirStatus {

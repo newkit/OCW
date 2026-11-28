@@ -693,10 +693,27 @@ impl GameServer {
             return;
         }
         self.live_wish.insert(conn);
-        let now = self.clock.real(self.session_time_s());
+        let now = self.live_air_now(self.session_time_s());
         if let Some(u) = self.live_air.current(now, self.air_fetcher.is_some()) {
             self.directed
                 .push((conn, encode(&server_message(S::LiveAir(u)))));
+        }
+    }
+
+    /// The live aircraft feed's instant at session time `t`: the real
+    /// clock – or, for a recorded answer (`OCW_LIVE_AIR_FILE`), the world
+    /// clock, so that a recording is the sky of whatever time the time
+    /// machine shows (pictures and tests).
+    fn live_air_now(&mut self, t: f64) -> i64 {
+        let recorded = self
+            .air_fetcher
+            .as_mut()
+            .and_then(|f| f.get_mut().ok())
+            .is_some_and(|f| f.recorded());
+        if recorded {
+            self.clock.now(t)
+        } else {
+            self.clock.real(t)
         }
     }
 
@@ -707,7 +724,10 @@ impl GameServer {
         {
             return;
         }
-        let now = self.clock.real(t);
+        let now = self.live_air_now(t);
+        if now != self.clock.real(t) {
+            self.live_air.rewound(now);
+        }
         let wanted = !self.live_wish.is_empty();
         let place = if wanted {
             let p = self.weather_place();

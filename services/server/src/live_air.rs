@@ -20,6 +20,13 @@
 //!   (carried on from fetch to fetch by a salted hash of the address held
 //!   for the last fetch only), what the riders are told.
 //!
+//! **Live and simulated together (Q13 (c)):** the feed keeps a
+//! [`Ledger`] – the times during which it saw a small plane or a
+//! helicopter within 30 km of the query's centre, for two hours – and
+//! sends it with every update; the clients decide from it which of their
+//! simulated small planes and helicopters fly beside the live aircraft
+//! (`ocw_sim::air::mixed`). Kinds and times only, no position.
+//!
 //! **Privacy (18D):** a sighting keeps no ICAO address, callsign,
 //! registration, operator or type code – only a salted 64-bit hash of the
 //! address (in memory, for the next fetch's numbering; never sent, never
@@ -28,10 +35,11 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use ocw_protocol::live_air::aircraft_to_wire;
+use ocw_protocol::live_air::{aircraft_to_wire, ledger_to_wire};
 use ocw_protocol::v1;
 use ocw_sim::air::AirKind;
 use ocw_sim::air::live::{LiveAircraft, classify};
+use ocw_sim::air::mixed::Ledger;
 
 /// The adsb.lol credit (ODbL: attribution), shown in the app while live
 /// aircraft are drawn.
@@ -428,6 +436,61 @@ pub trait AirFetcher: Send {
     fn start(&mut self, req: &Request);
     /// The answers that arrived since the last call.
     fn poll(&mut self) -> Vec<Answer>;
+    /// Whether the answers are a recording ([`FileAirFetcher`]): it has
+    /// no time of its own, so the server takes it as the sky of its world
+    /// clock – pictures and tests with the time machine.
+    fn recorded(&self) -> bool {
+        false
+    }
+}
+
+/// A recorded answer from a file (`OCW_LIVE_AIR_FILE`, adsb.lol's JSON):
+/// every request reads it again, so a run without the network shows the
+/// recorded aircraft – at the world clock's time, whatever it is
+/// ([`AirFetcher::recorded`]). No request leaves the machine.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone)]
+pub struct FileAirFetcher {
+    pub path: std::path::PathBuf,
+    queue: Vec<Answer>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FileAirFetcher {
+    pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            queue: Vec::new(),
+        }
+    }
+
+    /// The file `OCW_LIVE_AIR_FILE` names, if set.
+    pub fn from_env() -> Option<Self> {
+        std::env::var_os("OCW_LIVE_AIR_FILE")
+            .filter(|p| !p.is_empty())
+            .map(Self::new)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AirFetcher for FileAirFetcher {
+    fn start(&mut self, req: &Request) {
+        self.queue.push(Answer {
+            seq: req.seq,
+            result: std::fs::read_to_string(&self.path)
+                .map(|body| (200, body))
+                .map_err(|e| format!("recorded answer: {}", e.kind())),
+            ..Default::default()
+        });
+    }
+
+    fn poll(&mut self) -> Vec<Answer> {
+        std::mem::take(&mut self.queue)
+    }
+
+    fn recorded(&self) -> bool {
+        true
+    }
 }
 
 /// A fetcher answering from a function (tests: recorded answers, no
@@ -507,6 +570,8 @@ pub struct LiveAirFeed {
     retry_at_ms: i64,
     state: FeedState,
     note: String,
+    /// When the feed showed small planes and helicopters near (Q13 (c)).
+    ledger: Ledger,
     pub stats: FeedStats,
 }
 
@@ -550,7 +615,26 @@ impl LiveAirFeed {
             retry_at_ms: i64::MIN,
             state: FeedState::Idle,
             note: String::new(),
+            ledger: Ledger::default(),
             stats: FeedStats::default(),
+        }
+    }
+
+    /// When the feed showed small planes and helicopters near the
+    /// session's place (Q13 (c); sent with every update).
+    pub fn ledger(&self) -> &Ledger {
+        &self.ledger
+    }
+
+    /// A recorded feed ([`AirFetcher::recorded`]) whose clock – the world
+    /// clock – was set back before its last fetch: it starts again, as in
+    /// a new world.
+    pub fn rewound(&mut self, now_ms: i64) {
+        let back = |t: i64| now_ms < t - 2000;
+        if self.last_fetch_ms.is_some_and(back) || self.in_flight.is_some_and(|f| back(f.1)) {
+            self.world_changed();
+            self.budget = Budget::new(self.budget.burst, self.budget.per_day);
+            self.retry_at_ms = i64::MIN;
         }
     }
 
@@ -583,6 +667,7 @@ impl LiveAirFeed {
         self.last_fetch_ms = None;
         self.centre = None;
         self.ids.clear();
+        self.ledger = Ledger::default();
         self.in_flight = None;
         if self.state == FeedState::Live {
             self.state = FeedState::Idle;
@@ -634,6 +719,7 @@ impl LiveAirFeed {
         self.state = FeedState::Down;
         self.last = None;
         self.last_fetch_ms = None;
+        self.ledger.lost(now_ms);
         tracing::warn!(
             source = self.source.name(),
             failures = self.failures,
@@ -687,6 +773,7 @@ impl LiveAirFeed {
         {
             self.last = None;
             self.last_fetch_ms = None;
+            self.ledger.lost(now_ms);
             if self.state == FeedState::Live {
                 self.state = FeedState::Down;
                 self.note = match self.budget.paused_until(now_ms) {
@@ -775,6 +862,15 @@ impl LiveAirFeed {
             ));
         }
         self.ids = ids;
+        // Which of the kinds the simulated sky adds were near (Q13 (c)):
+        // kinds and times, nothing of the aircraft.
+        if let Some(centre) = self.centre {
+            self.ledger.fetch(
+                now_ms,
+                centre,
+                sightings.iter().map(|s| (s.kind, s.lat, s.lon)),
+            );
+        }
         self.state = FeedState::Live;
         self.note.clear();
         let next_s = self.budget.next_gap_ms() / 1000;
@@ -790,6 +886,7 @@ impl LiveAirFeed {
             fetched_ms: now_ms,
             aircraft,
             next_s: next_s as u32,
+            sim_busy: ledger_to_wire(&self.ledger),
         };
         self.last = Some(u.clone());
         self.last_fetch_ms = Some(now_ms);
@@ -806,6 +903,15 @@ pub mod http {
     use std::time::Duration;
 
     use super::{AirFetcher, Answer, Budget, Request};
+
+    /// The fetcher for a native server: a recorded answer when
+    /// `OCW_LIVE_AIR_FILE` names one, else HTTP.
+    pub fn default_fetcher() -> Box<dyn AirFetcher> {
+        match super::FileAirFetcher::from_env() {
+            Some(f) => Box::new(f),
+            None => Box::new(HttpAirFetcher::default()),
+        }
+    }
 
     /// `OCW_LIVE_AIR_OFFLINE=1`: no requests (every one fails at once).
     pub fn offline() -> bool {

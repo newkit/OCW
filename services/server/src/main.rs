@@ -827,9 +827,7 @@ fn main() {
     // Live aircraft (spec 14 Phase 18, 18E T10): fetched by the server
     // for its world while a rider wants them (adsb.lol; OCW_ADSB_LOL_KEY
     // for a key, OCW_LIVE_AIR_OFFLINE=1 for none).
-    server.set_air_fetcher(Box::new(
-        ocw_server::live_air::http::HttpAirFetcher::default(),
-    ));
+    server.set_air_fetcher(ocw_server::live_air::http::default_fetcher());
     // Live road events (spec 14 Phase 18, 18E T13): the world's source
     // (Tenerife: the DGT's DATEX II feed) while a rider wants them;
     // OCW_LIVE_ROAD_OFFLINE=1 for none, OCW_LIVE_ROAD_FILE=FEED.xml for a

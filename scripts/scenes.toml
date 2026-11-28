@@ -6226,6 +6226,44 @@ at = ["0.6=character --body a --hair short --hair-colour #D9B26F --skin 2 --bear
 shot = 24
 pick = false
 
+# --- Live and simulated aircraft together (spec 14 Phase 18 Q13 (c)) ---------
+# Render with the made-up answer (no network, no request to adsb.lol):
+#   OCW_LIVE_AIR_FILE=$PWD/scripts/fixtures/air-mix-blackforest.json \
+#     scripts/render-scenes.sh --only 'air-mix-*'
+# With a recorded answer the server takes the world clock as the feed's time,
+# so the time machine sets the soaring afternoon / the calm morning. The ride
+# starts next to Offenburg's airfield (gliders, balloons); the made-up feed has
+# six airliners around it and a helicopter 37 km away. The camera flies with
+# the simulated aircraft (air.follow), the unicorn beside it at another
+# bearing from the camera (never in one line of sight).
+
+[[scene]]
+name = "air-mix-gliders"
+description = "Live and simulated aircraft in one sky (spec 14 Phase 18 Q13 (c)): a soaring afternoon over Offenburg in the Black Forest with Aircraft: live and a made-up feed (six airliners, a helicopter 37 km away) – a simulated glider circling in a thermal, the unicorn beside it, and above them the contrails of the live airliners; the credit \"Aircraft data: adsb.lol (ODbL)\" in the lower left corner"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--start", "-2700,-58000", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-07-15 15:00", "0.5=weather clear clouds=0.3 type=cumulus temp=8 humidity=0.8 wind=2 dir=40", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #B3482A --skin 2", "0.8=traffic air live", "2=god.flight hover", "3=god on", "9=air.follow pick glider", "9=air.follow unicorn 38 4 8", "9=air.follow key 0 -40 -14 -55 12 6 0", "9=air.follow key 60 -40 -14 -55 12 6 0", "9.5=air.follow play", "9.6=air"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "air-mix-balloon"
+description = "The same on a calm summer morning (spec 14 Phase 18 Q13 (c)): a simulated hot-air balloon over Offenburg, the unicorn beside it, while Aircraft: live shows the made-up feed's airliners with their contrails above; the credit in the lower left corner"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--start", "-2700,-58000", "--bots", "0", "--power", "0"]
+at = ["0.5=time 2026-07-15 07:40", "0.5=weather clear clouds=0.15 type=cirrus temp=6 humidity=0.8 wind=1.5 dir=250", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #2B1B14 --skin 11 --beard 1", "0.8=traffic air live", "2=god.flight hover", "3=god on", "9=air.follow pick balloon", "9=air.follow unicorn 55 2 0", "9=air.follow key 0 -60 -22 -90 18 8 0", "9=air.follow key 60 -60 -22 -90 18 8 0", "9.5=air.follow play", "9.6=air"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "air-mix-status"
+description = "The air command with live and simulated aircraft together (spec 14 Phase 18 Q13 (c)): the console over the ride – \"aircraft: live\", the live aircraft by kind, the simulated ones flying with them by kind, which kinds wait for a quiet feed (small planes and helicopters within 30 km), then the simulated flights; a made-up feed, a soaring afternoon at Offenburg in the Black Forest"
+world = "blackforest-north"
+args = ["--world", "{world}", "--free-ride", "--start", "-2700,-58000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 15:00", "0.5=weather clear clouds=0.3 type=cumulus temp=24 humidity=0.5 wind=2 dir=40", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #D8B26E --skin 1", "0.8=traffic air live", "8.9=time pause", "9=console open", "9.3=air"]
+shot = 14
+pick = false
+
 # --- Live road events (spec 14 Phase 18, 18E T13): Tenerife's DGT feed ------
 # Render on marge with the recorded feed of the tests (our own fetch,
 # CC BY, "Fuente: DGT"), so the pictures do not depend on the night's feed:

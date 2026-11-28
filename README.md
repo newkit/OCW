@@ -1964,9 +1964,15 @@ and sounds, extrapolated between fetches; only their kind and position are
 used, never a callsign or registration. "Aircraft data: adsb.lol (ODbL)"
 stands in the lower left corner, above the elevation profile, while they are drawn. When the feed does not
 answer – or in the browser on its own (adsb.lol cannot be fetched from a web
-page) – the simulated sky is drawn and Settings says why. `OCW_ADSB_LOL_KEY`
-gives the server an adsb.lol key, `OCW_LIVE_AIR_OFFLINE=1` turns fetching
-off. First start: aircraft on, road traffic and
+page) – the simulated sky is drawn and Settings says why. With the live
+aircraft fly the simulated ones that ADS-B rarely shows: gliders, balloons
+and small planes in circuits always, other small planes and helicopters
+while the feed shows none of their kind within 30 km; the simulated
+airliners stay out (`air` lists what is live and what is simulated).
+`OCW_ADSB_LOL_KEY` gives the server an adsb.lol key,
+`OCW_LIVE_AIR_OFFLINE=1` turns fetching off, `OCW_LIVE_AIR_FILE=ANSWER.json`
+reads a recorded answer instead (the sky of the world clock; tests and
+pictures). First start: aircraft on, road traffic and
 UFOs off. `traffic` shows what the ride has; `traffic road busy`,
 `traffic manners mostly_polite`, `traffic ufo rare` change it for this
 session (`set traffic.road busy` saves it).

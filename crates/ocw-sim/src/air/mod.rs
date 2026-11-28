@@ -23,6 +23,7 @@
 
 pub mod airways;
 pub mod live;
+pub mod mixed;
 pub mod path;
 pub mod relief;
 #[cfg(test)]

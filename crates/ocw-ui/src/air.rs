@@ -190,15 +190,38 @@ fn flights_now(world: &mut World) -> Result<Now, String> {
         .unwrap_or_default();
     let fallback = weather;
     let inp = AirClient::inputs(&f, &fallback).ok_or("the world clock is not known yet")?;
+    // With live aircraft drawn: the simulated flights that fly beside
+    // them (Q13 (c)).
+    let live = crate::client(world).map(|c| c.live_air().clone());
+    let frame = AirFrame {
+        live: live.as_ref(),
+        ..f
+    };
     let mut st = world.resource_mut::<AirState>();
-    let space = st.0.space().cloned().ok_or("no airspace yet")?;
-    let flights = st.0.sky_mut().flights(&space, &inp);
+    let flights = st.0.flights(&frame, &fallback).ok_or("no airspace yet")?;
     Ok((
         flights,
         inp.now_s,
         f.eye,
         UpperAir::from_weather(&weather, f.ground_m),
     ))
+}
+
+/// What is live and what is simulated now (`None`: live aircraft are not
+/// drawn): the `air` command's lines (spec 14 Phase 18 Q13 (c)).
+fn mix_lines(world: &mut World) -> Option<Vec<String>> {
+    let f = frame_inputs(world)?;
+    let weather = world
+        .get_resource::<RideView>()
+        .and_then(|v| v.weather.as_ref().map(|w| w.state))
+        .unwrap_or_default();
+    let live = crate::client(world).map(|c| c.live_air().clone());
+    let frame = AirFrame {
+        live: live.as_ref(),
+        ..f
+    };
+    let mut st = world.resource_mut::<AirState>();
+    Some(st.0.mix_status(&frame, &weather)?.lines())
 }
 
 /// The live aircraft's state for the `air` and `traffic` commands and
@@ -257,13 +280,14 @@ fn summary(world: &mut World) -> Result<String, String> {
         ""
     };
     let (mut flights, now, eye, upper) = flights_now(world)?;
+    let mut out: Vec<String> = live.into_iter().collect();
+    out.extend(mix_lines(world).unwrap_or_default());
     let st = world.resource::<AirState>();
     let space = st.0.space().cloned().ok_or("no airspace yet")?;
-    let mut out: Vec<String> = live.into_iter().collect();
     out.push(format!(
         "{}{note}; {} aerodromes, {} sources of flights",
         if live_drawn {
-            "simulated sky (behind the live one)"
+            "simulated beside the live aircraft"
         } else {
             "aircraft: simulated"
         },
@@ -291,8 +315,9 @@ fn summary(world: &mut World) -> Result<String, String> {
     };
     flights.sort_by(|a, b| d(a).total_cmp(&d(b)));
     out.push(format!(
-        "{} flying now within {:.0} km:",
+        "{} {}flying now within {:.0} km:",
         flights.len(),
+        if live_drawn { "simulated " } else { "" },
         ocw_client::air::SKY_RADIUS_M / 1000.0
     ));
     for f in flights.iter().take(10) {
@@ -658,6 +683,7 @@ fn spot_live(world: &mut World, side: f64, ahead: f64) -> Result<String, String>
     let a = air
         .aircraft
         .iter()
+        .filter(|a| ocw_sim::air::mixed::is_live(a.id))
         .min_by(|a, b| {
             let d = |p: [f64; 3]| (p[0] - eye[0]).hypot(p[2] - eye[2]);
             d(a.pos).total_cmp(&d(b.pos))

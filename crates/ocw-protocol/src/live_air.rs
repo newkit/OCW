@@ -5,6 +5,7 @@
 
 use ocw_sim::air::AirKind;
 use ocw_sim::air::live::LiveAircraft;
+use ocw_sim::air::mixed::{Busy, Ledger};
 
 use crate::{client_message, v1};
 
@@ -64,6 +65,33 @@ pub fn aircraft_from_wire(w: &v1::LiveAircraft, fetched_ms: i64) -> LiveAircraft
     }
 }
 
+/// The ledger of an update (spec 14 Phase 18 Q13 (c)): when the feed
+/// showed small planes and helicopters near.
+pub fn ledger_to_wire(l: &Ledger) -> Vec<v1::LiveAirBusy> {
+    l.times()
+        .iter()
+        .map(|b| v1::LiveAirBusy {
+            class: class_to_wire(b.kind),
+            from_ms: b.from_ms,
+            to_ms: b.to_ms,
+        })
+        .collect()
+}
+
+/// A received ledger (classes it keeps no times for are dropped; an
+/// unknown class from a newer peer too).
+pub fn ledger_from_wire(w: &[v1::LiveAirBusy]) -> Ledger {
+    Ledger::from_times(
+        w.iter()
+            .filter(|b| v1::LiveAirClass::try_from(b.class).is_ok())
+            .map(|b| Busy {
+                kind: class_from_wire(b.class),
+                from_ms: b.from_ms,
+                to_ms: b.to_ms,
+            }),
+    )
+}
+
 /// The status of an update.
 pub fn status(u: &v1::LiveAirUpdate) -> v1::LiveAirStatus {
     v1::LiveAirStatus::try_from(u.status).unwrap_or(v1::LiveAirStatus::Down)
@@ -99,5 +127,23 @@ mod tests {
         for k in AirKind::ALL {
             assert_eq!(class_from_wire(class_to_wire(k)), k);
         }
+    }
+
+    #[test]
+    fn the_ledger_round_trips() {
+        let mut l = Ledger::default();
+        l.note(1_000_000, AirKind::Helicopter, true);
+        l.note(1_060_000, AirKind::Helicopter, false);
+        l.note(1_060_000, AirKind::SmallPlane, true);
+        let w = ledger_to_wire(&l);
+        assert_eq!(w.len(), 2);
+        assert_eq!(ledger_from_wire(&w), l);
+        // An unknown class is no small plane's time.
+        let odd = v1::LiveAirBusy {
+            class: 99,
+            from_ms: 1,
+            to_ms: 2,
+        };
+        assert!(ledger_from_wire(&[odd]).times().is_empty());
     }
 }

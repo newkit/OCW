@@ -23,10 +23,11 @@ use crate::settings::Settings;
 /// The page note of Settings → Traffic.
 pub const NOTE: &str = "Road traffic is the ride's: solo yours, in a shared ride the host's, in events the organiser's (races: none). Aircraft and UFOs are for you only.";
 /// … of its second page (with the live aircraft's credit, 18D).
-pub const MORE_NOTE: &str =
-    "Live aircraft come from the game server (Aircraft data: adsb.lol (ODbL)).";
+pub const MORE_NOTE: &str = "Live aircraft come from the game server (Aircraft data: adsb.lol (ODbL)), with simulated gliders, balloons and local flights.";
 /// The live aircraft's source, as Settings names it.
 pub const AIR_LIVE_SOURCE: &str = "adsb.lol (ODbL)";
+/// … and what flies with the live aircraft (spec 14 Phase 18 Q13 (c)).
+pub const AIR_LIVE_MIX: &str = "+ simulated gliders, balloons";
 /// The *Live traffic data* row's value (Q5: greyed until a world has a
 /// source that suits us).
 pub const LIVE_ROAD_NONE: &str = "no live data for this world yet";
@@ -210,7 +211,7 @@ fn live_row(settings: &Settings, live: Option<LiveState>) -> Row {
     let on = text(settings, "traffic.air") == "live";
     let value = match (on, live) {
         (false, _) => "off".to_owned(),
-        (true, Some(LiveState::Live) | None) => format!("on – {AIR_LIVE_SOURCE}"),
+        (true, Some(LiveState::Live) | None) => format!("on – {AIR_LIVE_SOURCE} {AIR_LIVE_MIX}"),
         (true, Some(s)) => format!("on – {}", s.label()),
     };
     let line = if on {
@@ -352,7 +353,11 @@ mod tests {
         let m = rows(Page::TrafficMore, &live, &drawn);
         assert_eq!(
             row(&m, "Aircraft: live").value.as_deref(),
-            Some("on – adsb.lol (ODbL)")
+            Some("on – adsb.lol (ODbL) + simulated gliders, balloons")
+        );
+        assert!(
+            MORE_NOTE.contains("with simulated gliders, balloons and local flights"),
+            "what is live and what is simulated (Q13 (c))"
         );
         assert_eq!(
             row(&m, "Aircraft: live").confirm,

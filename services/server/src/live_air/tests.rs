@@ -643,3 +643,199 @@ fn the_game_server_shares_one_fetch_with_the_riders_who_want_it() {
     assert_eq!(told.len(), 1);
     assert_eq!(told[0].1.status, v1::LiveAirStatus::Unavailable as i32);
 }
+
+// ---- Live and simulated together (spec 14 Phase 18 Q13 (c)) ------------
+
+/// A made-up adsb.lol answer: an airliner overhead and, if given, an
+/// aircraft of `category` `km` north of (47.90, 7.95) – the query's
+/// centre for the place of `run_feed`.
+fn made_up(extra: Option<(&str, f64)>) -> String {
+    let mut list = vec![
+        r#"{"hex":"f30001","flight":"TEST01","category":"A3","alt_geom":36000,"gs":450,"track":40,"lat":47.95,"lon":8.0,"seen_pos":0.0}"#.to_owned(),
+    ];
+    if let Some((category, km)) = extra {
+        let (lat, lon) = ocw_sim::air::live::destination(47.90, 7.95, 0.0, km * 1000.0);
+        list.push(format!(
+            r#"{{"hex":"f30002","flight":"TEST02","category":"{category}","alt_geom":3500,"gs":0,"track":0,"lat":{lat:.6},"lon":{lon:.6},"seen_pos":0.0}}"#
+        ));
+    }
+    format!(r#"{{"ac":[{}],"now":0}}"#, list.join(","))
+}
+
+/// The feed's ledger (Q13 (c)): a helicopter or small plane within 30 km
+/// of the query's centre opens a time for its kind, at 31 km none; the
+/// time ends with the fetch that no longer sees it, or when the feed is
+/// lost; every update carries the ledger – kinds and times only.
+#[test]
+fn the_ledger_says_when_the_feed_showed_small_planes_and_helicopters_near() {
+    use ocw_protocol::live_air::ledger_from_wire;
+    let place = (47.92, 7.96);
+    let centre = query_centre(place.0, place.1);
+    assert!((centre.0 - 47.9).abs() < 1e-9 && (centre.1 - 7.95).abs() < 1e-9);
+    let body = Arc::new(Mutex::new(String::new()));
+    let b = body.clone();
+    let mut f = FnAirFetcher::new(move |_r: &Request| Some(ok(&b.lock().unwrap())));
+    let mut feed = LiveAirFeed::new(Box::new(AdsbLol::default()), 7);
+    let mut fetch = |feed: &mut LiveAirFeed, t: i64, answer: String| {
+        *body.lock().unwrap() = answer;
+        feed.step(t, true, place, Some(&mut f)).expect("an update")
+    };
+    // 31 km: not near.
+    let u = fetch(&mut feed, T0, made_up(Some(("A7", 31.0))));
+    assert_eq!(u.aircraft.len(), 2);
+    assert!(u.sim_busy.is_empty());
+    // 29 km: a helicopter's time from this fetch on.
+    let t1 = T0 + 60_000;
+    let u = fetch(&mut feed, t1, made_up(Some(("A7", 29.0))));
+    assert_eq!(u.sim_busy.len(), 1);
+    assert_eq!(u.sim_busy[0].class, v1::LiveAirClass::Helicopter as i32);
+    assert_eq!(u.sim_busy[0].from_ms, t1);
+    assert!(
+        u.sim_busy[0].to_ms > t1 + 60_000,
+        "held until the next fetch"
+    );
+    let l = ledger_from_wire(&u.sim_busy);
+    assert!(l.busy_at(AirKind::Helicopter, t1 + 30_000));
+    assert!(!l.busy_at(AirKind::SmallPlane, t1 + 30_000));
+    assert_eq!(&l, feed.ledger());
+    // A small plane too (A1), the helicopter gone.
+    let t2 = t1 + 60_000;
+    let u = fetch(&mut feed, t2, made_up(Some(("A1", 12.0))));
+    let l = ledger_from_wire(&u.sim_busy);
+    assert!(l.busy_at(AirKind::Helicopter, t2 - 1) && !l.busy_at(AirKind::Helicopter, t2));
+    assert!(l.busy_at(AirKind::SmallPlane, t2));
+    // A glider near opens no time (nor an airliner or a balloon).
+    let t3 = t2 + 60_000;
+    let u = fetch(&mut feed, t3, made_up(Some(("B1", 2.0))));
+    let l = ledger_from_wire(&u.sim_busy);
+    assert!(!l.busy_at(AirKind::SmallPlane, t3) && !l.busy_at(AirKind::Helicopter, t3));
+    assert_eq!(l.times().len(), 2, "what was stays for the flights of then");
+    // The ledger is kinds and times: nothing of an aircraft, no place –
+    // with it the update is a few bytes longer.
+    let size = |u: &v1::LiveAirUpdate| {
+        ocw_protocol::encode(&ocw_protocol::server_message(
+            v1::server_message::Msg::LiveAir(u.clone()),
+        ))
+        .len()
+    };
+    let bare = v1::LiveAirUpdate {
+        sim_busy: Vec::new(),
+        ..u.clone()
+    };
+    assert!(size(&u) - size(&bare) <= 2 * (4 + 2 * 10));
+    // The feed fails while a small plane is near: its time ends there
+    // (the clients draw the whole simulated sky; what starts in it stays).
+    let t4 = t3 + 60_000;
+    fetch(&mut feed, t4, made_up(Some(("A1", 5.0))));
+    assert!(feed.ledger().busy_at(AirKind::SmallPlane, t4 + 100_000));
+    let t5 = t4 + 60_000;
+    let down = fetch(&mut feed, t5, "not json".into());
+    assert_eq!(down.status, v1::LiveAirStatus::Down as i32);
+    assert!(down.sim_busy.is_empty());
+    assert!(!feed.ledger().busy_at(AirKind::SmallPlane, t5));
+    assert!(feed.ledger().busy_at(AirKind::SmallPlane, t5 - 1));
+    // Another world: nothing of the old one.
+    feed.world_changed();
+    assert!(feed.ledger().times().is_empty());
+    // The recorded Black Forest answer: only the two kinds ever.
+    let mut bf = LiveAirFeed::new(Box::new(AdsbLol::default()), 7);
+    let (_, ups) = run_feed(&mut bf, T0, 2, |_| true, |_| Some(ok(BF[0])));
+    assert!(ups[0].sim_busy.iter().all(|b| {
+        b.class == v1::LiveAirClass::Helicopter as i32
+            || b.class == v1::LiveAirClass::SmallPlane as i32
+    }));
+}
+
+/// A recorded answer (`OCW_LIVE_AIR_FILE`; pictures and tests without the
+/// network): read again for every request, and taken as the sky of the
+/// world clock – also after the time machine moved it, back or forward.
+#[test]
+fn a_recorded_answer_is_the_sky_of_the_world_clock() {
+    use crate::{GameServer, ServerConfig};
+    use ocw_protocol::v1::{client_message::Msg as C, server_message::Msg as S};
+    use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, encode};
+    use ocw_world::Route;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sky.json");
+    std::fs::write(&path, made_up(Some(("A7", 10.0)))).unwrap();
+    let fetcher = FileAirFetcher::new(&path);
+    assert!(fetcher.recorded());
+    assert!(!FnAirFetcher::new(|_r: &Request| None).recorded());
+    let mut s = GameServer::new(
+        Route::test_loop(),
+        ServerConfig {
+            real_epoch_ms: Some(T0),
+            geo_origin: Some((47.92, 7.96)),
+            ..Default::default()
+        },
+    );
+    s.set_air_fetcher(Box::new(fetcher));
+    let c = s.connect();
+    s.handle(
+        c,
+        &encode(&client_message(C::Hello(v1::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            display_name: "Ada Rider".into(),
+            profile: Some(ocw_core::RiderProfile::default().into()),
+            ..Default::default()
+        }))),
+    );
+    s.handle(c, &encode(&ocw_protocol::live_air::wish(true)));
+    let run = |s: &mut GameServer, ticks: usize| -> Vec<v1::LiveAirUpdate> {
+        let mut got = Vec::new();
+        for _ in 0..ticks {
+            s.tick();
+            got.extend(s.take_directed().into_iter().filter_map(|(_, b)| {
+                match decode_server(&b) {
+                    Ok(S::LiveAir(u)) => Some(u),
+                    _ => None,
+                }
+            }));
+        }
+        got
+    };
+    let live = |got: &[v1::LiveAirUpdate]| -> Vec<v1::LiveAirUpdate> {
+        got.iter()
+            .filter(|u| u.status == v1::LiveAirStatus::Live as i32)
+            .cloned()
+            .collect()
+    };
+    let first = run(&mut s, 100);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].status, v1::LiveAirStatus::Live as i32);
+    assert_eq!(first[0].aircraft.len(), 2);
+    assert_eq!(first[0].sim_busy.len(), 1, "the helicopter 10 km away");
+    assert!((first[0].fetched_ms - T0).abs() < 5000);
+    // The time machine: 135 days back, to a summer afternoon.
+    let step = |s: &mut GameServer, ms: i64| {
+        s.handle(
+            c,
+            &encode(&ocw_protocol::clock_request(ocw_sky::ClockChange::Step(ms))),
+        );
+    };
+    let back = -135 * 86_400_000;
+    step(&mut s, back);
+    let then = live(&run(&mut s, 150));
+    assert_eq!(then.len(), 1, "fetched again for the new time");
+    assert!((then[0].fetched_ms - (T0 + back)).abs() < 10_000);
+    assert_eq!(then[0].sim_busy.len(), 1);
+    assert!(then[0].sim_busy[0].from_ms < T0 + back + 10_000);
+    // … and forward again.
+    step(&mut s, 3 * 3_600_000);
+    let later = live(&run(&mut s, 150));
+    assert_eq!(later.len(), 1);
+    assert!((later[0].fetched_ms - (T0 + back + 3 * 3_600_000)).abs() < 15_000);
+    // A file that is gone: the feed is down, the simulated sky.
+    std::fs::remove_file(&path).unwrap();
+    step(&mut s, 3_600_000);
+    let gone = run(&mut s, 150);
+    assert!(
+        gone.iter()
+            .any(|u| u.status == v1::LiveAirStatus::Down as i32
+                && u.note.contains("recorded answer"))
+    );
+    assert!(
+        gone.iter().all(|u| !u.note.contains("sky.json")),
+        "no path in the note"
+    );
+}
