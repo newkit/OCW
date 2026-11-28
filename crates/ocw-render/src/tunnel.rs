@@ -407,6 +407,8 @@ pub struct Tunnels {
     /// The package's tunnels near the rider by (member, edge).
     structures: HashMap<(usize, usize), Structure>,
     materials: Option<TunnelMaterials>,
+    /// The tunnel lamps' light on the rider ([`TUNNEL_LIGHT_LM`]).
+    light: Option<Entity>,
     since_scan: f32,
     scanned_at: Option<f64>,
 }
@@ -437,7 +439,60 @@ pub struct TunnelPlugin;
 impl Plugin for TunnelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tunnels>()
-            .add_systems(Update, update_tunnels);
+            .add_systems(Update, (update_tunnels, place_tunnel_light).chain());
+    }
+}
+
+/// The tunnel lamps light the riders (they are lit like the rest of the
+/// world, and at night the sun and sky are gone): one point light over
+/// the local rider, fading in with the tunnel ([`daylight_share`]), no
+/// shadows (lm).
+pub const TUNNEL_LIGHT_LM: f32 = 9_000.0;
+
+#[derive(Component)]
+struct TunnelLight;
+
+fn place_tunnel_light(
+    mut commands: Commands,
+    view: Res<RideView>,
+    mut tunnels: ResMut<Tunnels>,
+    mut lights: Query<(&mut PointLight, &mut Transform), With<TunnelLight>>,
+) {
+    let Some(local) = view.local() else {
+        return;
+    };
+    let d = local.state.distance;
+    let inside = 1.0 - daylight_share(&tunnels.stretches, d);
+    let entity = match tunnels.light {
+        Some(e) if lights.get(e).is_ok() => e,
+        _ => {
+            if inside <= 0.0 {
+                return;
+            }
+            let e = commands
+                .spawn((
+                    SceneEntity,
+                    TunnelLight,
+                    PointLight {
+                        color: Color::linear_rgb(1.0, 0.9, 0.75),
+                        intensity: 0.0,
+                        range: 30.0,
+                        radius: 0.3,
+                        shadow_maps_enabled: false,
+                        ..default()
+                    },
+                    Transform::default(),
+                ))
+                .id();
+            tunnels.light = Some(e);
+            return;
+        }
+    };
+    if let Ok((mut light, mut tf)) = lights.get_mut(entity) {
+        let track = view.track(local.id);
+        let p = track.sample(d + 2.0).position;
+        tf.translation = to_vec3(p) + Vec3::Y * (TUBE_WALL_M as f32 + 0.5);
+        light.intensity = TUNNEL_LIGHT_LM * inside;
     }
 }
 
