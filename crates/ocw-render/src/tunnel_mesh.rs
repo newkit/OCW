@@ -514,7 +514,15 @@ pub fn tunnel_meshes_with(
 
 /// The road surface across a segment from `a` to `b`, lanes, kerbs and
 /// walkways to `half`, with markings; `light` per end scales the
-/// colours.
+/// colours. `sunlit`: the lit mesh of galleries and open stretches, whose
+/// asphalt matches the package's roads in daylight (the tube's unlit
+/// asphalt is darker: the lamps' pools are baked into it).
+/// The asphalt of the sunlit road pieces (vertex colour, linear; times the
+/// texture's grain): as light as the package's asphalt roads in daylight,
+/// so an open stretch or a gallery floor does not show as a dark patch on
+/// the road (the Arcalís video, 2026-11-28).
+pub const SUNLIT_ASPHALT: [f32; 4] = [0.3, 0.3, 0.31, 1.0];
+
 fn road_surface(
     m: &mut MeshArrays,
     a: AxisPoint,
@@ -522,9 +530,14 @@ fn road_surface(
     half: f32,
     light: [f32; 2],
     walkway: bool,
+    sunlit: bool,
 ) {
     let rh = (a.width / 2.0) as f32;
-    let asphalt = [0.11, 0.11, 0.115, 1.0];
+    let asphalt = if sunlit {
+        SUNLIT_ASPHALT
+    } else {
+        [0.11, 0.11, 0.115, 1.0]
+    };
     let kerb = grey(0.42);
     let mut bl = Builder { m };
     let strip = |bl: &mut Builder, l0: f32, h0: f32, l1: f32, h1: f32, c: [f32; 4]| {
@@ -593,6 +606,7 @@ fn tube_segment(
         half,
         [0.35 + 0.75 * (la - 0.42), 0.35 + 0.75 * (lb - 0.42)],
         true,
+        false,
     );
     // Walls and vault.
     let prof = vault_profile(half, boxed);
@@ -648,7 +662,7 @@ fn gallery_segment(
     seed: u64,
 ) {
     let half = a.half();
-    road_surface(&mut out.lit, a, b, half, [1.0, 1.0], true);
+    road_surface(&mut out.lit, a, b, half, [1.0, 1.0], true, true);
     let sg: f32 = if hill_right { 1.0 } else { -1.0 };
     let roof = GALLERY_ROOF_M as f32;
     let slab = GALLERY_SLAB_M as f32;
@@ -725,7 +739,7 @@ fn gallery_segment(
 }
 
 fn open_segment(out: &mut TunnelMeshes, a: AxisPoint, b: AxisPoint) {
-    road_surface(&mut out.lit, a, b, a.half(), [1.0, 1.0], false);
+    road_surface(&mut out.lit, a, b, a.half(), [1.0, 1.0], false, true);
 }
 
 /// A concrete frame round the tube's mouth at `p`, facing `out_dir`
@@ -1109,6 +1123,11 @@ mod tests {
         let (_, hi) = bounds(&m.lit);
         assert!(hi.y < 100.1);
         assert!(m.tube.indices.is_empty() && m.glow.indices.is_empty());
+        // Regression (the Arcalís video, 2026-11-28): the open road in the
+        // sun has the light asphalt of the package's roads, not the tube's
+        // dark one.
+        assert!(m.lit.colors.iter().any(|c| *c == SUNLIT_ASPHALT));
+        assert!(!m.lit.colors.iter().any(|c| c[0] < 0.2 && c[0] == c[1]));
     }
 
     #[test]

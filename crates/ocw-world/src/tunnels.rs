@@ -401,6 +401,30 @@ impl TunnelSections {
             None => sections(samples),
         }
     }
+
+    /// The stretches of the tunnel edge `id` whose road lies in the open or
+    /// under a gallery's roof (from, to: distance from the edge's start):
+    /// there the road is a drawn surface on the shaped terrain like any
+    /// other road, so nothing may grow on it (the world-building rule of
+    /// 2026-11-28, no plant on a road surface) – unlike a bored or box
+    /// stretch, where the terrain above is free. Empty for an edge the
+    /// section does not list.
+    pub fn surface_spans(&self, id: u64) -> Vec<(f64, f64)> {
+        let Some(secs) = self.edges.get(&id) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(f64, f64)> = Vec::new();
+        for s in secs {
+            if !matches!(s.kind, SectionKind::Open | SectionKind::Gallery { .. }) {
+                continue;
+            }
+            match out.last_mut() {
+                Some(last) if (s.from - last.1).abs() < 1e-3 => last.1 = s.to,
+                _ => out.push((s.from, s.to)),
+            }
+        }
+        out
+    }
 }
 
 fn kind_code(k: SectionKind) -> u8 {
@@ -619,5 +643,23 @@ mod tests {
         let e = edge(300.0);
         let g = |x: f64, z: f64| Some(100.0 + (x * 0.05).sin() * 8.0 + z * 0.3);
         assert_eq!(edge_sections(&e, &g), edge_sections(&e, &g));
+    }
+
+    #[test]
+    fn surface_spans_are_the_open_and_gallery_stretches_joined() {
+        let mut t = TunnelSections::default();
+        let sec = |from, to, kind| Section { from, to, kind };
+        t.edges.insert(
+            7,
+            vec![
+                sec(0.0, 20.0, SectionKind::Open),
+                sec(20.0, 60.0, SectionKind::Gallery { hill_right: true }),
+                sec(60.0, 200.0, SectionKind::Bored),
+                sec(200.0, 230.0, SectionKind::Box),
+                sec(230.0, 250.0, SectionKind::Open),
+            ],
+        );
+        assert_eq!(t.surface_spans(7), vec![(0.0, 60.0), (230.0, 250.0)]);
+        assert!(t.surface_spans(8).is_empty());
     }
 }

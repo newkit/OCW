@@ -451,14 +451,6 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
-    /// A light smoothing of the terrain off the roads (spec §4.8.8 Q7 (d),
-    /// v5.52) for an existing package: every grid vertex towards the
-    /// Gaussian mean of its neighbours within the radius, by at most the
-    /// largest change; roads, junction surfaces, water and building sites
-    /// keep their heights (the change fades in beside them) and the terrain
-    /// is settled under the roads again; prints the change (max / mean).
-    /// `package` does the same while cleaning. Every other section as it
-    /// was (the manifest is renewed).
     /// Tunnels in the terrain (spec 4.3 *Tunnels and bridges in the
     /// terrain*, 4.8.1 `tunnel.*`): measures every tunnel of the package
     /// against the terrain (how much of its tube stands in the open, cover,
@@ -488,6 +480,14 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// A light smoothing of the terrain off the roads (spec §4.8.8 Q7 (d),
+    /// v5.52) for an existing package: every grid vertex towards the
+    /// Gaussian mean of its neighbours within the radius, by at most the
+    /// largest change; roads, junction surfaces, water and building sites
+    /// keep their heights (the change fades in beside them) and the terrain
+    /// is settled under the roads again; prints the change (max / mean).
+    /// `package` does the same while cleaning. Every other section as it
+    /// was (the manifest is renewed).
     SmoothTerrain {
         /// The package (rewritten in place unless --out is given).
         #[arg(long)]
