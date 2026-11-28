@@ -531,11 +531,14 @@ fn road_surface(
         // From right to left, so the normal faces up.
         let v = [a.at(l1, h1), a.at(l0, h0), b.at(l1, h1), b.at(l0, h0)];
         let tm = TEX_REPEAT_M;
+        // Across in metres (height on the kerbs' faces, so they are not
+        // smeared).
+        let (v0, v1) = (l0 + h0, l1 + h1);
         let uv = [
-            [a.s as f32 / tm, l1 / tm],
-            [a.s as f32 / tm, l0 / tm],
-            [b.s as f32 / tm, l1 / tm],
-            [b.s as f32 / tm, l0 / tm],
+            [a.s as f32 / tm, v1 / tm],
+            [a.s as f32 / tm, v0 / tm],
+            [b.s as f32 / tm, v1 / tm],
+            [b.s as f32 / tm, v0 / tm],
         ];
         let (ca, cb) = (scale(c, light[0]), scale(c, light[1]));
         bl.quad(v, uv, [ca, ca, cb, cb]);
@@ -864,7 +867,7 @@ pub fn tunnel_texture_pixels() -> Vec<[u8; 4]> {
             } else {
                 1.0
             };
-            let val = (0.78 + 0.32 * (g - 0.5) - 0.10 * (streak - 0.5).max(0.0) * 2.0) * joint;
+            let val = (0.8 + 0.2 * (g - 0.5) - 0.12 * (streak - 0.5).max(0.0) * 2.0) * joint;
             let b = (val.clamp(0.0, 1.0) * 255.0).round() as u8;
             out.push([b, b, b, 255]);
         }
@@ -1143,7 +1146,7 @@ mod tests {
             .map(|p| (f64::from(p[0]) - mean).powi(2))
             .sum::<f64>()
             / px.len() as f64;
-        assert!(var.sqrt() > 6.0, "{}", var.sqrt());
+        assert!(var.sqrt() > 4.0, "{}", var.sqrt());
     }
 
     #[test]

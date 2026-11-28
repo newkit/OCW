@@ -542,7 +542,7 @@ video = 8
 
 [[scene]]
 name = "tunnel-ceiling-day"
-description = "Inside the Steg tunnel (km 9.1) at noon: the sprayed-concrete vault, the light band at the foot of the walls, soot over the lanes, the cable tray with its lamps, reflectors and markings (spec 3.2, v7.09)"
+description = "Inside the Steg tunnel (km 9.1) at noon: the sprayed-concrete vault, the light band at the foot of the walls, soot over the lanes, the cable tray with its lamps, reflectors and markings (spec 3.2, v7.13)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
 riders = "active = \"Jo Climber\"\n[[rider]]\nname = \"Jo Climber\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#00838F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -551,7 +551,7 @@ shot = 9
 
 [[scene]]
 name = "tunnel-ceiling-night"
-description = "Inside the Steg tunnel (km 9.1) at night: the same view lit only by the tunnel lamps and the bike light (spec 3.2, v7.09)"
+description = "Inside the Steg tunnel (km 9.1) at night: the same view lit only by the tunnel lamps and the bike light (spec 3.2, v7.13)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
 riders = "active = \"Kai Descent\"\n[[rider]]\nname = \"Kai Descent\"\nweight_kg = 79.0\nheight_cm = 186.0\nbike = \"gravel\"\nframe_color = \"#455A64\"\njersey_color = \"#C0CA33\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -560,11 +560,11 @@ shot = 9
 
 [[scene]]
 name = "tunnel-portal-day"
-description = "The Steg tunnel's lower portal from outside (route km 8.74) on a summer afternoon: the concrete portal frame in the slope (spec 3.2, v7.09)"
+description = "The Steg tunnel's lower portal from outside (the rider waiting at route km 8.72, the portal at 8.79) on a summer afternoon: the concrete portal frame in the slope (spec 3.2, v7.13)"
 world = true
-args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "0"]
 riders = "active = \"Lu Cadence\"\n[[rider]]\nname = \"Lu Cadence\"\nweight_kg = 57.0\nheight_cm = 162.0\nbike = \"road\"\nframe_color = \"#FBC02D\"\njersey_color = \"#3949AB\"\nhelmet_color = \"#3949AB\"\nkit = \"plain\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #C49A6C --skin 6", "2.5=teleport 8.72", "3=camera.orbit 160 10 16"]
+at = ["0.5=time pause", "0.5=time 2026-07-02 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #C49A6C --skin 6", "2.5=teleport 8.72", "3=camera.orbit 15 20 34"]
 shot = 9
 
 [[scene]]
@@ -922,82 +922,110 @@ max_video_mb = 6
 
 # --- Andorra tunnels (spec 3.2, 4.3, v7.13) -------------------------------
 # Before / after the same camera: OCW_TUNNELS=legacy with the live package,
-# then the shaped package (scripts/tunnels-build.sh) with the new look.
+# then the shaped package (scripts/tunnels-build.sh) with the new look. Tunnel
+# km from the probes below: Ordino - Arcalís 13.05 - 13.23 (the CG-3 tunnel,
+# its avalanche galleries before it), Andorra la Vella - Envalira 5.13 - 5.26.
 
 [[scene]]
-name = "andorra-tunnel-carretera-general-3-997957646"
-description = "Andorra, Carretera General 3 (OSM way 997957646, tunnel=avalanche_protector, 117 m) from the side at x -7e+03 z -1e+04 (spec 3.2, 4.3, v7.13): render with OCW_TUNNELS=legacy and the live package for before, the shaped package for after"
+name = "andorra-tunnel-arcalis-entry"
+description = "Ordino - Arcalís km 12.98: the CG-3 tunnel (km 13.05 - 13.23) ahead from behind and above the waiting rider; before (OCW_TUNNELS=legacy, live package) the tube stood out of the slope, after the portal is cut into the mound (spec 3.2, 4.3, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-7e+03,-1e+04", "--bots", "0", "--power", "200"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Mia Switchback\"\n[[rider]]\nname = \"Mia Switchback\"\nweight_kg = 63.0\nheight_cm = 169.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "3=god on", "3.2=god.flight hover", "3.4=god.view first", "3.6=god.pose -7e+03 -1e+04 18 2e+02 -14"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "2.5=teleport 12.98", "3=camera.orbit 20 24 40"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-carretera-general-3-6227097"
-description = "Andorra, Carretera General 3 (OSM way 6227097, tunnel=yes, 192 m) from the side at x -8e+03 z -1e+04 (spec 3.2, 4.3, v7.13): render with OCW_TUNNELS=legacy and the live package for before, the shaped package for after"
+name = "andorra-tunnel-arcalis-exit"
+description = "Ordino - Arcalís km 13.30: the CG-3 tunnel's upper portal (km 13.23) seen from the front of the waiting rider (spec 3.2, 4.3, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-8e+03,-1e+04", "--bots", "0", "--power", "200"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Noa Granfondo\"\n[[rider]]\nname = \"Noa Granfondo\"\nweight_kg = 77.0\nheight_cm = 183.0\nbike = \"gravel\"\nframe_color = \"#2E7D32\"\njersey_color = \"#ECEFF1\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #A0522D --skin 10 --beard 2", "3=god on", "3.2=god.flight hover", "3.4=god.view first", "3.6=god.pose -8e+03 -1e+04 18 0.8 -14"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #A0522D --skin 10 --beard 2", "2.5=teleport 13.3", "3=camera.orbit 160 24 40"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-t-nel-de-sant-antoni-6242756"
-description = "Andorra, Túnel de Sant Antoni (OSM way 6242756, tunnel=yes, 275 m) from the side at x -7e+03 z 1e+03 (spec 3.2, 4.3, v7.13): render with OCW_TUNNELS=legacy and the live package for before, the shaped package for after"
+name = "andorra-gallery-arcalis-1175"
+description = "Ordino - Arcalís km 11.75: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-7e+03,1e+03", "--bots", "0", "--power", "200"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Oli Echelon\"\n[[rider]]\nname = \"Oli Echelon\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#E65100\"\njersey_color = \"#1E88E5\"\nhelmet_color = \"#E65100\"\nkit = \"plain\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair afro --hair-colour #111111 --skin 15", "3=god on", "3.2=god.flight hover", "3.4=god.view first", "3.6=god.pose -7e+03 1e+03 18 9e+01 -14"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair afro --hair-colour #111111 --skin 15", "2.5=teleport 11.75", "3=camera.orbit 25 28 45"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-t-nel-de-radio-andorra-124674263"
-description = "Andorra, Túnel de Radio Andorra (OSM way 124674263, tunnel=yes, 84 m) from the side at x -2e+03 z 1e+03 (spec 3.2, 4.3, v7.13): render with OCW_TUNNELS=legacy and the live package for before, the shaped package for after"
+name = "andorra-gallery-arcalis-1195"
+description = "Ordino - Arcalís km 11.95: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-2e+03,1e+03", "--bots", "0", "--power", "200"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Pia Bergpreis\"\n[[rider]]\nname = \"Pia Bergpreis\"\nweight_kg = 56.0\nheight_cm = 161.0\nbike = \"road\"\nframe_color = \"#D81B60\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#FFFFFF\"\nkit = \"band\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #E0C080 --skin 1", "3=god on", "3.2=god.flight hover", "3.4=god.view first", "3.6=god.pose -2e+03 1e+03 18 2e+02 -14"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #E0C080 --skin 1", "2.5=teleport 11.95", "3=camera.orbit 25 28 45"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-carretera-de-prat-del-ruiders-24374064"
-description = "Andorra, Carretera de Prat del Ruiders (OSM way 24374064, tunnel=yes, 187 m) from the side at x -1e+04 z -4e+03 (spec 3.2, 4.3, v7.13): render with OCW_TUNNELS=legacy and the live package for before, the shaped package for after"
+name = "andorra-gallery-arcalis-1215"
+description = "Ordino - Arcalís km 12.15: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-1e+04,-4e+03", "--bots", "0", "--power", "200"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Quin Rouleur\"\n[[rider]]\nname = \"Quin Rouleur\"\nweight_kg = 85.0\nheight_cm = 190.0\nbike = \"mtb\"\nframe_color = \"#37474F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FDD835\"\nkit = \"sash\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #5D4037 --skin 7", "3=god on", "3.2=god.flight hover", "3.4=god.view first", "3.6=god.pose -1e+04 -4e+03 18 5e+01 -14"]
-shot = 14
-
+at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #5D4037 --skin 7", "2.5=teleport 12.15", "3=camera.orbit 25 28 45"]
+shot = 12
 
 [[scene]]
-name = "andorra-dos-valires-day"
-description = "Inside the Túnel de les dos Valires (2.9 km, Andorra) at noon: the new vault – shotcrete, the light band, soot over the lanes, the lamp tray, jet fans, niches and reflectors (spec 3.2, v7.13)"
+name = "andorra-tunnel-envalira-entry"
+description = "Andorra la Vella - Envalira km 5.06: the CG-2 tunnel (km 5.13 - 5.26) ahead from behind and above (spec 3.2, 4.3, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-5048,1805", "--bots", "1", "--power", "260"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/andorra-envalira.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Rae Tempo\"\n[[rider]]\nname = \"Rae Tempo\"\nweight_kg = 68.0\nheight_cm = 174.0\nbike = \"road\"\nframe_color = \"#C62828\"\njersey_color = \"#FAFAFA\"\nhelmet_color = \"#C62828\"\nkit = \"band\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 12:30", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair pixie --hair-colour #2B1B14 --skin 8", "1=dev.bot_bike 1 --bike gravel"]
+at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair pixie --hair-colour #2B1B14 --skin 8", "2.5=teleport 5.06", "3=camera.orbit 20 24 40"]
 shot = 12
 
 [[scene]]
-name = "andorra-dos-valires-night"
-description = "Inside the Túnel de les dos Valires at night: lit only by its lamps (denser in the entrance zones) and the bike light (spec 3.2, v7.13)"
+name = "andorra-tunnel-arcalis-inside-day"
+description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at noon: the new vault, light band, lamp tray, reflectors and markings (spec 3.2, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-5048,1805", "--bots", "1", "--power", "260"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Sol Climber\"\n[[rider]]\nname = \"Sol Climber\"\nweight_kg = 80.0\nheight_cm = 187.0\nbike = \"gravel\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 23:30", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair long --hair-colour #8D5524 --skin 13", "1=dev.bot_bike 1 --bike road"]
+at = ["0.5=time pause", "0.5=time 2026-07-02 12:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair long --hair-colour #8D5524 --skin 13", "2.5=teleport 13.14"]
 shot = 12
 
 [[scene]]
-name = "andorra-cg3-gallery-video"
-description = "Video: riding through the CG-3 avalanche gallery below Arcalís (OSM tunnel=avalanche_protector, 117 m): the roof on the hill side, pillars open to the valley (spec 3.2, v7.13)"
+name = "andorra-tunnel-arcalis-inside-night"
+description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at night: its lamps (denser in the entrance zones) and the bike light (spec 3.2, v7.13)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-6620,-10100", "--bots", "0", "--power", "450", "--window", "1920x1080"]
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Tia Watts\"\n[[rider]]\nname = \"Tia Watts\"\nweight_kg = 59.0\nheight_cm = 165.0\nbike = \"road\"\nframe_color = \"#00897B\"\njersey_color = \"#F06292\"\nhelmet_color = \"#FAFAFA\"\nkit = \"plain\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 15:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #C49A6C --skin 5"]
-warmup = 4
-video = 12
+at = ["0.5=time pause", "0.5=time 2026-07-02 23:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #C49A6C --skin 5", "2.5=teleport 13.14"]
+shot = 12
+
+[[scene]]
+name = "andorra-tunnel-arcalis-video"
+description = "Video: riding through the CG-3 tunnel on the Arcalís climb (km 12.96 - 13.25) at 900 W: the portal in the slope, the tunnel camera, the lamps, out into the light (spec 3.2, v7.13)"
+world = "andorra"
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "900", "--window", "1920x1080"]
+riders = "active = \"Mia Switchback\"\n[[rider]]\nname = \"Mia Switchback\"\nweight_kg = 63.0\nheight_cm = 169.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "2.5=teleport 12.96"]
+warmup = 3
+video = 22
 max_video_mb = 6
+
+[[scene]]
+name = "andorra-tunnel-probe-arcalis"
+description = "Probe (log only): the tunnels along the ordino-arcalis route, teleporting every km (the log lists the tunnels near the rider, km)"
+world = "andorra"
+args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
+at = ["0.5=hud off", "2.0=teleport 0", "3.5=teleport 1", "5.0=teleport 2", "6.5=teleport 3", "8.0=teleport 4", "9.5=teleport 5", "11.0=teleport 6", "12.5=teleport 7", "14.0=teleport 8", "15.5=teleport 9", "17.0=teleport 10", "18.5=teleport 11", "20.0=teleport 12", "21.5=teleport 13", "23.0=teleport 14", "24.5=teleport 15", "26.0=teleport 16", "27.5=teleport 17", "29.0=teleport 18"]
+shot = 32
+pick = false
+
+[[scene]]
+name = "andorra-tunnel-probe-envalira"
+description = "Probe (log only): the tunnels along the andorra-envalira route, teleporting every km (the log lists the tunnels near the rider, km)"
+world = "andorra"
+args = ["--world", "{world}", "--route-file", "{world_dir}/andorra-envalira.route", "--bots", "0", "--power", "0"]
+at = ["0.5=hud off", "2.0=teleport 0", "3.5=teleport 1", "5.0=teleport 2", "6.5=teleport 3", "8.0=teleport 4", "9.5=teleport 5", "11.0=teleport 6", "12.5=teleport 7", "14.0=teleport 8", "15.5=teleport 9", "17.0=teleport 10", "18.5=teleport 11", "20.0=teleport 12", "21.5=teleport 13", "23.0=teleport 14", "24.5=teleport 15", "26.0=teleport 16", "27.5=teleport 17", "29.0=teleport 18", "30.5=teleport 19", "32.0=teleport 20", "33.5=teleport 21", "35.0=teleport 22", "36.5=teleport 23", "38.0=teleport 24", "39.5=teleport 25", "41.0=teleport 26", "42.5=teleport 27", "44.0=teleport 28"]
+shot = 47
+pick = false
 
 # --- Black Forest world package (world = "blackforest") ---------------------
 # scripts/fetch-pilot.sh blackforest && scripts/build-blackforest.sh
