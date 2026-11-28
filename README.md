@@ -1931,7 +1931,12 @@ computer.
   either side. Switching it on also switches autodrive off (upright, manual
   lean steering), so ← / → steer you off the road; switching it off keeps the
   steering mode (press A for autodrive). The HUD shows "manual | WILD". The
-  camera follows over terrain and trees.
+  camera follows over terrain and trees. You go where you lean at any speed
+  and slope (the road's bends no longer pull you along; leaning up to 40°,
+  a 33 m curve at 60 km/h); riding across a descent is flat, and beside the
+  road its slow-down before hairpins does not brake you. In a free ride,
+  turning further than ~83° to the road (or reaching 60 m) takes you on
+  into the terrain, where you can ride full circles.
 
 **Traffic** (spec 14 Phase 18; *Settings → Traffic*, console `traffic`): the
 switches are built, the vehicles come in the next steps. *Traffic* turns

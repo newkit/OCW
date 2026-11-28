@@ -1745,7 +1745,12 @@ impl Session {
                 && rider.control == Control::Client
                 && rider.wild
                 && rider.crash.is_none()
-                && crate::offroad::leaves_band(rider.state.lateral_offset, rider.state.heading)
+                && crate::offroad::leaves_band(
+                    rider.state.lateral_offset,
+                    rider.state.heading,
+                    track.curvature(rider.state.distance),
+                    track.road_width_at(rider.state.distance),
+                )
             {
                 let t = crate::offroad::from_band(g.clone(), track, &rider.state);
                 rider.state.lateral_offset = 0.0;

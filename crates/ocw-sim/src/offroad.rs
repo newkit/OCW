@@ -411,11 +411,17 @@ pub fn landing(
     }
 }
 
-/// Whether a wild rider at the edge of wild mode's band (`lateral` m from
-/// the road, heading `heading` to it) leaves it for the terrain (free ride
-/// only; the session decides where).
-pub fn leaves_band(lateral: f64, heading: f64) -> bool {
-    lateral.abs() >= physics::WILD_LIMIT_M - 1e-6 && heading * lateral >= 0.0
+/// Whether a wild rider in wild mode's band (`lateral` m from the road,
+/// heading `heading` to it, the road's curvature `road_curvature` and
+/// width `road_width_m` there) leaves it for the terrain (free ride only;
+/// the session decides where): where the band no longer holds them
+/// ([`physics::band_holds`]: at its edge riding outwards, turned to its
+/// largest angle, near a curve's centre) and they are off the road's
+/// surface (+ [`ROAD_LANDING_MARGIN_M`]: never from a bridge's deck or a
+/// tunnel, whose railings and walls bound the band).
+pub fn leaves_band(lateral: f64, heading: f64, road_curvature: f64, road_width_m: f64) -> bool {
+    lateral.abs() > road_width_m / 2.0 + ROAD_LANDING_MARGIN_M
+        && !physics::band_holds(lateral, heading, road_curvature)
 }
 
 /// The off-road track of a rider leaving wild mode's band: at their

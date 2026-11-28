@@ -203,18 +203,22 @@ fn out_of_wild_modes_band_into_the_terrain_and_j_back_to_the_road() {
     s.set_wild(me, true);
     s.set_lean(me, 1, -0.3);
     let mut out = false;
+    let mut last = 0.0;
     for _ in 0..(60.0 / SIM_DT) as usize {
         s.step();
-        let st = s.rider_state(me).unwrap();
         if s.off_road(me).is_some() {
             out = true;
             break;
         }
+        let st = s.rider_state(me).unwrap();
+        last = st.lateral_offset;
         assert!(st.lateral_offset.abs() <= physics::WILD_LIMIT_M + 1e-9);
     }
     assert!(out, "left the band");
+    // Turned to the band's largest angle, off the road (left of it).
+    assert!(last < -5.0, "{last}");
     let p = s.off_road(me).unwrap();
-    assert!((p.z - (500.0 - physics::WILD_LIMIT_M)).abs() < 2.0, "{p:?}");
+    assert!((p.z - (500.0 + last)).abs() < 2.0, "{p:?} at {last}");
     // J: back on the nearest road, standing.
     s.rejoin_route(me, None).unwrap();
     assert!(s.off_road(me).is_none());
@@ -222,6 +226,51 @@ fn out_of_wild_modes_band_into_the_terrain_and_j_back_to_the_road() {
     assert_eq!(st.speed, 0.0);
     let q = s.track(me).sample(st.distance).position;
     assert!((q[2] - 500.0).abs() < 0.5, "{q:?}");
+}
+
+/// Regression (2026-11-28, "in wild mode … steering seems to be
+/// blocked"): a wild rider at 40 km/h who leans fully turns on past the
+/// band's largest angle to the road – into the terrain, all the way
+/// round. Before, the turn stopped at ~69° to the road until the rider
+/// had ridden out to the band's 60 m edge (~7 s); now 150° take ~4 s.
+#[test]
+fn a_wild_rider_turns_all_the_way_round_in_a_free_ride() {
+    let mut s = free();
+    let me = s.add_rider("Bea Climber", RiderProfile::default());
+    pedal(&mut s, me, 1, 250.0);
+    ride(&mut s, 3.0);
+    s.riders.get_mut(&me).unwrap().state.speed = 40.0 / 3.6;
+    s.set_wild(me, true);
+    s.set_lean(me, 1, -physics::MAX_STEER_LEAN);
+    // The direction of travel in the world (the unicorn's yaw: positive =
+    // counter-clockwise, here: to the left).
+    let yaw = |s: &Session| match s.off_road(me) {
+        Some(p) => p.yaw,
+        None => {
+            let st = s.rider_state(me).unwrap();
+            let d = s.track(me).sample(st.distance).direction;
+            let (sn, c) = st.heading.sin_cos();
+            crate::god::yaw_of([d[0] * c - d[1] * sn, d[0] * sn + d[1] * c])
+        }
+    };
+    let mut turned = 0.0f64;
+    let mut prev = yaw(&s);
+    let mut at_150 = None;
+    for i in 1..=(10.0 / SIM_DT) as usize {
+        s.step();
+        let y = yaw(&s);
+        turned += (y - prev + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        prev = y;
+        if turned >= 150f64.to_radians() && at_150.is_none() {
+            at_150 = Some(i as f64 * SIM_DT);
+            assert!(s.off_road(me).is_some(), "off the road in the terrain");
+        }
+    }
+    let at = at_150.expect("turned 150°");
+    assert!(at < 5.0, "150° after {at:.1} s");
+    // Leaning left: on round, past a U-turn.
+    assert!(turned > 4.0, "turned {:.0}° in 10 s", turned.to_degrees());
 }
 
 #[test]

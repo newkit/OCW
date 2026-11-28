@@ -90,14 +90,25 @@ pub fn tick_in(
     dt: f64,
 ) {
     let d = state.distance;
-    let grade = track.sample(d).grade;
+    let road_curvature = track.curvature(d);
+    // In wild mode's band the road's gradient is felt along the way ridden:
+    // across a descent it is flat, beside a curve's inside steeper (spec
+    // 5.2.1; on the road and off it in 2D this is the road's own).
+    let grade = if controls.wild {
+        track.sample(d).grade
+            * physics::band_progress(state.heading, road_curvature, state.lateral_offset)
+    } else {
+        track.sample(d).grade
+    };
+    // A wild rider beside the road is not bound by its rules: neither its
+    // slow-down before sharp turns nor the U-turn loop's steering.
+    let beside_road = controls.wild && state.lateral_offset.abs() > track.road_width_at(d) / 2.0;
     let here = weather.map(|w| crate::weather::at_rider(w, track, state));
     // Wet roads lower the cornering speed (v² ∝ the grip).
+    let road_limit = track.speed_limit(d).filter(|_| !beside_road);
     let speed_limit = match &here {
-        None => track.speed_limit(d),
-        Some(h) => track
-            .speed_limit(d)
-            .map(|v| crate::weather::corner_speed(v, h.weather.grip)),
+        None => road_limit,
+        Some(h) => road_limit.map(|v| crate::weather::corner_speed(v, h.weather.grip)),
     };
     // Downhill the slow-down also holds against gravity.
     let slow_down = match speed_limit {
@@ -136,7 +147,7 @@ pub fn tick_in(
     // Through a U-turn loop (and on its run-up) the rider is steered along
     // the centreline, also when leaning: the loop is centred on it and only
     // as wide as the road (spec §2.2.2).
-    let steering = if track.assisted(state.distance) {
+    let steering = if track.assisted(state.distance) && !beside_road {
         Steering::Auto(0.0)
     } else {
         match (controls.steering, &here) {
