@@ -2410,13 +2410,10 @@ package is installed only when all its files match the manifest.
 - **The ANT+ network key:** ANT+ sensors are heard only with the ANT+
   network key (16 hex digits), which Garmin publishes for ANT+ developers
   and which OCW does not ship (spec 14 Phase 17 Q1). Enter it once:
-  *Devices* → *ANT+ (USB stick)* → *Enter the network key*, type it (the
-  field shows `*` only; spaces, commas and `0x` as on Garmin's page are
-  fine; Ctrl+V or *Paste the key* pastes), Enter saves. It is kept in
+  *Devices* → *ANT+ (USB stick)* → *Enter the network key*; it is kept in
   `secrets.toml [ant]` next to `ocw.toml` (readable only by you, never in
-  `ocw.toml` or a log); *Remove the key* deletes it. Console:
-  `ant.key.edit`, `ant.key.paste`, `ant.key.save`, `ant.key.cancel`,
-  `ant.key.clear`.
+  `ocw.toml` or a log). Every platform, by hand and in the browser: see
+  **The ANT+ network key – how to add it** below.
 - The *ANT+ (USB stick)* row says what is missing: *network key needed*,
   *no stick*, *cannot open the stick (permission)*, *the stick is busy with
   another app* (Garmin Express, Zwift, …; only one program can use the
@@ -2475,6 +2472,92 @@ package is installed only when all its files match the manifest.
   power: `erg.target 200`), or `trainer.mode off`.
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
+
+**The ANT+ network key – how to add it** (desktop app on Windows, Linux and
+macOS, and the browser app)
+
+1. **Where to get it.** ANT+ sensors talk on a network that needs the
+   **ANT+ network key**: 8 bytes, written as **16 hex digits**. Garmin
+   publishes it for ANT+ developers on its ANT+ developer site
+   (thisisant.com, the *ANT+ network keys* page), after you sign up and
+   accept the ANT+ adopter terms. **OCW never ships it** (spec 14 Phase 17 Q1): you
+   copy it from there yourself. Spaces, commas, colons and `0x` before each
+   byte, as Garmin's page shows them, are fine.
+2. **In the desktop app (Windows, Linux, macOS) – the easy way:** plug in
+   the ANT USB stick, then **Menu → Settings → Trainer → Devices → ANT+ (USB
+   stick) → Enter the network key**. The field shows `*` only; type the key
+   or paste it with **Ctrl+V** (**Cmd+V** on a Mac) or *Paste the key*;
+   **Enter** (or *Save the key*) saves it, Esc / *Cancel* drops it. The page
+   then says *set*, and *Kept in* names the file. *Change the network key*
+   replaces it, **Remove the key** deletes it (ANT+ stops).
+3. **In the desktop app – by hand:** the key is kept in **`secrets.toml`**
+   next to `ocw.toml`, section `[ant]`, key `network_key`:
+
+   | System | File |
+   |---|---|
+   | Windows | **`%APPDATA%\ocw\secrets.toml`** = `C:\Users\<you>\AppData\Roaming\ocw\secrets.toml` – type `%APPDATA%\ocw` into the Explorer's address bar (or Win + R) and open `secrets.toml` with Notepad |
+   | Linux | `~/.config/ocw/secrets.toml` (`$XDG_CONFIG_HOME/ocw/` if set); mode 0600, readable only by you – keep it so |
+   | macOS | `~/Library/Application Support/ocw/secrets.toml` (in the Finder: Go → Go to Folder…, `~/Library/Application Support/ocw`) |
+
+   With `OCW_CONFIG_DIR=DIR` it is `DIR/secrets.toml`; with
+   `--settings-file FILE` it is the `secrets.toml` in FILE's folder. The app
+   makes the file at its first start, with every key as a commented-out
+   example; the ANT+ one looks like this:
+
+   ```toml
+   # [ant]
+   # network_key = "0A1B2C3D4E5F6071"   # The ANT+ network key: 16 hex digits from Garmin's ANT+ developer page (…); this value is a made-up placeholder; default none: ANT+ off; or enter it in Devices -> ANT+ (USB stick)
+   ```
+
+   **`0A1B2C3D4E5F6071` is a made-up placeholder, not the key** – with it
+   the stick hears nothing. Remove the `# ` before both lines and put the
+   real key between the quotes:
+
+   ```toml
+   [ant]
+   network_key = "…the 16 hex digits from Garmin's page…"
+   ```
+
+   Edit the file while OCW is closed, or **restart the app** afterwards: the
+   desktop app reads the key at its start (a key saved on the Devices page
+   counts at once). Never share the file or put it into a repository;
+   `ocw.toml` and the logs never hold the key.
+4. **In the browser app** (Chrome, Edge and the other Chromium browsers on
+   the desktop and on Android – they have WebUSB): **Settings → Trainer →
+   Devices → Add an ANT+ stick** (or the Devices panel's **+ ANT+ stick**),
+   pick the stick in the browser's list, then **ANT+ (USB stick) → Enter the
+   network key** as above (masked field, Ctrl+V / Cmd+V pastes, Enter
+   saves). The key is kept **only in this browser's storage for the page**
+   (`localStorage`, key `ocw.ant.key`) – per browser and per browser
+   profile, never sent to a server, never in the settings or the log; enter
+   it once in each browser you ride in. *Remove the key* deletes it, and so
+   does clearing the site's data. **Firefox, Safari and every browser on iOS
+   have no WebUSB**: there the Devices page says so – use the desktop app,
+   or let the desktop app relay its sensors to the browser (*Share with a
+   browser*, the [sensor bridge](#the-sensor-bridge-a-trainer-from-another-device)).
+5. **Console** (both apps, ` or F12): `ant.key.edit` (open the masked
+   field), `ant.key.paste` (the clipboard into it), `ant.key.save`,
+   `ant.key.cancel`, `ant.key.clear` (remove the key). The key is never
+   printed.
+6. **OCW Studio and the server** do not need the key: only the app the stick
+   is plugged into does.
+7. **Troubleshooting:**
+   - The *ANT+ (USB stick)* row says **network key needed**: no key yet (or
+     the one in `secrets.toml` does not read: the log names the file and
+     says why, e.g. *the key has 16 hex digits (8 bytes); this has 12*).
+   - **A wrong key finds nothing**: the stick opens and the scan (*Scan
+     for devices*; in the browser *Find ANT+ sensors*) runs, but no strap
+     or power meter ever shows up. Check the 16 digits
+     against Garmin's page (the placeholder `0A1B2C3D4E5F6071` is such a
+     wrong key).
+   - **Windows driver:** the desktop app uses Garmin's own ANT driver (the
+     one Zwift and Garmin Express use; Windows Update installs it); the
+     browser needs the **WinUSB** driver instead (Zadig) – see *Windows
+     driver* above and *ANT+ sensors in the browser*.
+   - **Linux:** the stick needs the udev rule (*Install access for the ANT
+     stick*, or `ocw-desktop --install-udev-rule`; see *Linux access* above).
+   - Only one program can use the stick at a time (close Zwift, Garmin
+     Express, the other OCW app).
 
 **Gradient:** the HUD shows the gradient at the rider and, in brackets, the
 average over the next 100 m (`+9.4 % (100 m +7.8 %)`). Bottom left, a mini
@@ -2738,14 +2821,34 @@ bar or the Run dialog (Win + R).
   servers of *Connect to a server*), `[start]` (the last start choice) and
   `[strava]` (`auto_upload`). Edit it by hand while the app is closed; the app
   changes only the section it saves, your comments elsewhere stay.
-  **`secrets.toml`** next to it, readable only by you (mode 0600 on Linux and
-  macOS; on Windows your profile folder is private): `[strava]` (the
-  `client_id` / `client_secret` of your own Strava API app, §2.8.1; an example
-  is in `packaging/secrets.example.toml`; `OCW_STRAVA_CLIENT_ID` /
-  `OCW_STRAVA_CLIENT_SECRET` win over it), `[strava_token]` (its tokens) and
-  `[account]` (the sign-in session when the system keyring is not available).
+  **`secrets.toml`** next to it (Windows: `%APPDATA%\ocw\secrets.toml`),
+  readable only by you (mode 0600 on Linux and macOS; on Windows your profile
+  folder is private): `[strava]` (the `client_id` / `client_secret` of your
+  own Strava API app, §2.8.1; an example is in
+  `packaging/secrets.example.toml`; `OCW_STRAVA_CLIENT_ID` /
+  `OCW_STRAVA_CLIENT_SECRET` win over it), `[strava_token]` (its tokens),
+  `[account]` (the sign-in session when the system keyring is not available)
+  and `[ant]` (the ANT+ network key).
   `ocw.toml` never holds a secret, so you can share it. Also there:
   `trusted-keys.json`, `trusted-roots/` and `keys/` (world package signing).
+- **Both files carry commented-out examples** (spec 3.2.4): the app makes
+  them at its first start with a header (what the file is, where it lives,
+  that the app edits it and keeps your comments) and, at the end, **every
+  section and key it knows commented out**, one line each with what it is,
+  its default and its values or units – e.g. in `secrets.toml`:
+
+  ```toml
+  # [ant]
+  # network_key = "0A1B2C3D4E5F6071"   # The ANT+ network key: 16 hex digits from Garmin's ANT+ developer page (…); this value is a made-up placeholder; default none: ANT+ off; or enter it in Devices -> ANT+ (USB stick)
+  ```
+
+  and in `ocw.toml`, e.g. `# [settings.audio]` / `# master = 80   # …`.
+  To use one, remove the `# ` before its section line and its key line (a
+  section only once per file). Values in `secrets.toml`'s examples are
+  **made-up placeholders**, never real keys. Files of older versions get the
+  missing examples appended once at the next start (your values and comments
+  stay byte for byte); a newer version adds the examples of its new keys
+  the same way. A line `# ocw: no examples` in a file stops that.
 - **Moving from older versions:** at the first start of a version with
   `ocw.toml`, the old files of the config folder – `settings.toml`,
   `riders.toml`, `devices.toml`, `joins.txt`, `strava.toml`,
