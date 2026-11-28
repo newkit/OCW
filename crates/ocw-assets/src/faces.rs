@@ -662,7 +662,12 @@ fn eyes(f: &Face, p: &mut Parts) {
             })
             .collect();
         let glint = p.slot("eye_glint");
+        let from = glint.positions.len();
         glint.add_smooth(&fan, &tris);
+        // White vertex colours (no change): Blender gives every primitive
+        // of a mesh with a colour attribute one, so a node is coloured in
+        // all its parts or in none (the round trip, 15F).
+        glint.colour_from(from, |_| [1.0; 4]);
         // The lids: from the edge out into the face's skin.
         for upper in [true, false] {
             grid(

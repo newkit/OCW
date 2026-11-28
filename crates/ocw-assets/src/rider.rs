@@ -2732,6 +2732,28 @@ mod tests {
             .sum()
     }
 
+    /// Regression (2026-11-28, the Blender round trip of the sculpted
+    /// face): Blender gives every primitive of a mesh with a colour
+    /// attribute vertex colours, so a node whose parts are partly coloured
+    /// (the glint beside the coloured iris) came back changed. Every node
+    /// of the near and the far rider is coloured in all its parts or none.
+    #[test]
+    fn a_node_is_coloured_in_all_its_parts_or_none() {
+        for detail in [Detail::High, Detail::Low] {
+            let m = build(detail);
+            for n in &m.nodes {
+                let coloured = n.primitives.iter().filter(|p| !p.colors.is_empty());
+                let count = coloured.count();
+                assert!(
+                    count == 0 || count == n.primitives.len(),
+                    "{detail:?} {}: {count} of {} parts coloured",
+                    n.name,
+                    n.primitives.len()
+                );
+            }
+        }
+    }
+
     /// Regression (2026-11-17, "the palm is a plain box"): the palm is a
     /// closed, smooth shape – narrower at the wrist than at the knuckles,
     /// the thumb's ball raised on the inner face, the knuckles on the back
