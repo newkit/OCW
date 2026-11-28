@@ -53,7 +53,7 @@ HERE = Path(__file__).resolve().parent
 # page knows the version it was served with and reloads itself when the
 # server runs another one (after a pull and a restart), so an open tab never
 # keeps an old page.
-VERSION = "1.9.2"
+VERSION = "1.10.0"
 POLL_INTERVAL_S = 5.0
 # Build slots per machine, as in scripts/remote.sh: the machine's `slots`
 # (or [defaults] slots) in machines.toml, else these per-OS defaults.
@@ -1544,7 +1544,8 @@ def janitor_loop(dash, jan, test_output: Path | None, every: float = 30.0):
                 jan.test_output_bytes = janitor.dir_bytes(test_output) if test_output.is_dir() else None
             res = jan.tick(dash.states())
             if res:
-                print("janitor: pass %s" % json.dumps({k: res.get(k) for k in ("mode", "pct", "level", "freed", "error")}),
+                print("janitor: pass %s" % json.dumps({k: res.get(k) for k in ("mode", "why", "pct", "level", "count",
+                                                                               "freed", "error")}),
                       file=sys.stderr)
         except Exception as e:  # the janitor must never stop the dashboard
             print("janitor: %s: %s" % (type(e).__name__, e), file=sys.stderr)
@@ -1757,15 +1758,17 @@ def janitor_line(r: dict, now=None) -> str:
         return "last pass%s failed (%s)" % (ago, r["error"])
     acts = r.get("actions") or []
     verb = "would delete" if r.get("mode") == "dry-run" else "deleted"
-    if not acts:
+    count = r.get("count", len(acts))
+    if not count:
         return "last pass%s: disk %s%%, nothing to do" % (ago, r.get("pct"))
-    size = sum(a.get("bytes") or 0 for a in acts)
-    return "last pass%s: disk %s%%, %s %d item(s), %s" % (ago, r.get("pct"), verb, len(acts), fmt_bytes(size))
+    size = r.get("bytes") if r.get("bytes") is not None else sum(a.get("bytes") or 0 for a in acts)
+    return "last pass%s: disk %s%%, %s %d item(s), %s" % (ago, r.get("pct"), verb, count, fmt_bytes(size))
 
 
 def janitor_text(j: dict) -> list:
-    out = ["Janitor: %s (target/ of merged or gone agent branches > %.0f %%, idle agent checkouts > %.0f %%, "
-           "alert > %.0f %%)" % (j.get("mode", "off"), janitor.LEVEL_MERGED, janitor.LEVEL_LRU, janitor.LEVEL_ALERT)]
+    out = ["Janitor: %s (cleanup rules every %g h per enabled machine and at once > %.0f %%, idle checkouts > %.0f %%, "
+           "alert > %.0f %%)" % (j.get("mode", "off"), j.get("routine_h", janitor.ROUTINE_H), janitor.LEVEL_MERGED,
+                                 janitor.LEVEL_LRU, janitor.LEVEL_ALERT)]
     if j.get("test_output_bytes") is not None:
         out.append("  test-output on this machine: %s (kept: the art project)" % fmt_bytes(j["test_output_bytes"]))
     for e in (j.get("recent") or [])[-5:]:
@@ -3085,51 +3088,48 @@ def record_loop(dash, root: Path, interval: float = RECORD_INTERVAL_S):
 
 
 def janitor_plan_text(jan, machines: list) -> str:
-    """--janitor-plan: for every reachable machine the disks, every checkout
-    with a target/ and what each threshold would delete (nothing is
-    deleted; the main checkout's sweep runs as a dry run)."""
+    """--janitor-plan: for every reachable machine the disks, what the
+    cleanup rules would delete at the next routine pass (every checkout
+    class, leftovers, temp folders, old release output) and what a full
+    disk would add (the main checkout's sweep as a dry run, the least
+    recently used idle checkouts). Nothing is deleted."""
     now = time.time()
+    facts = jan.facts()
 
     def one(m):
         try:
             inv = jan.inventory(m)
-            verdicts = janitor.git_verdicts(jan.repo, [c["branch"] for c in inv["checkouts"] if c["kind"] == "agent"])
-            main = next((c for c in inv["checkouts"] if c["kind"] == "main"), None)
+            main = next((c for c in inv["checkouts"] if c["cls"] == "main"), None)
             sweep = jan.sweep(m, False) if main else None
-            return m, inv, verdicts, sweep, None
+            return m, inv, sweep, None
         except Exception as e:
-            return m, None, None, None, "%s: %s" % (type(e).__name__, e)
+            return m, None, None, "%s: %s" % (type(e).__name__, e)
 
     with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
         results = list(ex.map(one, machines))
     out = ["Janitor dry run (%s; nothing deleted)" % time.strftime("%Y-%m-%d %H:%M"), ""]
-    gb = lambda n: "%.1f GB" % ((n or 0) / 1e9)  # noqa: E731
-    for m, inv, verdicts, sweep, err in results:
+    gb = janitor.rules.gb
+    for m, inv, sweep, err in results:
         if err:
             out += ["== %s: unreachable, skipped (%s)" % (m.name, err), ""]
             continue
-        p = janitor.plan_machine(inv["checkouts"], inv["disk"], now, verdicts, sweep)
+        p = janitor.plan_machine(inv, facts, now, jan.limits, None, jan.free_min)
         disks = ", ".join("%s %s%% used, %s free" % (d["name"], janitor.disk_pct(d), gb(d.get("free")))
                           for d in inv["disks"])
         out.append("== %s: %s; level now: %s" % (m.name, disks, ("> %d %%" % p["level"]) if p["level"] else "below 75 %"))
-        c = p["candidates"]
-        tot = lambda xs: sum(x.get("target_bytes") or 0 for x in xs)  # noqa: E731
-        out.append("  at > 75 %%: target/ of %d merged or gone agent checkouts, %s" % (len(c["merged"]), gb(tot(c["merged"]))))
-        for x in c["merged"]:
-            out.append("    %9s  %s/target  (%s)" % (gb(x.get("target_bytes")), x["name"], x["reason"]))
+        out.append("  routine pass (daily, and at once above 75 %):")
+        out += janitor.rules.plan_text(p["plan"])
         if sweep:
             out.append("  at > 75 %%: main checkout sweep: %d old build units + %d incremental dirs, %s" % (
                 sweep.get("units") or 0, sweep.get("incremental") or 0, gb(sweep.get("bytes"))))
-        out.append("  at > 85 %%: also least recently used agent checkouts idle > 24 h, oldest first, until < 85 %%: "
-                   "%d candidates, %s" % (len(c["lru"]), gb(tot(c["lru"]))))
-        for x in c["lru"]:
-            out.append("    %9s  %s/target  (%s)" % (gb(x.get("target_bytes")), x["name"], x["reason"]))
-        out.append("  kept: %d checkouts, %s" % (len(c["kept"]), gb(tot(c["kept"]))))
-        for x in c["kept"]:
-            out.append("    %9s  %s/target  (%s)" % (gb(x.get("target_bytes")), x["name"], x["reason"]))
+        lru = p["lru"]
+        out.append("  at > 85 %%: also least recently used checkouts idle > 24 h, oldest first, until < 85 %%: "
+                   "%d candidates, %s" % (len(lru), gb(sum(x["bytes"] for x in lru))))
+        for x in lru:
+            out.append("    %9s  %s  (idle %s; %s)" % (gb(x["bytes"]), x["path"], janitor.fmt_age(x["idle"]), x["reason"]))
         if p["actions"]:
-            out.append("  NOW (disk at %s%%) the janitor would delete: %s" % (
-                p["pct"], ", ".join("%s (%s)" % (a["path"], gb(a["bytes"])) for a in p["actions"])))
+            out.append("  NOW (disk at %s%%) the janitor would delete %d item(s), %s" % (
+                p["pct"], len(p["actions"]), gb(sum(a["bytes"] for a in p["actions"]))))
         out.append("")
     return "\n".join(out)
 
@@ -3165,10 +3165,12 @@ def main(argv=None) -> int:
                     help="also put the user prompt each job belongs to into the JSON (off by default)")
     ap.add_argument("--no-prompts", action="store_true", help=argparse.SUPPRESS)  # old flag; now the default
     ap.add_argument("--record-interval", type=float, default=RECORD_INTERVAL_S, help="seconds between build-log lines")
-    ap.add_argument("--janitor", choices=janitor.MODES, default="on",
-                    help="disk janitor: on (default), dry-run (log what it would delete) or off")
+    ap.add_argument("--janitor", choices=janitor.MODES, default=janitor.default_mode(),
+                    help="disk janitor: on (default), dry-run (log what it would delete) or off; "
+                         "the default comes from the environment's OCW_JANITOR (the kill switch)")
     ap.add_argument("--janitor-plan", action="store_true",
-                    help="dry run of the janitor on every reachable machine now (what each threshold would delete), then exit")
+                    help="dry run of the janitor on every reachable machine now (what the routine pass and each "
+                         "threshold would delete), then exit")
     ap.add_argument("--no-answers", action="store_true",
                     help="no answering of the open questions on the page (read-only)")
     ap.add_argument("--no-machine-settings", action="store_true",

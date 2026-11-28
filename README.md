@@ -4686,9 +4686,10 @@ call with a read-only snippet (shared control socket).
   ones behind "show decided"; milestones blocked by an open question under
   *Blocked work*. The spec stays the only place where questions are written
   and decided; the page re-reads it when it changes.
-- **Janitor:** its mode, the last pass per machine (what it deleted, or
-  would delete in dry-run mode, and why), the recent log entries, and the
-  size of `test-output/` (never deleted).
+- **Janitor:** its mode and schedule, the last pass per machine (when,
+  routine or full disk, what it deleted – or would delete in dry-run mode –
+  how much it freed, and why), the recent log entries, and the size of
+  `test-output/` (never deleted).
 
 **Answering a question:** type the answer in the question's box, or press
 "Accept proposal" or one of the option buttons (they fill the box), then
@@ -4757,35 +4758,78 @@ build log.
 ### Disk cleanup
 
 Every branch checkout on a build machine has its own `target/` (several GB to
-tens of GB). Three tools remove build output, never sources:
+tens of GB), and checkouts of merged branches, old releases and one-off
+names stay behind. **One rule set** (`tools/build-dashboard/cleanup_rules.py`)
+says what may go; the dashboard's janitor applies it by itself, and
+`scripts/remote-gc.sh` is the same by hand:
 
 ```bash
-scripts/remote-gc.sh --branch <branch>          # after merging or abandoning a branch: its target/ on every reachable machine
+scripts/remote-gc.sh --branch <branch>          # after merging or abandoning a branch: its target/ on every reachable machine, at once
 make remote-gc-branch BRANCH=<branch> [DRY=1]   # the same; DRY=1 only lists
-make remote-gc                                  # dry run: target/ of merged or gone agent checkouts, with sizes per machine
-make remote-gc GC=1 [MACHINES="marge macos"]    # delete them
-scripts/remote-gc.sh macos                      # dry run on one machine
-make janitor-plan                               # what the dashboard's janitor would delete at each threshold now
+make remote-gc                                  # dry run of the rules on every machine: per class what would go and why, what is kept and why
+make remote-gc GC=1 [MACHINES="marge macos"]    # delete
+scripts/remote-gc.sh -v macos                   # dry run on one machine, also listing every checkout without target/
+GC=1 scripts/remote-gc.sh --only NAME leela     # only the items whose path contains NAME
+scripts/remote-gc.sh --selftest Win11Builder    # make a scratch checkout with over-long paths there and delete it with the real snippets
+scripts/remote-gc.sh --help                     # the rules and the thresholds (OCW_GC_* environment variables)
+make janitor-plan                               # the janitor's view: the routine pass and what each disk threshold would add
 ```
 
+| Class (by the checkout's name) | Its `target/` goes when |
+|---|---|
+| main checkout, `<repo>-HEAD` (release / deploy builds), a directory with its own `.git` | never |
+| any checkout a live task marker names (running or waiting) | never |
+| any checkout synced within the last 24 h (`OCW_GC_RECENT_H`) | never – except an agent checkout whose branch is gone |
+| agent (`worktree-agent-*`) | branch gone → at once; merged into main and the local worktree removed; merged into main **with commits of its own** and not synced for 2 days (`OCW_GC_AGENT_DAYS`), even while the worktree exists; a branch without commits of its own (a new agent: it also looks merged) only after 14 days without a sync |
+| merge (`merge-*`, branch `merge/…`) | branch gone or merged into main; or not synced for 3 days (`OCW_GC_MERGE_DAYS`) |
+| release (`release-X.Y.Z`) | older than the newest release (highest version among the tags, Cargo.toml and the checkouts there; 0.2.10 > 0.2.9) and not synced for 7 days (`OCW_GC_RELEASE_DAYS`) |
+| other (`fix-*`, `strava-*`, `agent-*`, …) | merged into main with commits of its own; no branch of that name (gone, or a name given by hand) or a branch without commits of its own: not synced for 14 days (`OCW_GC_OTHER_DAYS`); an open branch stays |
+
+**The whole checkout directory** goes when its `target/` may go for a reason
+that cannot end (branch gone or merged, no branch, an older release), it was
+not synced for 30 days (`OCW_GC_CHECKOUT_DAYS`), no local worktree uses the
+branch and it holds **no file under `test-output/` or `data/`** – output that
+may never have been fetched keeps the checkout, and the plan says so. Also
+removed: `target.ocw-gc.*` / `target.ocw-janitor.*` and `<checkout>.ocw-gc.*`
+left by a failed deletion (older than 1 h, `OCW_GC_STRAY_H`); the browser
+profiles our web tests leave in the temp directory (`ocw-chromium-*`, older
+than 24 h, `OCW_GC_TEMP_H`, not named by a running process); release output
+folders `~/ocw-release-X.Y.Z` older than the newest release and unchanged for
+7 days, unless they hold world packages (a `world*` entry). Never: the
+sources of a kept checkout, world data, the sccache cache (capped by
+`sccache_size`, default 30G), task markers (`remote.sh` sweeps those of dead
+processes on every run). "Last synced" is read on the machine: the newest of
+the checkout's `.ocw-sync/` (rewritten by every sync), `.ocw-last-run`
+(touched by every run) and cargo's directories in `target/`, else the
+directory's own time; ages use the machine's clock.
+
+- **Automatic:** the janitor (a thread of the dashboard, on by default) runs
+  a **routine pass once a day** (`OCW_JANITOR_ROUTINE_H`, 0 = never) on every
+  enabled, reachable machine: everything the rules allow. When a machine's
+  checkouts' disk is **above 75 % or has less than 40 GB free**
+  (`OCW_JANITOR_FREE_GB`) it runs a pass at once (at most one an hour per
+  machine, also on machines disabled for building) that also sweeps the main
+  checkout's `target/` (old replaced build units and incremental directories
+  unused for 3 days); above **85 %** it also deletes the `target/` of the least
+  recently used agent, merge and other checkouts idle for more than 24 h,
+  oldest first, until below 85 %; above **92 %** a red banner. One machine per
+  pass, at most one pass every 10 minutes; the last pass per machine (when,
+  what, how much freed) is on the dashboard and survives its restarts
+  (`test-output/build-log/janitor-state.json`).
+- **Kill switch and dry run:** `OCW_JANITOR=off` (or `dry-run`) in the
+  dashboard's environment, or `--janitor off|dry-run|on`; dry-run logs each
+  plan once as `would-delete`.
 - `remote-gc.sh` without `GC=1` only lists; `--branch` deletes unless
-  `--dry-run` is given. Kept always: the main checkout, the sccache cache,
-  the checkouts themselves (only `target/` goes) and any checkout with a
-  running or waiting task (the machine checks the task markers again right
-  before deleting, and `target/` is renamed before it is removed).
-  Unreachable machines are skipped; only machine names are printed.
-- **The janitor** (dashboard thread, on by default) frees space when the
-  checkouts' disk of a machine is above a threshold, one machine per pass,
-  at most one pass every 10 minutes, the fullest machine first:
-  above **75 %** the `target/` of agent checkouts whose branch is merged or
-  gone and unused for 2 h, plus old replaced build units and incremental
-  directories (unused for 3 days) in the main checkout's `target/`; above
-  **85 %** also the `target/` of the least recently used agent checkouts idle
-  for more than 24 h, oldest first, until below 85 %; above **92 %** a red
-  banner. Never: sources, `data/`, `test-output/`, the sccache cache, busy
-  checkouts.
+  `--dry-run` is given (that checkout's `target/` whatever the rules say – the
+  coordinator names the branch it merged). A checkout with a running or
+  waiting task is never touched: the machine checks the task markers again
+  right before each deletion, and a `target/` or checkout is renamed
+  (`….ocw-gc.PID`) before it is removed. On Windows what `Remove-Item` leaves
+  (paths over 260 characters) is removed with `rd` on the `\\?\` form of the
+  path. Unreachable machines are skipped; only machine names are printed.
 - Every deletion (by the janitor, `remote-gc.sh` or `remote.sh`'s dev-profile
-  cleanup) is a JSON line in `test-output/build-log/DAY/janitor.jsonl`.
+  cleanup) is a JSON line in `test-output/build-log/DAY/janitor.jsonl`
+  (machine, path, bytes, kind, class, reason).
 - Snippets these tools send to POSIX machines run under `/bin/sh` and list
   task markers with `find`, never with shell globs: the Mac's login shell is
   zsh, where an unmatched glob aborts the command (spec v3.28).
@@ -5000,7 +5044,7 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
 | `make test-web`, `test-web-world`, `test-web-multiplayer`, `test-web-ble*`, `test-web-audio`, `test-web-voice`, `test-web-livekit`, `test-web-webgl2` | Headless Chromium runs of the browser app (`scripts/test-web*.py`; see [Testing the browser app](#testing-the-browser-app)), into `test-output/web/` |
 | `make test-studio-planners` | OCW Studio's planners against our own BRouter (see [Planner tests with our own BRouter](#planner-tests-with-our-own-brouter)); on marge |
 | `make test-kiosk` | `scripts/test-kiosk.sh`: the kiosk script with a fake app (no display or build) |
-| `make test-remote` | `scripts/test-remote.sh`: `remote.sh`'s slot order, snapshot and sync, the Windows manifest, `remote-gc.sh`'s choice, the build-log parser (no machine needed) |
+| `make test-remote` | `scripts/test-remote.sh`: `remote.sh`'s slot order, snapshot and sync, the Windows manifest, `remote-gc.sh`'s cleanup rules (`test_cleanup_rules.py`), the build-log parser (no machine needed) |
 | `make test-release-version` | `scripts/test-release-version.sh`: the version bump on a copy of the manifests |
 
 - **`.claude/skills/run-ocw/drive.sh`** runs the desktop app headlessly:
