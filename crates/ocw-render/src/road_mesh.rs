@@ -258,8 +258,7 @@ struct SurfaceLook {
 fn outer_fan(
     m: &mut MeshArrays,
     c: Vec3,
-    a: Vec3,
-    b: Vec3,
+    [a, b]: [Vec3; 2],
     via: Vec3,
     look: SurfaceLook,
     u_rim: f32,
@@ -422,7 +421,7 @@ fn joint_fans(m: &mut MeshArrays, ends: &[StripEnd]) {
             b.look
         };
         let via = (din - dout).normalize_or_zero();
-        outer_fan(m, a.at, ca, cb, via, look, ua * look.half, a.v);
+        outer_fan(m, a.at, [ca, cb], via, look, ua * look.half, a.v);
     }
 }
 
@@ -687,8 +686,7 @@ fn strip_mesh(
         outer_fan(
             m,
             p[i],
-            p[i] + r0,
-            p[i] + r1,
+            [p[i] + r0, p[i] + r1],
             via,
             surface,
             side * half,

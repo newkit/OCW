@@ -76,7 +76,7 @@ impl SurfaceIndex {
 
     /// Adds every triangle of `m`.
     pub fn add(&mut self, m: &MeshArrays) {
-        for t in m.indices.chunks_exact(3) {
+        for t in m.indices.as_chunks::<3>().0 {
             let v = [0, 1, 2].map(|k| Vec3::from(m.positions[t[k] as usize]));
             let i = self.tris.len() as u32;
             self.tris.push(v);
@@ -493,7 +493,7 @@ pub fn spots(holes: &[HoleSample]) -> Vec<Spot> {
             }
         }
     }
-    out.sort_by(|a, b| b.samples.cmp(&a.samples));
+    out.sort_by_key(|s| std::cmp::Reverse(s.samples));
     out
 }
 
@@ -502,7 +502,7 @@ pub fn spots(holes: &[HoleSample]) -> Vec<Spot> {
 /// seen from above.
 pub fn inverted_area_m2(m: &MeshArrays, kinds: &[u8]) -> f32 {
     let mut area = 0.0;
-    for t in m.indices.chunks_exact(3) {
+    for t in m.indices.as_chunks::<3>().0 {
         let k = crate::road_mesh::decode_b(m.uvs_b[t[0] as usize][0]).1;
         if !kinds.contains(&k) {
             continue;
