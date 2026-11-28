@@ -526,6 +526,12 @@ impl FarTerrain {
         self.task.as_ref().is_some_and(|t| t.1.is_finished())
     }
 
+    /// Whether a build is running or done but not yet spawned (tests).
+    #[cfg(test)]
+    pub(crate) fn building(&self) -> bool {
+        self.task.is_some()
+    }
+
     /// The far tiles spawned (tests).
     #[cfg(test)]
     pub(crate) fn tile_count(&self) -> usize {

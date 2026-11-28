@@ -1026,10 +1026,17 @@ pub(crate) mod tests {
 
     /// Updates the app until `done` holds or the timeout expires.
     fn update_until(app: &mut App, done: impl Fn(&ClientCore) -> bool) -> bool {
+        update_until_world(app, |w| done(&w.resource::<ClientState>().0))
+    }
+
+    /// The same with the whole world (the console's log, the client).
+    /// Wall time, generous: the local server's thread may wait long for a
+    /// core on a loaded build machine; a run that works returns at once.
+    fn update_until_world(app: &mut App, done: impl Fn(&World) -> bool) -> bool {
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(3) {
+        while start.elapsed() < Duration::from_secs(30) {
             app.update();
-            if done(&app.world().resource::<ClientState>().0) {
+            if done(app.world()) {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -1205,7 +1212,12 @@ pub(crate) mod tests {
 
     #[test]
     fn sim_power_and_teleport_reach_trainer_and_server() {
-        let mut app = app();
+        // A fixed start (0 m): with the random start the rider began within
+        // 10 m of 1.5 km about once in 200 runs, the wait for the distance
+        // below held before the teleport was even sent, and the server's
+        // confirmation was not there yet (the flaky failure of the merge
+        // checks, 2026-11-28).
+        let mut app = app_with(&["--random-start", "false"]);
         app.world_mut().resource_mut::<ConsoleState>().permission = Permission::Dev;
         assert!(update_until(&mut app, |c| c.rider_id().is_some()));
         assert!(
@@ -1219,17 +1231,27 @@ pub(crate) mod tests {
             "virtual power 320 W"
         );
         assert!(update_until(&mut app, |c| (c.power_w() - 320.0).abs() < 1e-6));
-        run(&mut app, "teleport 1.5");
-        assert!(update_until(&mut app, |c| (c.state().distance - 1500.0)
-            .abs()
-            < 10.0));
-        // The server's confirmation is printed to the console.
+        let before = app.world().resource::<ClientState>().0.state().distance;
         assert!(
-            app.world()
-                .resource::<ConsoleState>()
+            before < 1000.0,
+            "far from 1.5 km before the teleport: {before}"
+        );
+        run(&mut app, "teleport 1.5");
+        // The server's confirmation is printed to the console, and the
+        // rider is there (the snapshot after it).
+        let confirmed = |w: &World| {
+            w.resource::<ConsoleState>()
                 .log()
                 .iter()
                 .any(|l| l.contains("teleported to 1.500 km"))
+        };
+        assert!(
+            update_until_world(&mut app, confirmed),
+            "no confirmation: {:?}",
+            app.world().resource::<ConsoleState>().log()
         );
+        assert!(update_until(&mut app, |c| (c.state().distance - 1500.0)
+            .abs()
+            < 10.0));
     }
 }

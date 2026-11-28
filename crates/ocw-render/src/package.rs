@@ -3928,6 +3928,35 @@ mod tests {
         );
     }
 
+    /// Updates until a build of the task pool is done but not yet taken by
+    /// its system (`done`), bounded by wall time like [`until`]. While a
+    /// build is running (`running`) it waits without updating. With
+    /// [`until`] the moment depended on the scheduling: a build that
+    /// finished during an update, before its system polled it (a busy
+    /// task pool, a long frame), was taken in that same update and never
+    /// seen in flight – with the one far terrain build it never came
+    /// again (the flaky "far terrain in flight: not reached" of the merge
+    /// checks under load, 2026-11-28).
+    fn until_built(
+        app: &mut App,
+        what: &str,
+        running: impl Fn(&mut App) -> bool,
+        done: impl Fn(&mut App) -> bool,
+    ) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(120) {
+            if done(app) {
+                return;
+            }
+            if running(app) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            } else {
+                app.update();
+            }
+        }
+        panic!("{what}: not reached in 120 s");
+    }
+
     /// Ground-detail and plant builds done on the task pool but not yet
     /// put on their chunks, and the far terrain built but not yet spawned.
     fn in_flight(app: &mut App) -> (bool, bool, bool) {
@@ -3977,7 +4006,12 @@ mod tests {
         // Its first frame sees every chunk as new (and skips it).
         racer.frame(app.world_mut());
         // 1. Ground detail (and plants) built, not yet on their chunks.
-        until(&mut app, "ground detail in flight", |app| in_flight(app).0);
+        until_built(
+            &mut app,
+            "ground detail in flight",
+            |app| count::<crate::ground_detail::GroundBuild>(app) > 0,
+            |app| in_flight(app).0,
+        );
         racer.switch(app.world_mut());
         assert_eq!(tiles(&mut app), (0, 0), "tiles of the old scene left");
         assert_eq!(count::<crate::ground_detail::LazyGround>(&mut app), 0);
@@ -3993,7 +4027,16 @@ mod tests {
         racer.switch(app.world_mut());
         assert_eq!(tiles(&mut app), (0, 0), "tiles of the old scene left");
         // 3. The far terrain built, not yet spawned: the same.
-        until(&mut app, "far terrain in flight", |app| in_flight(app).2);
+        until_built(
+            &mut app,
+            "far terrain in flight",
+            |app| {
+                app.world()
+                    .resource::<crate::far_terrain::FarTerrain>()
+                    .building()
+            },
+            |app| in_flight(app).2,
+        );
         racer.switch(app.world_mut());
         assert_eq!(tiles(&mut app), (0, 0), "tiles of the old scene left");
         assert_eq!(count::<crate::far_terrain::FarTile>(&mut app), 0);
