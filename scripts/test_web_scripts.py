@@ -373,6 +373,10 @@ class PreviewXrSite(unittest.TestCase):
             Path(d, n).write_bytes(os.urandom(3000) if n.endswith(".wasm") else n.encode())
         # Q10 (a): the builds say they use SIMD (build-web.sh's sizes.txt).
         Path(d, "sizes.txt").write_text("wasm features: +simd128\n")
+        # The preview site needs the voice SDK next to the page (build-web.sh
+        # --preview fetches it); a stand-in keeps these XR cases about XR.
+        if d.endswith("web"):
+            Path(d, "livekit-client.umd.js").write_text("// stand-in\n")
 
     def release(self, d):
         os.makedirs(d)
