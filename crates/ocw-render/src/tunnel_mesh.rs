@@ -518,6 +518,16 @@ pub fn tunnel_meshes_with(
             }
             let p = point_at(s.clamp(0.0, total));
             portal_frame(&mut out.lit, &p, out_dir, s.clamp(0.0, total) as f32, boxed);
+            // Wing walls along the cut in front of the portal (the terrain is
+            // cut out of the tube's profile there, `tunnel_cut`): they face
+            // the cut, so no slope is seen through.
+            if !boxed {
+                let a = s.clamp(0.0, total);
+                let b = (s + f64::from(out_dir) * WING_WALL_M).clamp(0.0, total);
+                if (b - a).abs() > 0.5 {
+                    wing_walls(&mut out.lit, &point_at(a), &point_at(b), seed);
+                }
+            }
         }
     }
     out
@@ -801,6 +811,37 @@ fn gallery_segment(
 
 fn open_segment(out: &mut TunnelMeshes, a: AxisPoint, b: AxisPoint) {
     road_surface(&mut out.lit, a, b, a.half(), [1.0, 1.0], false, true);
+}
+
+/// Length of the wing walls in front of a portal (m): the terrain cut of
+/// `tunnel_cut::PORTAL_APPROACH_M` plus a little.
+pub const WING_WALL_M: f64 = 7.0;
+
+/// The two wing walls of a portal from `a` (at the portal's collar) to `b`
+/// (out along the road): concrete faces on both sides of the tube's
+/// profile, from below the road to the wall height at the portal, falling
+/// to 1.5 m at the far end.
+fn wing_walls(m: &mut MeshArrays, a: &AxisPoint, b: &AxisPoint, seed: u64) {
+    let half = a.half() + 0.05;
+    let top_a = tn::CROWN_M as f32 - 0.5;
+    let top_b = 1.5f32;
+    let c = {
+        let v = GALLERY_CONCRETE * (0.9 + 0.1 * noise1(a.s / 7.0, seed));
+        [v * 1.02, v, v * 0.95, 1.0]
+    };
+    let tm = TEX_REPEAT_M;
+    let mut bl = Builder { m };
+    for side in [-1.0f32, 1.0] {
+        let l = side * half;
+        let v = [a.at(l, -0.3), a.at(l, top_a), b.at(l, -0.3), b.at(l, top_b)];
+        let uv = [
+            [a.s as f32 / tm, 0.0],
+            [a.s as f32 / tm, top_a / tm],
+            [b.s as f32 / tm, 0.0],
+            [b.s as f32 / tm, top_b / tm],
+        ];
+        bl.quad(v, uv, [c; 4]);
+    }
 }
 
 /// A small concrete deck under a road crossing over an open stretch in a
@@ -1136,6 +1177,48 @@ mod tests {
         assert!(m.fittings.positions.len() > 2 * short.fittings.positions.len());
         // The portal frames are lit concrete.
         assert!(!m.lit.indices.is_empty());
+    }
+
+    #[test]
+    fn a_portal_has_wing_walls_along_the_cut_in_front_of_it() {
+        let secs = [
+            Section {
+                from: 0.0,
+                to: 100.0,
+                kind: SectionKind::Open,
+            },
+            Section {
+                from: 100.0,
+                to: 300.0,
+                kind: SectionKind::Bored,
+            },
+            Section {
+                from: 300.0,
+                to: 400.0,
+                kind: SectionKind::Open,
+            },
+        ];
+        let m = tunnel_meshes_with(&axis(400.0), &secs, 2, [true, true], true);
+        let half = axis(10.0)[0].half();
+        // Walls beside the profile, out to WING_WALL_M beyond the collar,
+        // high at the portal: both portals, both sides.
+        for (lo, hi) in [(91.0f32, 98.6f32), (301.4, 309.0)] {
+            for side in [-1.0f32, 1.0] {
+                let wall: Vec<_> = m
+                    .lit
+                    .positions
+                    .iter()
+                    .filter(|p| p[0] >= lo && p[0] <= hi && (p[2] - side * half).abs() < 0.2)
+                    .collect();
+                assert!(wall.iter().any(|p| p[1] > 104.0), "{lo} {side}");
+                assert!(wall.iter().any(|p| p[1] < 100.0), "{lo} {side}");
+            }
+        }
+        // Not out on the open road.
+        assert!(
+            !m.lit.positions.iter().any(|p| p[0] > 10.0 && p[0] < 85.0),
+            "beyond the cut"
+        );
     }
 
     #[test]
