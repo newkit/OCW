@@ -1433,6 +1433,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             // The 3-second preview of a photo just saved (the Display
             // page is full; a HUD option like the others here).
             setting_row(settings, "display.photo_preview", "Photo preview"),
+            // The voice status panel (spec 7.1.13): off / compact / full.
+            setting_row(settings, "display.voice_hud", "Voice status"),
         ],
         // From the training history (`menu::history`).
         Page::History

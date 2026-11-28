@@ -674,6 +674,7 @@ pub fn hud_layout_view_json(
     ui_scale: f32,
     boxes: &ocw_render::hud::HudBoxes,
     touch: &ocw_render::touch_hud::TouchLayout,
+    voice: &ocw_render::voice_panel::VoicePanelInfo,
 ) -> String {
     serde_json::json!({
         "compact": layout.compact,
@@ -682,6 +683,13 @@ pub fn hud_layout_view_json(
         "ui_scale": ui_scale,
         "top_panel": boxes.top_panel,
         "top_right": boxes.top_right,
+        // The column's printed lines and the voice status panel under
+        // them (spec 7.1.13); `voice_clear`: null, or what overlaps.
+        "top_right_lines": boxes.top_right_lines,
+        "voice_panel": boxes.voice_panel,
+        "voice_clear": boxes.voice_clear().err(),
+        "voice_shape": format!("{:?}", voice.shape).to_lowercase(),
+        "voice_rows": voice.rows,
         "profile": boxes.profile,
         // The touch steering's first-ride tip, the slot of the page's
         // screen tip (portrait) and the chevrons (spec 3.2.3).
@@ -700,12 +708,15 @@ fn publish_hud_layout(
     scale: Option<Res<UiScale>>,
     boxes: Option<Res<ocw_render::hud::HudBoxes>>,
     touch: Option<Res<ocw_render::touch_hud::TouchLayout>>,
+    voice: Option<Res<ocw_render::voice_panel::VoicePanelInfo>>,
 ) {
     let (Some(layout), Some(boxes)) = (layout, boxes) else {
         return;
     };
-    let changed =
-        layout.is_changed() || boxes.is_changed() || touch.as_ref().is_some_and(|t| t.is_changed());
+    let changed = layout.is_changed()
+        || boxes.is_changed()
+        || touch.as_ref().is_some_and(|t| t.is_changed())
+        || voice.as_ref().is_some_and(|v| v.is_changed());
     if changed || HUD_LAYOUT_JSON.lock().expect("not poisoned").is_empty() {
         let none = ocw_render::touch_hud::TouchLayout::default();
         *HUD_LAYOUT_JSON.lock().expect("not poisoned") = hud_layout_view_json(
@@ -713,6 +724,7 @@ fn publish_hud_layout(
             scale.map_or(1.0, |s| s.0),
             &boxes,
             touch.as_deref().unwrap_or(&none),
+            voice.as_deref().unwrap_or(&Default::default()),
         );
     }
 }

@@ -63,6 +63,10 @@ pub struct ScreenView {
     /// – from [`super::VrSession`].
     pub link: String,
     pub frame: String,
+    /// The voice call in the status row (≤ 16 characters, instead of the
+    /// frame time while a call is on; spec 7.1.13,
+    /// `voice_panel::VoicePanelView::short`): "MIC off (3)".
+    pub voice: String,
     pub clock: String,
     pub weather: String,
     pub power: String,
@@ -738,18 +742,39 @@ fn screen_on(vr: Res<super::VrSession>, mut cams: Query<&mut Camera, With<Screen
     }
 }
 
+/// The voice call for the status row (spec 7.1.13): the voice status
+/// panel's short line; empty without a call or with `hud.voice off`.
+pub fn voice_line(
+    hud: Option<&crate::voice::VoiceHud>,
+    fake: Option<&crate::voice_panel::FakeVoicePanel>,
+    mode: crate::voice_panel::VoicePanelMode,
+) -> String {
+    if mode == crate::voice_panel::VoicePanelMode::Off {
+        return String::new();
+    }
+    fake.and_then(|f| f.0.as_ref())
+        .or(hud.map(|h| &h.panel))
+        .map(crate::voice_panel::VoicePanelView::short)
+        .unwrap_or_default()
+}
+
 /// The banner's text: the controls hint while it lasts (unless something
 /// more urgent is shown), else the ride's message.
 fn toast_text(hint: Option<&str>, ride: Option<String>) -> Option<String> {
     ride.or_else(|| hint.map(str::to_string))
 }
 
-#[allow(clippy::too_many_arguments)] // a Bevy system
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system
 fn screen_text(
     hint: Res<ControlsHint>,
     vr: Res<super::VrSession>,
     time: Res<Time>,
     view: Option<Res<RideView>>,
+    voice: (
+        Option<Res<crate::voice::VoiceHud>>,
+        Option<Res<crate::voice_panel::FakeVoicePanel>>,
+        Option<Res<crate::voice_panel::VoicePanelMode>>,
+    ),
     ahead: Option<Res<LookAhead>>,
     units: Option<Res<Units>>,
     led_mat: Option<Res<LedMaterial>>,
@@ -776,6 +801,11 @@ fn screen_text(
     s.toast = toast_text(hint_active.then_some(hint.text.as_str()), s.toast.take());
     s.link = fit(&vr.link, 11);
     s.frame = fit(&vr.frame, 16);
+    s.voice = voice_line(
+        voice.0.as_deref(),
+        voice.1.as_deref(),
+        voice.2.as_deref().copied().unwrap_or_default(),
+    );
     // The heart rate in pink while it rises (as the HUD's heart).
     let rising = heart.is_some_and(|h| h.rising());
     for (part, mut t, ui, color) in &mut texts {
@@ -811,6 +841,8 @@ fn screen_text(
             ScreenText::Nav => s.nav.clone(),
             ScreenText::NavDetail => s.nav_detail.clone(),
             ScreenText::Toast => s.toast.clone().unwrap_or_default(),
+            // In a voice call: the call, not the frame time.
+            ScreenText::Frame if !s.voice.is_empty() => s.voice.clone(),
             ScreenText::Frame => s.frame.clone(),
         };
         if t.0 != want {
@@ -1105,5 +1137,24 @@ mod tests {
         let parts = meshes_of(&m);
         assert!(parts.iter().any(|(_, s, _)| s == "computer_led"));
         assert!(parts.iter().any(|(_, s, _)| s == "computer_body"));
+    }
+
+    /// The status row says the voice call (spec 7.1.13): the panel's
+    /// short line, nothing without a call or with the panel off.
+    #[test]
+    fn the_status_row_says_the_voice_call() {
+        use crate::voice::VoiceHud;
+        use crate::voice_panel::{FakeVoicePanel, VoicePanelMode, demo};
+        let mode = VoicePanelMode::default();
+        assert_eq!(voice_line(None, None, mode), "");
+        let mut hud = VoiceHud::default();
+        assert_eq!(voice_line(Some(&hud), None, mode), "", "no voice");
+        hud.panel = demo("mic-off").unwrap();
+        assert_eq!(voice_line(Some(&hud), None, mode), "MIC off (4)");
+        assert_eq!(voice_line(Some(&hud), None, VoicePanelMode::Off), "");
+        let fake = FakeVoicePanel(demo("others"));
+        let line = voice_line(Some(&hud), Some(&fake), mode);
+        assert_eq!(line, "MIC on (6) Bea+4");
+        assert!(line.chars().count() <= 16, "fits the row");
     }
 }

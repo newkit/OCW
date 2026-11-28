@@ -326,6 +326,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("hud.photo_preview {}"),
     },
     SettingDef {
+        key: "display.voice_hud",
+        kind: Kind::Choice(&["off", "compact", "full"]),
+        default: "compact",
+        description: "Voice status in the HUD (top right, under the printed lines): the call, my microphone, whom I hear, who speaks - compact (folds to icons when nothing changes), full (always the rows) or off",
+        scope: Scope::Live,
+        apply: Apply::Command("hud.voice {}"),
+    },
+    SettingDef {
         key: "display.fps",
         kind: Kind::Bool,
         default: "off",

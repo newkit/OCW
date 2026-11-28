@@ -140,6 +140,8 @@ fn spawn_event_hud(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
             EventPanel,
+            // Below the voice status panel when that reaches this far.
+            crate::voice_panel::BelowVoicePanel::Fraction(0.21),
             crate::navi_map::MapAvoid,
         ))
         .with_children(|p| {

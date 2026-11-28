@@ -4,6 +4,12 @@
 //! (on / muted), the connection status and who is talking; riders who talk
 //! get a marker above their avatar. All content comes from [`VoiceHud`],
 //! written by the app; this only draws it.
+//!
+//! The call, the microphone, *I hear* and the speakers are shown by the
+//! voice status panel at the top right ([`crate::voice_panel`], spec
+//! 7.1.13); the box at the lower left drawn here keeps what that panel does
+//! not say: the notices (the first call's, "nobody hears you") and the echo
+//! test with its level meters.
 
 use bevy::prelude::*;
 use ocw_core::RiderId;
@@ -35,6 +41,8 @@ pub struct VoiceHud {
     pub room: String,
     /// The first call's notice (spec §7.1.2), while it shows.
     pub notice: Option<String>,
+    /// The voice status panel's content (spec 7.1.13, top right).
+    pub panel: crate::voice_panel::VoicePanelView,
 }
 
 /// Riders shown speaking without a voice call (spec 14 Phase 4 Q24: the
@@ -114,38 +122,18 @@ pub fn meter_fraction(level: f32) -> f32 {
     ((20.0 * level.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
 }
 
-/// The panel's text lines (pure, tested).
-pub fn lines(v: &VoiceHud) -> (String, String) {
-    let mic = if v.mic_muted {
-        "MIC muted (M)"
-    } else if v.self_speaking {
-        "MIC on - talking"
-    } else {
-        "MIC on"
-    };
-    let spk = if v.speaker_muted {
-        "SPEAKER muted (Shift+M)"
-    } else {
-        "SPEAKER on"
-    };
-    let mut second = format!("voice {}", v.status);
-    if !v.speaking_names.is_empty() {
-        second.push_str(&format!(" - talking: {}", v.speaking_names.join(", ")));
-    }
-    if !v.room.is_empty() {
-        second.push('\n');
-        second.push_str(&v.room);
-    }
-    if let Some(n) = &v.notice {
-        second = format!("{n}\n{second}");
-    }
-    (format!("{mic}   {spk}"), second)
+/// Whether the lower-left box shows: a notice or the echo test.
+pub fn box_shown(v: &VoiceHud) -> bool {
+    v.notice.is_some() || v.echo.is_some()
 }
 
 pub struct VoiceHudPlugin;
 
 impl Plugin for VoiceHudPlugin {
     fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<crate::voice_panel::VoicePanelPlugin>() {
+            app.add_plugins(crate::voice_panel::VoicePanelPlugin);
+        }
         app.init_resource::<VoiceHud>()
             .init_resource::<FakeSpeaking>()
             .add_systems(Startup, spawn_panel)
@@ -155,9 +143,6 @@ impl Plugin for VoiceHudPlugin {
 
 #[derive(Component)]
 struct Panel;
-
-#[derive(Component)]
-struct MicLine;
 
 #[derive(Component)]
 struct StatusLine;
@@ -176,7 +161,6 @@ struct MeterFill(bool);
 #[derive(Component)]
 struct SpeakingMarker(RiderId);
 
-const MUTED: Color = Color::srgb(1.0, 0.35, 0.3);
 const LIVE: Color = Color::srgb(0.45, 1.0, 0.55);
 
 fn spawn_panel(mut commands: Commands) {
@@ -200,15 +184,6 @@ fn spawn_panel(mut commands: Commands) {
             crate::workout::WorkoutAvoid,
         ))
         .with_children(|p| {
-            p.spawn((
-                Text::new(""),
-                TextFont {
-                    font_size: 15.0.into(),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                MicLine,
-            ));
             p.spawn((
                 Text::new(""),
                 TextFont {
@@ -285,24 +260,36 @@ fn spawn_panel(mut commands: Commands) {
 #[allow(clippy::type_complexity)] // a Bevy system
 fn update_panel(
     hud: Res<VoiceHud>,
-    mut panel: Query<&mut Node, (With<Panel>, Without<EchoRow>, Without<MeterFill>)>,
-    mut mic: Query<
-        (&mut Text, &mut TextColor),
-        (With<MicLine>, Without<StatusLine>, Without<EchoLine>),
+    mut panel: Query<
+        &mut Node,
+        (
+            With<Panel>,
+            Without<EchoRow>,
+            Without<MeterFill>,
+            Without<StatusLine>,
+        ),
     >,
-    mut status: Query<&mut Text, (With<StatusLine>, Without<MicLine>, Without<EchoLine>)>,
-    mut echo_text: Query<
-        (&mut Text, &mut TextColor),
-        (With<EchoLine>, Without<MicLine>, Without<StatusLine>),
+    mut status: Query<(&mut Text, &mut Node), (With<StatusLine>, Without<EchoLine>)>,
+    mut echo_text: Query<(&mut Text, &mut TextColor), (With<EchoLine>, Without<StatusLine>)>,
+    mut echo_row: Query<
+        &mut Node,
+        (
+            With<EchoRow>,
+            Without<Panel>,
+            Without<MeterFill>,
+            Without<StatusLine>,
+        ),
     >,
-    mut echo_row: Query<&mut Node, (With<EchoRow>, Without<Panel>, Without<MeterFill>)>,
-    mut fills: Query<(&mut Node, &MeterFill), (Without<Panel>, Without<EchoRow>)>,
+    mut fills: Query<
+        (&mut Node, &MeterFill),
+        (Without<Panel>, Without<EchoRow>, Without<StatusLine>),
+    >,
 ) {
     if !hud.is_changed() {
         return;
     }
     for mut n in &mut panel {
-        n.display = if hud.visible || hud.echo.is_some() {
+        n.display = if box_shown(&hud) {
             Display::Flex
         } else {
             Display::None
@@ -329,19 +316,15 @@ fn update_panel(
             n.width = Val::Percent(100.0 * meter_fraction(level));
         }
     }
-    let (first, second) = lines(&hud);
-    for (mut t, mut c) in &mut mic {
-        t.0 = first.clone();
-        c.0 = if hud.mic_muted {
-            MUTED
-        } else if hud.self_speaking {
-            LIVE
+    // The notice (the first call's, "nobody hears you"); the call itself
+    // is the voice status panel's.
+    for (mut t, mut n) in &mut status {
+        t.0 = hud.notice.clone().unwrap_or_default();
+        n.display = if hud.notice.is_some() {
+            Display::Flex
         } else {
-            Color::WHITE
+            Display::None
         };
-    }
-    for mut t in &mut status {
-        t.0 = second.clone();
     }
 }
 
@@ -438,37 +421,19 @@ mod tests {
     }
 
     #[test]
-    fn indicator_lines() {
+    fn the_box_shows_only_notices_and_the_echo_test() {
         let mut v = VoiceHud {
             visible: true,
             status: "connected (2)".into(),
+            room: "MY VOICE: off (everybody) - I HEAR: everybody".into(),
             ..Default::default()
         };
-        assert_eq!(
-            lines(&v),
-            ("MIC on   SPEAKER on".into(), "voice connected (2)".into())
-        );
-        v.mic_muted = true;
-        v.speaker_muted = true;
-        v.speaking_names = vec!["Rider 2".into()];
-        let (a, b) = lines(&v);
-        assert_eq!(a, "MIC muted (M)   SPEAKER muted (Shift+M)");
-        assert_eq!(b, "voice connected (2) - talking: Rider 2");
-        v.mic_muted = false;
-        v.self_speaking = true;
-        assert!(lines(&v).0.starts_with("MIC on - talking"));
-        // The room line and the first call's notice (spec §7.1.2, §7.1.4).
-        v.room = "MY VOICE: off (everybody) - I HEAR: everybody".into();
-        v.speaking_names.clear();
-        assert_eq!(
-            lines(&v).1,
-            "voice connected (2)\nMY VOICE: off (everybody) - I HEAR: everybody"
-        );
+        // The call's state is the voice status panel's (top right).
+        assert!(!box_shown(&v));
         v.notice = Some("Voice: My voice is off - M turns it on.".into());
-        assert!(
-            lines(&v)
-                .1
-                .starts_with("Voice: My voice is off - M turns it on.\nvoice connected")
-        );
+        assert!(box_shown(&v));
+        v.notice = None;
+        v.echo = Some(EchoHud::default());
+        assert!(box_shown(&v));
     }
 }

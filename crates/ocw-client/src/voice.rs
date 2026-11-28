@@ -24,6 +24,7 @@ use ocw_core::RiderId;
 use ocw_protocol::v1;
 use ocw_render::Signs;
 use ocw_render::voice::{EchoHud, VoiceHud, VoiceSigns};
+use ocw_render::voice_panel::{Audience, CallState, Hearing, Speaker, VoicePanelView};
 use ocw_render::{RideView, RiderView};
 use ocw_voice::audience::{Listen, MyVoice};
 use ocw_voice::hotkeys::{Input, Toggle};
@@ -356,14 +357,7 @@ pub fn echo_hud(s: &EchoStatus, levels: Levels, delay_ms: u32) -> Option<EchoHud
 /// nobody", "… - I HEAR: group NAME".
 pub fn room_text(c: &VoiceController) -> String {
     let s = c.settings();
-    let selected = ocw_voice::riders::selected_list(c.rider_prefs())
-        .into_iter()
-        .filter(|(k, _)| !c.rider_prefs().get(k).is_some_and(|p| p.blocked))
-        .count();
-    let here = c
-        .participants()
-        .filter(|p| p.selected && !p.blocked_by_me)
-        .count();
+    let (selected, here) = selected_counts(c);
     let hear = match (c.group(), s.listen) {
         (_, Listen::Nobody) => "nobody".to_owned(),
         (Some(g), _) => format!("group {g}"),
@@ -374,6 +368,127 @@ pub fn room_text(c: &VoiceController) -> String {
         "MY VOICE: {} - I HEAR: {hear}",
         my_voice_text(c.my_voice_on(), s.my_voice)
     )
+}
+
+/// The selected riders (not blocked): how many, and how many of them are
+/// in the call.
+fn selected_counts(c: &VoiceController) -> (usize, usize) {
+    let selected = ocw_voice::riders::selected_list(c.rider_prefs())
+        .into_iter()
+        .filter(|(k, _)| !c.rider_prefs().get(k).is_some_and(|p| p.blocked))
+        .count();
+    let here = c
+        .participants()
+        .filter(|p| p.selected && !p.blocked_by_me)
+        .count();
+    (selected, here)
+}
+
+/// The call as the voice status panel says it (spec 7.1.13): nothing
+/// without voice (not built in, no voice server, a solo local ride), one
+/// dim line while alone on a server with voice.
+pub fn panel_call(status: &Status, others: usize) -> CallState {
+    match status {
+        Status::Unavailable(_) | Status::Off | Status::NoServerVoice => CallState::NoVoice,
+        Status::WaitingForRiders => CallState::Idle,
+        Status::Connecting => CallState::Connecting,
+        Status::Connected => CallState::Connected { others },
+        Status::Reconnecting => CallState::Reconnecting,
+        Status::Failed(e) => CallState::Failed { reason: e.clone() },
+    }
+}
+
+/// A rider speaking, for the panel's order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PanelSpeaker {
+    pub name: String,
+    /// One of the own *Selected riders*.
+    pub selected: bool,
+    /// How far away on the road (m, either way), if known.
+    pub distance_m: Option<f64>,
+    pub cannot_hear_me: bool,
+}
+
+/// The speakers in the panel's order (spec 7.1.13): the selected riders
+/// first (as spec 7.1.4), then the nearest; riders whose distance is not
+/// known last; by name among equals. The backends report who speaks, not
+/// how loud, so "nearest" stands for "loudest" (voices fade with distance).
+pub fn panel_speakers(mut speakers: Vec<PanelSpeaker>) -> Vec<Speaker> {
+    speakers.sort_by(|a, b| {
+        let d = |s: &PanelSpeaker| s.distance_m.map_or(f64::INFINITY, f64::abs);
+        b.selected
+            .cmp(&a.selected)
+            .then(d(a).total_cmp(&d(b)))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    speakers
+        .into_iter()
+        .map(|s| Speaker {
+            name: s.name,
+            cannot_hear_me: s.cannot_hear_me,
+        })
+        .collect()
+}
+
+/// The voice status panel's content (spec 7.1.13) from the call: `own` is
+/// the own rider, `view` gives the signs the others show (headphones:
+/// cannot hear me).
+pub fn panel_view(
+    c: &VoiceController,
+    own: Option<RiderId>,
+    view: Option<&RideView>,
+) -> VoicePanelView {
+    let status = c.status();
+    let s = c.settings();
+    let (selected, here) = selected_counts(c);
+    let mute = c.mute();
+    let hearing = if mute.speaker_muted {
+        Hearing::SpeakerMuted
+    } else {
+        match (c.group(), s.listen) {
+            (_, Listen::Nobody) => Hearing::Nobody,
+            (Some(g), _) => Hearing::Group(g.to_owned()),
+            (None, Listen::Everybody) => Hearing::Everybody,
+            (None, Listen::Selected) => Hearing::Selected { selected, here },
+        }
+    };
+    let deaf_to_me = |rider: Option<RiderId>| {
+        rider.is_some_and(|id| {
+            view.is_some_and(|v| {
+                v.riders
+                    .iter()
+                    .any(|r| r.id == id && r.signs.cannot_hear_you)
+            })
+        })
+    };
+    // Riders kept apart by a block exchange no voice: not listed.
+    let speakers = c
+        .participants()
+        .filter(|p| p.speaking && p.rider != own && !p.blocked_by_me && !p.apart)
+        .map(|p| PanelSpeaker {
+            name: if p.name.is_empty() {
+                p.identity.clone()
+            } else {
+                p.name.clone()
+            },
+            selected: p.selected,
+            distance_m: p.distance_m,
+            cannot_hear_me: deaf_to_me(p.rider),
+        })
+        .collect();
+    let level = c.levels().input;
+    VoicePanelView {
+        call: panel_call(&status, c.participants().count()),
+        mic_on: !mute.mic_muted,
+        audience: match s.my_voice {
+            MyVoice::Everybody => Audience::Everybody,
+            MyVoice::Selected => Audience::Selected(selected),
+        },
+        self_speaking: c.self_speaking(),
+        level: (level > 0.0).then_some(level),
+        hearing,
+        speakers: panel_speakers(speakers),
+    }
 }
 
 /// *My voice* as the page and the HUD show it (spec §7.1.7 Q16): "on,
@@ -696,6 +811,7 @@ impl VoiceDriver {
             signs: voice_signs(c, client.is_some_and(ClientCore::voice_offered)),
             room: room_text(c),
             notice,
+            panel: panel_view(c, own, view),
         };
         out
     }
@@ -1508,6 +1624,195 @@ mod tests {
         let f = d.frame(&mut c, None, 1, Vec::new(), None, 0.3);
         assert_eq!(f.hud.status, "failed, retrying");
         assert!(f.console.iter().any(|l| l.contains("server left")));
+    }
+
+    /// The voice status panel's call row from each status (spec 7.1.13):
+    /// hidden without voice, one dim line while alone.
+    #[test]
+    fn the_panel_says_each_call_state() {
+        for s in [
+            Status::Unavailable("not built in".into()),
+            Status::Off,
+            Status::NoServerVoice,
+        ] {
+            let call = panel_call(&s, 0);
+            assert_eq!(call, CallState::NoVoice, "{s:?}");
+            let v = VoicePanelView {
+                call,
+                ..Default::default()
+            };
+            assert!(!v.visible(), "{s:?}: no clutter");
+        }
+        assert_eq!(panel_call(&Status::WaitingForRiders, 0), CallState::Idle);
+        assert_eq!(panel_call(&Status::Connecting, 0), CallState::Connecting);
+        assert_eq!(
+            panel_call(&Status::Connected, 3),
+            CallState::Connected { others: 3 }
+        );
+        assert_eq!(
+            panel_call(&Status::Reconnecting, 3),
+            CallState::Reconnecting
+        );
+        assert_eq!(
+            panel_call(&Status::Failed("server unreachable".into()), 0),
+            CallState::Failed {
+                reason: "server unreachable".into()
+            }
+        );
+    }
+
+    /// Selected riders first, then the nearest (either way on the road),
+    /// unknown distances last, names among equals.
+    #[test]
+    fn the_panel_orders_the_speakers() {
+        let sp = |name: &str, selected: bool, d: Option<f64>| PanelSpeaker {
+            name: name.into(),
+            selected,
+            distance_m: d,
+            cannot_hear_me: name == "Dana",
+        };
+        let out = panel_speakers(vec![
+            sp("Eli", false, None),
+            sp("Bea", false, Some(8.0)),
+            sp("Cleo", false, Some(-3.0)),
+            sp("Dana", true, Some(250.0)),
+            sp("Ada", false, None),
+            sp("Fay", true, Some(-40.0)),
+        ]);
+        let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Fay", "Dana", "Cleo", "Bea", "Ada", "Eli"]);
+        assert!(out[1].cannot_hear_me && !out[0].cannot_hear_me);
+        assert!(panel_speakers(Vec::new()).is_empty());
+    }
+
+    /// The driver fills the panel from the call: the states, the
+    /// microphone and its audience, I hear, the speakers (spec 7.1.13).
+    #[test]
+    fn the_driver_fills_the_voice_status_panel() {
+        let backend = std::sync::Arc::new(std::sync::Mutex::new(MockBackend::default()));
+        let mut c = VoiceController::new(
+            Box::new(Recording(backend.clone())),
+            VoiceSettings::default(),
+            MuteState {
+                mic_muted: true,
+                ..Default::default()
+            },
+        );
+        let mut d = VoiceDriver::default();
+        // No voice server: nothing.
+        c.new_session(false);
+        let f = d.frame(&mut c, None, 1, Vec::new(), None, 0.0);
+        assert_eq!(f.hud.panel.call, CallState::NoVoice);
+        // Voice, but alone: not in a call.
+        c.new_session(true);
+        c.set_human_riders(1);
+        let f = d.frame(&mut c, None, 1, Vec::new(), None, 0.1);
+        assert_eq!(f.hud.panel.call, CallState::Idle);
+        assert_eq!(f.hud.panel.call_text(), "voice: not in a call");
+        // Another rider: joining.
+        c.set_human_riders(4);
+        let f = d.frame(&mut c, None, 1, Vec::new(), None, 0.2);
+        assert_eq!(f.hud.panel.call, CallState::Connecting);
+        let grant = v1::VoiceGrant {
+            url: "wss://voice.example".into(),
+            token: "t".into(),
+            room: "ocw-1".into(),
+            identity: "rider-1".into(),
+            ..Default::default()
+        };
+        d.frame(&mut c, None, 1, vec![grant], None, 0.3);
+        let joined = |identity: &str, name: &str| BackendEvent::ParticipantJoined {
+            identity: identity.into(),
+            name: name.into(),
+        };
+        backend.lock().unwrap().events.extend([
+            BackendEvent::Connected {
+                room: "ocw-1".into(),
+            },
+            joined("rider-2", "Bea"),
+            joined("rider-3", "Cleo"),
+            joined("rider-4", "Dana"),
+        ]);
+        // The road: Dana nearest, then Bea; Cleo wears headphones for me.
+        let mut view = RideView::new(Route::test_loop());
+        view.riders = vec![
+            rider(1, 100.0, 0.0, true),
+            rider(2, 108.0, 0.0, false),
+            rider(3, 95.0, 0.0, false),
+            rider(4, 102.0, 0.0, false),
+        ];
+        view.riders[2].signs.cannot_hear_you = true;
+        let own = RiderId(1);
+        let f = d.frame(&mut c, None, 1, Vec::new(), Some(&view), 0.4);
+        let p = &f.hud.panel;
+        assert_eq!(p.call, CallState::Connected { others: 3 });
+        assert!(!p.mic_on, "every ride starts with My voice off");
+        assert_eq!(p.audience, Audience::Everybody);
+        assert_eq!(p.hearing, Hearing::Everybody);
+        assert!(p.speakers.is_empty() && !p.self_speaking);
+        assert_eq!(p.mic_text("M"), "off (M) - everybody");
+        // They speak: the nearest first; me too once My voice is on.
+        c.set_mic(Switch::Off);
+        backend
+            .lock()
+            .unwrap()
+            .events
+            .push(BackendEvent::Speaking(vec![
+                "rider-1".into(),
+                "rider-2".into(),
+                "rider-3".into(),
+                "rider-4".into(),
+            ]));
+        let f = d.frame(&mut c, None, 1, Vec::new(), Some(&view), 0.5);
+        let p = panel_view(&c, Some(own), Some(&view));
+        assert!(p.mic_on && p.self_speaking);
+        let names: Vec<&str> = p.speakers.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Dana", "Cleo", "Bea"], "2 m, 5 m, 8 m");
+        assert!(p.speakers[1].cannot_hear_me, "Cleo's headphones");
+        assert!(!p.speakers[0].cannot_hear_me);
+        // Without the own rider's id (no client) the own voice is no
+        // speaker row either: the identity is the call's own.
+        assert!(f.hud.panel.speakers.iter().all(|s| s.name != "rider-1"));
+        // The audience and I hear.
+        let listen = |c: &mut VoiceController, listen: Listen| {
+            let mut s = c.settings().clone();
+            s.my_voice = MyVoice::Selected;
+            s.listen = listen;
+            c.set_settings(s);
+        };
+        listen(&mut c, Listen::Nobody);
+        let p = panel_view(&c, Some(own), Some(&view));
+        assert_eq!(p.audience, Audience::Selected(0));
+        assert_eq!(p.hearing, Hearing::Nobody);
+        assert!(p.hears_no_one());
+        listen(&mut c, Listen::Selected);
+        assert_eq!(
+            panel_view(&c, Some(own), Some(&view)).hearing,
+            Hearing::Selected {
+                selected: 0,
+                here: 0
+            }
+        );
+        // Voices muted (Shift+M) wins over I hear.
+        c.set_speaker(Switch::On);
+        assert_eq!(
+            panel_view(&c, Some(own), Some(&view)).hearing,
+            Hearing::SpeakerMuted
+        );
+        // The call drops: failed with the reason.
+        backend
+            .lock()
+            .unwrap()
+            .events
+            .push(BackendEvent::Disconnected {
+                reason: "server left".into(),
+            });
+        let f = d.frame(&mut c, None, 1, Vec::new(), Some(&view), 0.6);
+        assert!(
+            matches!(&f.hud.panel.call, CallState::Failed { reason } if reason.contains("server left")),
+            "{:?}",
+            f.hud.panel.call
+        );
     }
 
     /// One rider of [`three_riders_block_both_ways`]: the client, its

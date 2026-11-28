@@ -80,6 +80,7 @@ pub mod ufo;
 pub mod unicorn;
 pub mod vegetation;
 pub mod voice;
+pub mod voice_panel;
 pub mod water;
 // VR (spec §14 Phase 11 / 14I W2): the bike computer on the bars and the
 // controllers as a gamepad; added by an app only when it has a headset

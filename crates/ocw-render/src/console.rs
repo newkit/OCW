@@ -141,6 +141,9 @@ impl Plugin for ConsoleCorePlugin {
             .init_resource::<crate::navi_map::MapZoom>()
             .init_resource::<crate::navi_map::NaviMapInfo>()
             .init_resource::<crate::photo_preview::PhotoPreview>()
+            .init_resource::<crate::voice_panel::VoicePanelMode>()
+            .init_resource::<crate::voice_panel::FakeVoicePanel>()
+            .init_resource::<crate::hud::HudBoxes>()
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
             .init_resource::<CameraMode>()
@@ -851,6 +854,59 @@ fn register_builtin_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         User,
+        Command::new("hud.voice")
+            .about("The voice status panel (top right, spec 7.1.13): off, compact (folds to icons when nothing changes) or full; no word: the next of them")
+            .arg(Arg::new("mode").value_parser(crate::voice_panel::VoicePanelMode::NAMES)),
+        |world, m| {
+            use crate::voice_panel::VoicePanelMode;
+            let now = *world.resource::<VoicePanelMode>();
+            let mode = match m.get_one::<String>("mode") {
+                Some(v) => VoicePanelMode::parse(v).ok_or_else(|| {
+                    format!("voice HUD: off, compact or full, not {v}")
+                })?,
+                None => now.next(),
+            };
+            *world.resource_mut::<VoicePanelMode>() = mode;
+            Ok(format!("voice HUD {}", mode.name()))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Dev,
+        Command::new("dev.voice_hud")
+            .about("Dev (scenes, tests): show the voice status panel in a made-up state without a voice call; none: the call's own again; no word: what shows and whether it lies clear under the top-right lines")
+            .arg(Arg::new("state").value_parser(crate::voice_panel::DEMO_STATES)),
+        |world, m| {
+            use crate::voice_panel::{FakeVoicePanel, VoicePanelInfo, demo};
+            match m.get_one::<String>("state") {
+                Some(v) => {
+                    world.resource_mut::<FakeVoicePanel>().0 = demo(v);
+                    Ok(format!("voice HUD shows: {v}"))
+                }
+                None => {
+                    let boxes = world.resource::<crate::hud::HudBoxes>();
+                    let layout = match (boxes.voice_panel, boxes.voice_clear()) {
+                        (None, _) => "not shown".to_owned(),
+                        (Some(p), Ok(())) => format!(
+                            "at {:.0},{:.0} {:.0}x{:.0}, clear under {} line(s)",
+                            p[0],
+                            p[1],
+                            p[2],
+                            p[3],
+                            boxes.top_right_lines.len()
+                        ),
+                        (Some(_), Err(e)) => format!("LAYOUT: {e}"),
+                    };
+                    let rows = world
+                        .get_resource::<VoicePanelInfo>()
+                        .map(|i| i.rows.join(" | "))
+                        .unwrap_or_default();
+                    Ok(format!("voice HUD {layout}: {rows}"))
+                }
+            }
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
         Command::new("rider.gps")
             .about("Show the rider's GPS position (lat, lon, altitude; the HUD's GPS line)"),
         |world, _| match world
@@ -1403,7 +1459,8 @@ mod tests {
                 "hud.map.zoom",
                 "hud.photo_preview",
                 "hud.profile",
-                "hud.units"
+                "hud.units",
+                "hud.voice"
             ]
         );
     }
@@ -1435,6 +1492,34 @@ mod tests {
                 .enabled
         );
         assert_eq!(run(&mut app, "hud.photo_preview")[1], "photo preview on");
+        // The voice status panel's switch (setting display.voice_hud).
+        use crate::voice_panel::{FakeVoicePanel, VoicePanelMode};
+        assert_eq!(
+            *app.world().resource::<VoicePanelMode>(),
+            VoicePanelMode::Compact,
+            "on (compact) by default"
+        );
+        assert_eq!(run(&mut app, "hud.voice full")[1], "voice HUD full");
+        assert_eq!(run(&mut app, "hud.voice")[1], "voice HUD off", "the next");
+        assert_eq!(
+            *app.world().resource::<VoicePanelMode>(),
+            VoicePanelMode::Off
+        );
+        assert_eq!(run(&mut app, "hud.voice compact")[1], "voice HUD compact");
+        assert!(run(&mut app, "hud.voice loud")[1].starts_with("error"));
+        app.world_mut().resource_mut::<ConsoleState>().permission = Permission::Dev;
+        assert_eq!(
+            run(&mut app, "dev.voice_hud others")[1],
+            "voice HUD shows: others"
+        );
+        assert_eq!(
+            app.world().resource::<FakeVoicePanel>().0,
+            crate::voice_panel::demo("others")
+        );
+        assert!(run(&mut app, "dev.voice_hud")[1].starts_with("voice HUD not shown"));
+        run(&mut app, "dev.voice_hud none");
+        assert_eq!(app.world().resource::<FakeVoicePanel>().0, None);
+        app.world_mut().resource_mut::<ConsoleState>().permission = Permission::User;
         let mut view = crate::RideView::new(ocw_world::Route::test_loop());
         view.position = Some((47.139961, 9.521512, 455.2));
         app.insert_resource(view);

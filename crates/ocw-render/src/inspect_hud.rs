@@ -107,6 +107,8 @@ fn spawn(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
             PanelRoot,
+            // Below the voice status panel when that reaches this far.
+            crate::voice_panel::BelowVoicePanel::Px(56.0),
             crate::hud::HudPanel,
         ))
         .with_child((

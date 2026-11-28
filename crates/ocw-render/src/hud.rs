@@ -224,7 +224,7 @@ impl Units {
 pub struct HudTopPanel;
 
 /// The column at the top right: the timestamp, REC, the app message, the
-/// FPS counter, the photo preview.
+/// FPS counter, the voice status panel, the photo preview.
 #[derive(Component)]
 pub struct HudTopRight;
 
@@ -303,6 +303,12 @@ pub fn column_top_below(panel_h: f32) -> f32 {
 pub struct HudBoxes {
     pub top_panel: Option<[f32; 4]>,
     pub top_right: Option<[f32; 4]>,
+    /// The printed lines of the top-right column that show (the time
+    /// stamp, REC, the app message, Strava, the FPS counter), top to
+    /// bottom, and the voice status panel under them
+    /// ([`crate::voice_panel`]; [`HudBoxes::voice_clear`]).
+    pub top_right_lines: Vec<[f32; 4]>,
+    pub voice_panel: Option<[f32; 4]>,
     pub profile: Option<[f32; 4]>,
     /// The touch steering's first-ride tip (`crate::touch_hud`).
     pub touch_tip: Option<[f32; 4]>,
@@ -311,6 +317,18 @@ pub struct HudBoxes {
     pub small_lines: usize,
     /// The top panel's text (big, then small).
     pub text: String,
+}
+
+impl HudBoxes {
+    /// Whether the voice status panel lies clear under the column's
+    /// printed lines (`Ok` also while it is hidden).
+    pub fn voice_clear(&self) -> Result<(), String> {
+        match (self.voice_panel, self.top_right) {
+            (Some(p), Some(c)) => crate::voice_panel::clear_below(p, &self.top_right_lines, c),
+            (Some(_), None) => Err("the panel shows without the column".into()),
+            (None, _) => Ok(()),
+        }
+    }
 }
 
 /// The whole big line ("HR" in the heart's place).
@@ -342,11 +360,39 @@ fn measure_hud(
     big: Query<&Text, (With<HudText>, Without<HudSmallText>)>,
     small: Query<&Text, (With<HudSmallText>, Without<HudText>)>,
     rest: Query<&TextSpan, With<HudTextRest>>,
+    column: Query<&Children, With<HudTopRight>>,
+    column_boxes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        &InheritedVisibility,
+        Has<crate::voice_panel::VoicePanelRoot>,
+    )>,
     mut boxes: ResMut<HudBoxes>,
 ) {
     let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
     let k = scale.map_or(1.0, |s| s.0);
     let mut out = HudBoxes::default();
+    // The column's printed lines, down to the voice status panel.
+    for child in column.iter().flat_map(|c| c.iter()) {
+        let Ok((c, t, v, voice)) = column_boxes.get(child) else {
+            continue;
+        };
+        if v.get() && c.size().x > 0.0 && c.size().y > 0.0 {
+            let inv = c.inverse_scale_factor();
+            let size = c.size() * inv * k;
+            let min = t.translation * inv * k - size * 0.5 + off;
+            let r = [min.x, min.y, size.x, size.y];
+            if voice {
+                out.voice_panel = Some(r);
+            } else {
+                out.top_right_lines.push(r);
+            }
+        }
+        if voice {
+            // What follows (the photo preview) is below the panel.
+            break;
+        }
+    }
     for (c, t, v, top, right, profile, tip) in &nodes {
         if !(top || right || profile || tip) || !v.get() || c.size().x <= 0.0 {
             continue;
@@ -1016,6 +1062,9 @@ fn spawn_recording(mut commands: Commands) {
                 StravaNotice,
             ));
             top.spawn(crate::frame_rate::badge_bundle());
+            // The voice status panel (spec 7.1.13): directly under the
+            // printed lines.
+            crate::voice_panel::spawn(top);
             // The preview of a photo just saved, under the FPS counter.
             crate::photo_preview::spawn_card(top);
         });

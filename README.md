@@ -2636,6 +2636,11 @@ keeps real time (on the kiosk test machine all 25 images per second are
 new; a slow screenshot readback can lower that elsewhere – `make test-video`
 records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it).
 
+**The top right corner of the HUD**, from the top: the timestamp, `REC`
+while a video records, app messages, the Strava badge and its notice, the
+FPS counter – then, in a voice call, the **voice status panel** (see *Voice
+chat*) and, for 3 seconds, a photo just saved.
+
 **Timestamp:** the top right corner always shows the local date and time
 with its UTC offset, e.g. `2026-11-12T22:14:05+01:00`, also with `hud off`:
 every screenshot and video frame shows when it was taken (during
@@ -2945,6 +2950,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.hud` | on / off (on) | at once |
 | `display.units` | metric / imperial (metric) | at once |
 | `display.fps` | on / off (off): FPS counter (top right: the real render rate over the last second and its longest frame, e.g. `58 fps  max 21 ms`) | at once |
+| `display.voice_hud` | off / compact / full (compact): the voice status panel (top right, under the printed lines: the call, my microphone, I hear, who speaks; compact folds to icons when nothing changes) – see *Voice chat* | at once |
 | `display.camera` | chase / side / top (chase) | at once |
 | `display.night_brightness` | 0 to 50 (10): least light at night in % of daylight (0 = realistic darkness); Settings → Display | at once |
 | `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
@@ -4005,9 +4011,33 @@ voice off is both rows off (`voice.off`); you stay in the call. The page
 also has the speaker (**Shift+M** / **R3** mutes all voices, remembered in
 `settings.toml`), the participants with the call's state (mute one rider
 for yourself, a volume, Block) and the devices, the voice volume and
-spatial voice (at most 24 voices at once, those talking first). The HUD's
-voice indicator shows the switches, the connection state, who is talking
-and both rows (`MY VOICE: off (everybody) - I HEAR: everybody`).
+spatial voice (at most 24 voices at once, those talking first).
+
+**The voice status panel** (spec 7.1.13) sits at the **top right of the
+HUD, directly under the printed lines** there (the time stamp, REC, app
+messages, the Strava badge, the FPS counter) – right-aligned with them,
+moving down when they grow, inside the safe area on phones, scaled with
+the HUD size:
+
+| Row | Shows |
+|---|---|
+| the call | `voice: not in a call` (alone; one dim line) · `connecting` · `connected (3)` · `reconnecting` · `failed: server unreachable, retrying` |
+| my microphone | the microphone, `on - everybody` / `on - selected 2`, and three small moving bars while you are heard · the **X mouth**, `off (M) - everybody` |
+| I hear | `everybody` / `selected 2 (1 here)` / `group NAME` · the **headphones** with `nobody` or `muted (Shift+M)` |
+| who speaks | up to three names with the bars (selected riders first, then the nearest), `+2` for more; headphones behind a rider who cannot hear you |
+
+Without voice (a solo ride, a server without voice) there is no panel.
+With `compact` (the default) it folds to three icons – microphone, hearing,
+riders in the call – a few seconds after the last change or word and opens
+again when something changes or somebody speaks; `full` keeps the rows,
+`off` hides it: `hud.voice off|compact|full`, setting `display.voice_hud`,
+*Settings → Accessibility → Voice status*. In the browser the page's
+Devices panel collapses to its button when the voice panel reaches it
+(opened again, it stands left of it). It only shows: **M** / gamepad
+**Select** switch the microphone (a tap on the panel does nothing). The box
+at the lower left keeps the notices (the first call's, "nobody hears you")
+and the echo test. In VR the bike computer's status row says the call in
+one line (`MIC off (3)`).
 Console: `voice.status`, `voice.mute-mic [on|off|toggle]` (My voice off /
 on), `voice.mute-speaker [on|off|toggle]`, `voice.off`, `voice.mute
 RIDER`, `voice.volume RIDER PERCENT`, `voice.block RIDER`, `voice.select

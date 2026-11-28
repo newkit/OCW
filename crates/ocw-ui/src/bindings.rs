@@ -362,6 +362,7 @@ fn refresh(
     mut active: ResMut<ActiveBindings>,
     mut camera: ResMut<ocw_render::camera::CameraKey>,
     mut hud: ResMut<ocw_render::hud::RideKeys>,
+    mut voice: Option<ResMut<ocw_render::voice_panel::VoiceKeys>>,
 ) {
     let Some(s) = settings else { return };
     if !s.is_changed() && !active.is_added() {
@@ -379,6 +380,13 @@ fn refresh(
             plain: h.plain,
             junction: h.junction,
         };
+        // The voice status panel's hint: the key that turns My voice on.
+        if let Some(v) = voice.as_deref_mut() {
+            v.mic = match b.first_key(Action::MuteMic) {
+                "none" => String::new(),
+                k => k.to_owned(),
+            };
+        }
         active.0 = b;
     }
 }
