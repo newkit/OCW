@@ -24,6 +24,9 @@ use crate::tunnel::{TUBE_CROWN_M, TUBE_SIDE_M, TUBE_WALL_M};
 
 /// At most this many pieces are cut at a time (the nearest to the rider).
 pub const MAX_CUT_PIECES: usize = 64;
+/// In front of a bored section's portals the tube's profile is cut over
+/// this length too (m): the camera follows the rider there.
+pub const PORTAL_APPROACH_M: f64 = 6.0;
 /// Length of a piece along the track (m); pieces overlap a little.
 pub const CUT_STEP_M: f64 = 2.0;
 /// Pieces are cut where the terrain beside or above the road is less than
@@ -195,23 +198,39 @@ pub fn structure_cut_pieces<'a>(
                 .find(|k| s >= k.from - 1e-6 && s <= k.to + 1e-6)
                 .map_or(SectionKind::Open, |k| k.kind)
         };
+        let bored: Vec<(f64, f64)> = sections
+            .iter()
+            .filter(|k| k.kind == SectionKind::Bored)
+            .map(|k| (k.from, k.to))
+            .collect();
+        // In front of a portal: the camera behind a rider entering or
+        // leaving the tube is there, and the mound's slope reaches into
+        // the tube's profile (the Arcalís portal, 2026-11-28: it hid the
+        // rider for half a second).
+        let approach = |s: f64| {
+            bored.iter().any(|&(a, b)| {
+                (s >= a - PORTAL_APPROACH_M && s < a) || (s > b && s <= b + PORTAL_APPROACH_M)
+            })
+        };
+        let low_cover = |x: &ocw_world::tunnels::AxisSample| {
+            let low = [-x.half, 0.0, x.half]
+                .into_iter()
+                .filter_map(|l| {
+                    let q = x.at(l);
+                    ground(q[0], q[1]).map(|h| h - x.road_y)
+                })
+                .fold(f64::INFINITY, f64::min);
+            low < TUBE_CROWN_M + CUT_COVER_M
+        };
         let wanted: Vec<bool> = samples
             .iter()
             .map(|x| match kind(x.s) {
                 SectionKind::Gallery { .. } => true,
                 // Boxes lie under laid terrain (cities, road embankments):
                 // cutting the tube's arch would open the ground over them.
-                SectionKind::Open | SectionKind::Box => false,
-                SectionKind::Bored => {
-                    let low = [-x.half, 0.0, x.half]
-                        .into_iter()
-                        .filter_map(|l| {
-                            let q = x.at(l);
-                            ground(q[0], q[1]).map(|h| h - x.road_y)
-                        })
-                        .fold(f64::INFINITY, f64::min);
-                    low < TUBE_CROWN_M + CUT_COVER_M
-                }
+                SectionKind::Box => false,
+                SectionKind::Open => approach(x.s),
+                SectionKind::Bored => low_cover(x),
             })
             .collect();
         let mut i = 0;
@@ -358,6 +377,65 @@ mod tests {
         // No tunnel, nothing cut.
         assert!(cut_pieces(&r, &slope, &[], 790.0).is_empty());
         assert!(!inside(Vec3::new(805.0, 101.0, 0.0), &TunnelCut::default()));
+    }
+
+    /// Regression (the Arcalís portal, 2026-11-28): the mound's slope in
+    /// front of a portal reached into the tube's profile where the camera
+    /// follows the rider in, and hid the rider for half a second. The
+    /// profile is cut over [`PORTAL_APPROACH_M`] in front of the portal too,
+    /// not further out.
+    #[test]
+    fn the_mound_in_front_of_a_portal_is_cut_where_the_camera_follows() {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, VertexId};
+        use ocw_world::tunnels::{Section, SectionKind};
+        let e = Edge {
+            id: EdgeId(1),
+            from: VertexId(0),
+            to: VertexId(1),
+            points: vec![[0.0, 0.0], [300.0, 0.0]],
+            class: RoadClass::Secondary,
+            name: None,
+            width_m: 6.0,
+            bridge: false,
+            tunnel: true,
+            dead_end_m: None,
+            boundary: false,
+            oneway: Oneway::No,
+            osm_way: 7,
+            profile: vec![100.0; 61],
+        };
+        // Laid under the road, the mound rising at 1:1.5 from x 92 to the
+        // portal at 100, the hill beyond.
+        let ground = |x: f64, _z: f64| {
+            Some(if x < 92.0 {
+                99.7
+            } else {
+                (100.0 + (x - 92.0) / 1.5).max(99.7)
+            })
+        };
+        let samples = ocw_world::tunnels::probe(&e, &ground);
+        let secs = [
+            Section {
+                from: 0.0,
+                to: 100.0,
+                kind: SectionKind::Open,
+            },
+            Section {
+                from: 100.0,
+                to: 300.0,
+                kind: SectionKind::Bored,
+            },
+        ];
+        let pieces = structure_cut_pieces(
+            std::iter::once((&samples[..], &secs[..])),
+            &ground,
+            [97.0, 0.0],
+        );
+        let cut = TunnelCut::new(&pieces);
+        // The slope 3 m in front of the portal, 2 m over the road: cut.
+        assert!(inside(Vec3::new(97.0, 102.0, 0.0), &cut), "{pieces:?}");
+        // 20 m out on the open road: nothing cut.
+        assert!(!inside(Vec3::new(80.0, 101.0, 0.0), &cut));
     }
 
     #[test]
