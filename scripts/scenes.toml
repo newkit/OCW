@@ -1051,6 +1051,61 @@ world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "300"]
 at = ["2.5=camera.orbit 75 8 10"]
 video = 6
+
+# --- Wild mode downhill (the bug of 2026-11-28, spec 5.2.1) -----------------
+# The same seed and inputs before / after the fix (render once with main's
+# ocw-sim, once with the fix): down the Schauinsland road through the wood
+# (turned at 3 s; wild mode on at 38 s, a 30° lean right / left every 2.5 s)
+# and down the open Envalira road (turned at 3 s; wild mode on at 28 s, a
+# full lean right for 6 s, then left); a raised chase camera shows where the
+# rider goes against the road.
+
+[[scene]]
+name = "wild-downhill-carve"
+description = "Video: wild mode down the Schauinsland road at ~55 km/h, carving off the road into the wood (a 30 degree lean to the other side every 2.5 s) until a tree stops the rider - the trees stay solid in wild mode (spec 5.2.1)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "250"]
+riders = """
+active = "Edda Descender"
+
+[[rider]]
+name = "Edda Descender"
+weight_kg = 77.0
+ftp_w = 255
+bike = "gravel"
+frame_color = "#6A1B9A"
+jersey_color = "#00ACC1"
+helmet_color = "#FFEB3B"
+kit = "sash"
+"""
+at = ["3=ride.uturn", "4=camera.orbit 0 35 26", "36=rider.state", "38=rider.wild on", "38.5=rider.lean 30", "41=rider.lean -30", "43.5=rider.lean 30", "46=rider.lean -30", "48.5=rider.lean 30", "51=rider.lean 0", "41=rider.state", "43.5=rider.state", "46=rider.state", "48.5=rider.state", "51=rider.state", "54=rider.state"]
+warmup = 37
+video = 17
+pick = false
+
+[[scene]]
+name = "wild-downhill-envalira"
+description = "Video: wild mode down the Port d'Envalira road above Grau Roig (open grass and scree), a full lean (40 degrees; before the fix capped at 30) right for 6 s, then left for 6 s: the rider turns round off the road where before the turn stopped at ~69 degrees to the road (spec 5.2.1)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "9080,-220", "--bots", "0", "--power", "250"]
+riders = """
+active = "Fenna Carver"
+
+[[rider]]
+name = "Fenna Carver"
+weight_kg = 63.0
+height_cm = 168.0
+ftp_w = 230
+bike = "road"
+frame_color = "#EF6C00"
+jersey_color = "#283593"
+helmet_color = "#FAFAFA"
+kit = "chevrons"
+"""
+at = ["3=ride.uturn", "4=camera.orbit 0 40 30", "26=rider.state", "28=rider.wild on", "28.5=rider.lean 40", "34.5=rider.lean -40", "40.5=rider.lean 0", "30=rider.state", "32=rider.state", "34.5=rider.state", "36.5=rider.state", "38.5=rider.state", "40.5=rider.state", "43=rider.state"]
+warmup = 27
+video = 17
+pick = false
 # --- Sky and time (spec §14 Phase 9, S1 / S3) -------------------------------
 # Fixed instants on 21 June 2026 in Vaduz (sunrise 05:26, sunset 21:21 CEST),
 # the clock paused so the light is exact; `time` resolves local times in the

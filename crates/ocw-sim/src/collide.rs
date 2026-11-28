@@ -2245,7 +2245,7 @@ mod tests {
             }
             (lost, wobbles, crash, s)
         };
-        // Wet (0.75): the cap is about 23.4°; leaning 30° skids.
+        // Wet (0.75): the cap is about 32°; leaning 40° skids.
         let cap = crate::weather::lean_limit(0.75);
         assert!(cap < full);
         let (lost, wobbles, crash, _) = run(full, 0.75, 10.0, Mode::Full, 3.0);

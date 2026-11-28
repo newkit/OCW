@@ -2,7 +2,7 @@
 //! the console is open, see `ocw_render::menu::InputContext`):
 //! - A toggles autodrive (on at the start): the rider keeps to the middle
 //!   of the road by itself, ← / → move its line. Without autodrive, ← / →
-//!   lean the rider into a curve (held: further, up to 30°); the lean
+//!   lean the rider into a curve (held: further, up to 40°); the lean
 //!   stays when released; the opposite key straightens up, pauses at
 //!   upright for `LEAN_UPRIGHT_PAUSE_S` (so riding straight is easy to
 //!   hit) and, still held, leans on to the other side. The road's own

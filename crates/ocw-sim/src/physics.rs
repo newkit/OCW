@@ -45,22 +45,68 @@ pub enum Steering {
     Lean(f64),
 }
 
-/// Largest lean a rider can steer with (rad, 30°).
-pub const MAX_STEER_LEAN: f64 = 0.52;
+/// Largest lean a rider can steer with (rad, 40°; a dry road holds it,
+/// tan 40° ≈ 0.84 of grip): at 60 km/h a curve of 33 m radius, at 70 km/h
+/// 46 m (before 2026-11-28 30°: 49 m and 67 m, too wide to carve down a
+/// descent in wild mode).
+pub const MAX_STEER_LEAN: f64 = 0.70;
 /// Tightest curve a rider steers by leaning, and the largest correction
 /// the autopilot steers on top of the road's own curve (1/m, radius 5 m).
 pub const MAX_TURN_CURVATURE: f64 = 0.2;
 /// Largest angle between the rider and the road (rad, ~17°); in wild mode
 /// riders may ride across the road ([`WILD_MAX_HEADING`]).
 pub const MAX_HEADING: f64 = 0.3;
-/// Largest angle to the road in wild mode (rad, ~70°).
-pub const WILD_MAX_HEADING: f64 = 1.2;
+/// Largest angle to the road in wild mode (rad, ~83°): across the road
+/// and away from it, never back along it (the band is a frame along the
+/// road; a free ride leaves it for the terrain there, [`band_holds`]).
+pub const WILD_MAX_HEADING: f64 = 1.45;
+/// Wild mode's band frame: the share `1 − κ·y` of the road's length at a
+/// rider `y` metres beside a curve is never taken below this (near the
+/// curve's centre the frame no longer says where the rider is; a free
+/// ride leaves the band for the terrain before, [`band_holds`]).
+const BAND_MIN_SCALE: f64 = 0.2;
+/// A free ride's wild rider leaves the band for the terrain where
+/// `1 − κ·y` falls below this (more than half way to a curve's centre).
+const BAND_LEAVE_SCALE: f64 = 0.5;
+
+/// Wild mode's band (spec 5.2.1): how much of the road a rider `lateral`
+/// metres beside it covers per metre of the road's centre line, `1 − κ·y`
+/// (inside a curve less road is ridden around it, outside more).
+pub fn band_scale(road_curvature: f64, lateral: f64) -> f64 {
+    (1.0 - road_curvature * lateral).max(BAND_MIN_SCALE)
+}
+
+/// Wild mode: metres of road (its centre line) per metre ridden at
+/// `heading` to it, `lateral` metres beside it, `cos(heading) / (1 − κ·y)`.
+/// The road's gradient felt along the ride is its gradient times this
+/// (riding across a descent is flat).
+pub fn band_progress(heading: f64, road_curvature: f64, lateral: f64) -> f64 {
+    heading.cos() / band_scale(road_curvature, lateral)
+}
+
+/// Whether the band frame still holds a wild rider (`lateral` m beside a
+/// road of curvature `road_curvature`, at `heading` to it): not at its
+/// edge riding outwards, not turned to its largest angle, not near a
+/// curve's centre. A free ride's rider it no longer holds rides on into
+/// the terrain in 2D (spec 14 Phase 13A, [`crate::offroad`]).
+pub fn band_holds(lateral: f64, heading: f64, road_curvature: f64) -> bool {
+    let at_edge = lateral.abs() >= WILD_LIMIT_M - 1e-6 && heading * lateral >= 0.0;
+    let turned = heading.abs() >= WILD_MAX_HEADING * BAND_TURNED_SHARE;
+    let near_centre = 1.0 - road_curvature * lateral < BAND_LEAVE_SCALE;
+    !(at_edge || turned || near_centre)
+}
+
+/// Share of [`WILD_MAX_HEADING`] at which [`band_holds`] lets go.
+const BAND_TURNED_SHARE: f64 = 0.97;
 /// How far from the road riders in wild mode may go (m, either side).
 pub const WILD_LIMIT_M: f64 = 60.0;
 /// Up to this share of the largest angle to the road, turning is not
 /// limited ([`apply_steering`]); above it, turning away from the road fades
 /// out (autodrive stays below it).
 const HEADING_KNEE: f64 = 0.7;
+/// The same in wild mode: turning fades only from ~75° to the road, so a
+/// wild rider goes where they lean almost up to the band's largest angle.
+const WILD_HEADING_KNEE: f64 = 0.9;
 /// Deceleration while pushing into the road edge (m/s²).
 pub const EDGE_SCRUB_MPS2: f64 = 1.5;
 /// Autodrive: largest angle it steers to the road (rad) and how quickly it
@@ -106,24 +152,44 @@ pub fn apply_steering(
         Steering::Lean(_) => road_curvature,
     };
     let before = state.heading;
-    let mut turn = v * (k - road_curvature) * dt;
+    // How fast the road turns under the rider (1/m ridden): its curvature
+    // on the road; in wild mode only as fast as the rider gets along it –
+    // a rider riding across the road, or far beside it, is not turned
+    // with each of its bends (spec 5.2.1).
+    let road_turn = if wild {
+        road_curvature * band_progress(before, road_curvature, state.lateral_offset)
+    } else {
+        road_curvature
+    };
+    let mut turn = v * (k - road_turn) * dt;
     if turn * before > 0.0 {
         // Turning further away from the road: the turn fades out towards
         // the largest angle, so the rider (and the avatar's lean) settles
         // there smoothly instead of stopping to turn from one tick to the
         // next.
-        turn *= heading_room(before / max_heading);
+        let knee = if wild {
+            WILD_HEADING_KNEE
+        } else {
+            HEADING_KNEE
+        };
+        turn *= heading_room(before / max_heading, knee);
     }
     state.heading = (before + turn).clamp(-max_heading, max_heading);
     // The curvature actually ridden (for the lean of the avatar).
     state.turn_curvature = if v > 0.1 {
-        road_curvature + (state.heading - before) / (v * dt)
+        road_turn + (state.heading - before) / (v * dt)
     } else {
         0.0
     };
     state.lateral_offset += v * state.heading.sin() * dt;
-    // Riding at an angle to the road covers less of it.
-    state.distance -= v * (1.0 - state.heading.cos()) * dt;
+    // Riding at an angle to the road covers less of it (in wild mode also
+    // less on the inside of a curve, more on the outside).
+    let progress = if wild {
+        band_progress(state.heading, road_curvature, state.lateral_offset)
+    } else {
+        state.heading.cos()
+    };
+    state.distance -= v * (1.0 - progress) * dt;
     let mut scraping = false;
     if state.lateral_offset.abs() >= limit {
         // At the edge: along it, no further outwards.
@@ -132,7 +198,11 @@ pub fn apply_steering(
             state.heading = 0.0;
             // Along the edge, not leaning away from it (the turn was stopped).
             if v > 0.1 {
-                state.turn_curvature = road_curvature;
+                state.turn_curvature = if wild {
+                    road_curvature / band_scale(road_curvature, state.lateral_offset)
+                } else {
+                    road_curvature
+                };
             }
             // Only pushing into the edge scrapes; rolling along it or
             // steering away from it does not.
@@ -143,10 +213,10 @@ pub fn apply_steering(
 }
 
 /// Share of a turn away from the road that still applies at `x` = heading
-/// / largest heading: all of it up to [`HEADING_KNEE`], then less and less,
+/// / largest heading: all of it up to `knee` ([`HEADING_KNEE`]), then less and less,
 /// none at the largest angle.
-fn heading_room(x: f64) -> f64 {
-    let over = ((x.abs() - HEADING_KNEE) / (1.0 - HEADING_KNEE)).max(0.0);
+fn heading_room(x: f64, knee: f64) -> f64 {
+    let over = ((x.abs() - knee) / (1.0 - knee)).max(0.0);
     (1.0 - over * over).max(0.0)
 }
 
@@ -521,8 +591,10 @@ mod tests {
                 apply_steering(&mut s, lean, 0.0, limit, wild, 0.02);
                 assert!(s.heading <= max_heading, "{s:?}");
                 assert!(s.turn_curvature >= 0.0, "{limit}: {s:?}");
+                // At most a fifth of the full curve per tick (the 40° lean
+                // fades within ~0.16 of it at 17°; the bug was a jump of all).
                 assert!(
-                    (s.turn_curvature - last).abs() < 0.15 * full,
+                    (s.turn_curvature - last).abs() < 0.2 * full,
                     "{limit}: jumps from {last} to {s:?}"
                 );
                 last = s.turn_curvature;
