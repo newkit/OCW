@@ -176,15 +176,26 @@ fn report(path: &str, route: Option<&str>) {
                     Some(parts) => {
                         StreamedPackage::from_chunks_with(header, parts, keep, &mut decode)
                     }
-                    None => StreamedPackage::from_chunks_with(
-                        header,
-                        chunks
-                            .iter()
-                            .filter(|(name, _)| wanted(name))
-                            .map(|(_, r)| bytes[r.clone()].to_vec()),
-                        keep,
-                        &mut decode,
-                    ),
+                    // The browser's phone (10G, v7.02): every chunk pushed
+                    // in slices of `world::SLICE_BYTES`, as the land use's
+                    // big chunk comes (`OCW_WHOLE_CHUNKS=1`: whole chunks).
+                    None => {
+                        let slice = if std::env::var("OCW_WHOLE_CHUNKS").is_ok() {
+                            usize::MAX
+                        } else {
+                            crate::world::SLICE_BYTES as usize
+                        };
+                        StreamedPackage::from_chunks_with(
+                            header,
+                            chunks
+                                .iter()
+                                .filter(|(name, _)| wanted(name))
+                                .flat_map(|(_, r)| bytes[r.clone()].chunks(slice))
+                                .map(<[u8]>::to_vec),
+                            keep,
+                            &mut decode,
+                        )
+                    }
                 }
                 .expect("base")
             },

@@ -114,6 +114,16 @@ pub fn load(args: &mut Args, matches: &ArgMatches) -> Loaded {
         let (notes, problems) = crate::config::migrate(f);
         migrated = notes;
         warnings.extend(problems);
+        // Every known key as a commented-out example (spec 3.2.4): new
+        // files get them all, older ones the missing ones, once.
+        let (notes, problems) = crate::config::fill_examples(f);
+        for n in notes {
+            tracing::info!("config: {n}");
+        }
+        // Only logged: a broken file is reported by its sections below.
+        for p in problems {
+            tracing::warn!("config: {p}");
+        }
     }
     // `[settings]`, with `[strava] auto_upload` (spec 2.8.1 Q6) read in.
     let store = files.as_ref().map(|f| SettingsStore { files: f.clone() });
@@ -839,7 +849,7 @@ mod tests {
             "riders.add \"Ada Rider\" --weight 61 --height 168 --ftp 230",
         );
         let text = std::fs::read_to_string(dir.join("ocw.toml")).unwrap();
-        assert!(text.contains("[[riders.rider]]"), "{text}");
+        assert!(text.lines().any(|l| l == "[[riders.rider]]"), "{text}");
         let f = dir.join("ocw.toml");
         let (args, loaded) = startup(&["ocw-desktop", "--settings-file", f.to_str().unwrap()]);
         assert!(loaded.migrated.is_empty());

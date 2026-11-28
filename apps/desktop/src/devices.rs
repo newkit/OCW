@@ -168,10 +168,11 @@ struct AccessJob {
     last: Option<String>,
 }
 
-/// What `secrets.toml [ant]` holds.
+/// What `secrets.toml [ant]` holds (every field has its commented-out
+/// example in `config::examples`, checked by a test).
 #[derive(serde::Deserialize)]
-struct AntSecrets {
-    network_key: Option<String>,
+pub(crate) struct AntSecrets {
+    pub(crate) network_key: Option<String>,
 }
 
 /// The ANT+ network key the rider entered (never logged).
@@ -2388,7 +2389,9 @@ mod tests {
         let line = type_key(&mut app, "0A 1B 2C 3D 4E 5F 60 71");
         assert!(line.starts_with("ANT+ network key saved in"), "{line}");
         assert!(line.ends_with("secrets.toml [ant]"), "{line}");
-        let secrets = std::fs::read_to_string(&files.secrets).unwrap();
+        // The value itself (the file's commented-out example has the same
+        // made-up key).
+        let secrets = files.secret("ant").read().unwrap().unwrap();
         assert!(
             secrets.contains("network_key = \"0A1B2C3D4E5F6071\""),
             "{secrets}"
@@ -2501,8 +2504,11 @@ mod tests {
         let line = run(&mut app, "ant.key.clear");
         assert!(line.starts_with("ANT+ network key removed"), "{line}");
         assert!(
-            !std::fs::read_to_string(&files.secrets)
+            !files
+                .secret("ant")
+                .read()
                 .unwrap()
+                .unwrap_or_default()
                 .contains("network_key")
         );
         app.update();

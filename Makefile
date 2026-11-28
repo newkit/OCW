@@ -371,7 +371,7 @@ test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to
 test-web-gpu: web ## Headless Chromium: the page's GPU choice (ocw-gpu.js rules), injected WebGPU failures fall back to WebGL 2 and draw, the remembered failure, gpu=webgpu, Safari on an iPhone takes WebGL 2 (B7, the iOS 26 report); into test-output/web/
 	scripts/test-web-gpu.py --out test-output/web
 
-test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride (portrait and landscape: the safe areas, touch taps and a held side, the manifest, the wake lock; spec 3.2.3 TS4; the phone layout, the menu and hide buttons and the faster / slower zones, spec 3.2, 3.2.3), Safari on macOS with the desktop HUD unchanged; rides and draws (B7); a mid-size world (Liechtenstein, make web-worlds when its package is here) loaded as the reporting iPhone with the stages in the page log and the wasm memory under a bound (10G); into test-output/web/
+test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride (portrait and landscape: the safe areas, touch taps and a held side, the manifest, the wake lock; spec 3.2.3 TS4; the phone layout, the menu and hide buttons and the faster / slower zones, spec 3.2, 3.2.3), Safari on macOS with the desktop HUD unchanged; rides and draws (B7); a mid-size world (Liechtenstein, make web-worlds when its package is here) loaded as the reporting iPhone with the stages in the page log and the wasm memory under a bound, 20 s into the ride its mesh buffers under a bound (10G); into test-output/web/
 	@if [ ! -f target/web/worlds/liechtenstein/latest ] && [ -f "$(WEB_WORLD_PKGS)" ]; then $(MAKE) web-worlds; fi
 	scripts/test-web-webkit.py --out test-output/web
 
@@ -481,14 +481,14 @@ test-kiosk-windows: ## The Windows VR kiosk script (scripts/ocw-kiosk.ps1): Powe
 test-vr-monado: ## VR: `ocw-desktop --vr` (vr build) against Monado's simulated headset, headless (spec §14 Phase 11 X1; skipped while Monado and the OpenXR loader are not installed)
 	scripts/test-vr-monado.sh
 
-remote-gc: ## Build machines: list the target/ of merged or gone agent checkouts and their size (GC=1 deletes them; MACHINES="a b" limits)
+remote-gc: ## Build machines: dry run of the cleanup rules – stale checkouts' target/, old checkouts, leftovers, per class with reasons (GC=1 deletes; MACHINES="a b" limits; the janitor does it daily)
 	GC=$(GC) scripts/remote-gc.sh $(MACHINES)
 
 remote-gc-branch: ## Cleanup on merge: delete the target/ of BRANCH's checkout on every reachable build machine (DRY=1: only list)
 	@[ -n "$(BRANCH)" ] || { echo "usage: make remote-gc-branch BRANCH=<branch> [DRY=1]" >&2; exit 2; }
 	scripts/remote-gc.sh --branch $(BRANCH) $(if $(DRY),--dry-run) $(MACHINES)
 
-janitor-plan: ## Dry run of the dashboard's disk janitor on every reachable machine: what each threshold would delete
+janitor-plan: ## Dry run of the dashboard's disk janitor on every reachable machine: what the routine pass and each disk threshold would delete
 	python3 tools/build-dashboard/dashboard.py --janitor-plan --no-record
 
 windows-move-toolchain: ## Windows MACHINE: dry run of moving CARGO_HOME, RUSTUP_HOME, sccache from C: to B:\toolchain (APPLY=1 moves)
