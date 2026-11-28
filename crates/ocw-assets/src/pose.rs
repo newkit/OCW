@@ -2170,13 +2170,28 @@ mod tests {
                     "{profile:?} {scale}: eyes {seated} saddle {}",
                     body.bike.saddle
                 );
+                // Out of the saddle the eyes rise – except on the folding
+                // bike's high bar (2.5.1), where a tall rider sits nearly
+                // upright and leans over the bar to stand: about level.
+                let rise = if profile == ocw_core::ProfileId::Folding {
+                    -0.06
+                } else {
+                    0.01
+                };
                 assert!(
-                    standing.y > seated.y + 0.01,
+                    standing.y > seated.y + rise,
                     "{profile:?} {scale}: standing {standing} seated {seated}"
                 );
                 if (scale - 1.0).abs() < 1e-6 {
+                    // Upright on the folding bike's high bar (2.5.1): the
+                    // eyes higher, as on a city bike.
+                    let range = if profile == ocw_core::ProfileId::Folding {
+                        1.3..1.85
+                    } else {
+                        1.1..1.65
+                    };
                     assert!(
-                        (1.1..1.65).contains(&seated.y),
+                        range.contains(&seated.y),
                         "{profile:?}: seated eyes {seated}"
                     );
                 }

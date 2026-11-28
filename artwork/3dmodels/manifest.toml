@@ -9,6 +9,15 @@
 # `cargo run -p ocw-render --example export-flora`); keep it sorted.
 
 [[asset]]
+file = "bikes/bike-folding.glb"
+kind = "bike"
+profile = "folding"
+generator = "ocw_assets::bikes::build(folding)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "bikes/bike-gravel.glb"
 kind = "bike"
 profile = "gravel"

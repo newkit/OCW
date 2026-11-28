@@ -21,14 +21,19 @@ pub enum BikeType {
     Gravel,
     /// Mountain bike: flat bar, fat tyres, suspension fork.
     Mountain,
+    /// Folding bike (city): 20" wheels, a step-through frame with a fold
+    /// hinge, a tall handlepost with a swept-back bar, fenders and a rack
+    /// (after the user's photo, 2026-11-28).
+    Folding,
 }
 
 impl BikeType {
-    pub const ALL: [BikeType; 4] = [
+    pub const ALL: [BikeType; 5] = [
         BikeType::Road,
         BikeType::TimeTrial,
         BikeType::Gravel,
         BikeType::Mountain,
+        BikeType::Folding,
     ];
 
     /// Id in files and console commands.
@@ -38,6 +43,7 @@ impl BikeType {
             Self::TimeTrial => "tt",
             Self::Gravel => "gravel",
             Self::Mountain => "mtb",
+            Self::Folding => "folding",
         }
     }
 
@@ -48,6 +54,7 @@ impl BikeType {
             Self::TimeTrial => "Time trial",
             Self::Gravel => "Gravel",
             Self::Mountain => "Mountain bike",
+            Self::Folding => "Folding bike",
         }
     }
 
@@ -64,6 +71,7 @@ impl BikeType {
             Self::TimeTrial => ProfileId::TimeTrial,
             Self::Gravel => ProfileId::Gravel,
             Self::Mountain => ProfileId::Mountain,
+            Self::Folding => ProfileId::Folding,
         }
     }
 
@@ -76,13 +84,14 @@ impl BikeType {
     /// revolutions are measured with, unless the rider sets their own
     /// (`devices.wheel_mm`, spec 14 Phase 17): the common tyre of the
     /// family – road and time trial 700 × 25C (2105 mm), gravel 700 × 40C
-    /// (2200 mm), mountain bike 29 × 2.25 (2288 mm), as head units list
-    /// them.
+    /// (2200 mm), mountain bike 29 × 2.25 (2288 mm), folding bike
+    /// 20 × 1.75 (1515 mm), as head units list them.
     pub fn wheel_circumference_mm(self) -> u32 {
         match self {
             Self::Road | Self::TimeTrial => 2105,
             Self::Gravel => 2200,
             Self::Mountain => 2288,
+            Self::Folding => 1515,
         }
     }
 }
@@ -103,16 +112,21 @@ pub enum ProfileId {
     Gravel,
     /// Mountain bike: best off-road, heaviest and slowest on asphalt.
     Mountain,
+    /// Folding bike (city): small wheels, upright; for now the slowest
+    /// profile within the caps (spec 2.5 Q1 open: a utility class beyond
+    /// the caps).
+    Folding,
 }
 
 impl ProfileId {
-    pub const ALL: [ProfileId; 6] = [
+    pub const ALL: [ProfileId; 7] = [
         ProfileId::Road,
         ProfileId::RoadAero,
         ProfileId::RoadClimbing,
         ProfileId::TimeTrial,
         ProfileId::Gravel,
         ProfileId::Mountain,
+        ProfileId::Folding,
     ];
 
     /// The profile's parameters.
@@ -145,7 +159,21 @@ impl ProfileId {
     pub fn from_wire(s: Option<&str>) -> Self {
         s.and_then(Self::parse).unwrap_or_default()
     }
+
+    /// The frame paint a new bike of this profile comes in (`None`: the
+    /// rider's look's frame colour): the folding bike's sky blue of the
+    /// user's photo (2026-11-28); its tyres, grips and pedals are hot pink
+    /// in the model file. Paint is a look: never physics (spec 2.5).
+    pub fn default_paint(self) -> Option<Rgb> {
+        match self {
+            Self::Folding => Some(FOLDING_SKY_BLUE),
+            _ => None,
+        }
+    }
 }
+
+/// The folding bike's frame and fork paint (the user's photo, 2026-11-28).
+pub const FOLDING_SKY_BLUE: Rgb = Rgb(0x6FB3E0);
 
 /// Parameters of a curated physics profile: everything about the bike
 /// that the physics uses (the rider adds only their weight).
@@ -172,7 +200,7 @@ pub struct PhysicsProfile {
 /// capped (spec §2.5): at 250 W on flat asphalt every profile is within
 /// ±3 % of the road bike's speed (tested in `ocw-sim`); off the asphalt
 /// the wider tyres of gravel and mountain bikes pay off.
-pub const PHYSICS_PROFILES: [PhysicsProfile; 6] = [
+pub const PHYSICS_PROFILES: [PhysicsProfile; 7] = [
     PhysicsProfile {
         id: "road",
         name: "Road - standard",
@@ -232,6 +260,21 @@ pub const PHYSICS_PROFILES: [PhysicsProfile; 6] = [
         crr: 0.0048,
         drivetrain_efficiency: 0.972,
         rough_surface_scale: 0.3,
+    },
+    // The folding bike (spec 2.5, 2026-11-28): within the caps for now –
+    // as heavy as the mountain bike, the most drag (upright), the mountain
+    // bike's rolling resistance; its small wheels feel rough ground more.
+    // A real folding bike is slower (about 14 kg, CdA 0.45, Crr 0.007,
+    // one gear): whether it may leave the caps is the open question 2.5 Q1.
+    PhysicsProfile {
+        id: "folding",
+        name: "Folding - city",
+        bike: BikeType::Folding,
+        bike_mass_kg: 11.0,
+        cda_m2: 0.335,
+        crr: 0.0048,
+        drivetrain_efficiency: 0.972,
+        rough_surface_scale: 1.2,
     },
 ];
 
@@ -475,6 +518,26 @@ mod tests {
         }
         assert_eq!(BikeType::Road.profiles().count(), 3);
         assert_eq!(BikeType::parse("unicycle"), None);
+        assert_eq!(BikeType::parse("folding"), Some(BikeType::Folding));
+        assert_eq!(ProfileId::parse("folding"), Some(ProfileId::Folding));
+        assert_eq!(BikeType::Folding.wheel_circumference_mm(), 1515);
+    }
+
+    /// The folding bike comes in the sky blue of the user's photo; the
+    /// other bikes take the rider's frame colour.
+    #[test]
+    fn the_folding_bike_comes_in_sky_blue() {
+        assert_eq!(ProfileId::Folding.default_paint(), Some(Rgb(0x6FB3E0)));
+        for p in ProfileId::ALL
+            .into_iter()
+            .filter(|p| *p != ProfileId::Folding)
+        {
+            assert_eq!(p.default_paint(), None, "{p:?}");
+        }
+        // The upright city bike: as heavy as the mountain bike, more drag.
+        let f = ProfileId::Folding.profile();
+        assert_eq!(f.bike_mass_kg, ProfileId::Mountain.profile().bike_mass_kg);
+        assert!(f.cda_m2 > ProfileId::Mountain.profile().cda_m2);
     }
 
     #[test]

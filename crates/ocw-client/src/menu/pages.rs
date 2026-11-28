@@ -2088,7 +2088,7 @@ mod tests {
         );
         assert_eq!(
             bike.left.as_deref(),
-            Some("riders.edit \"Anna\" --bike mtb")
+            Some("riders.edit \"Anna\" --bike folding")
         );
         assert_eq!(
             row(&b, "Physics").value.as_deref(),

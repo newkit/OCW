@@ -530,7 +530,12 @@ mod tests {
         let top = rows(cat(), g, BenchPage::Top);
         assert!(top.len() <= 6, "{top:?}");
         assert_eq!(top.len(), 6, "four bike types, the shelf, selling");
-        for t in BikeType::ALL {
+        // The folding bike (2.5.1) has only its starter frame: no page.
+        assert!(framesets(cat(), BikeType::Folding).is_empty());
+        for t in BikeType::ALL
+            .into_iter()
+            .filter(|t| *t != BikeType::Folding)
+        {
             let page = rows(cat(), g, BenchPage::Type(t));
             assert!(page.len() <= 6, "{t:?}: {}", page.len());
             let frames: Vec<&Part> = page
