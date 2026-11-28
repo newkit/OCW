@@ -522,7 +522,7 @@ pub fn tunnel_meshes_with(
 /// texture's grain): as light as the package's asphalt roads in daylight,
 /// so an open stretch or a gallery floor does not show as a dark patch on
 /// the road (the Arcalís video, 2026-11-28).
-pub const SUNLIT_ASPHALT: [f32; 4] = [0.5, 0.5, 0.52, 1.0];
+pub const SUNLIT_ASPHALT: [f32; 4] = [0.8, 0.8, 0.82, 1.0];
 
 fn road_surface(
     m: &mut MeshArrays,
