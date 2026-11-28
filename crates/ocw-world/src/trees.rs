@@ -310,6 +310,10 @@ pub(crate) fn landuse_trees_in(
     // plantations in rows and mapped trees take the place of the grid's.
     let mapped = crate::plantings::mapped_cells(pkg, tile.key);
     let region = crate::flora::FloraRegion::at(pkg.origin.0, pkg.origin.1);
+    // No tree on a road (the rule of 2026-11-28, [`crate::road_clear`]):
+    // every road surface near the tile, not only its own strips.
+    let roads = crate::road_clear::RoadSpace::for_tile(pkg, tile.key);
+    let gt = crate::flora::GridTrees::of_tile(pkg, tile.key);
     let mut sites = Vec::new();
     let (cols, rows) = (
         cols.start as i64..(cols.end as i64).min(per_side),
@@ -345,6 +349,10 @@ pub(crate) fn landuse_trees_in(
                 continue;
             }
             let s = s0 + (s1 - s0) * hash(gx, gz, 4);
+            let foot = [x as f32, y as f32 - 0.3, z as f32];
+            if !road_clear_tree(pkg, &roads, &gt, Some(class), foot, s) {
+                continue;
+            }
             sites.push((
                 (k * per_side + i) as usize,
                 class,
@@ -354,6 +362,29 @@ pub(crate) fn landuse_trees_in(
         }
     }
     sites
+}
+
+/// Whether the grid's tree of land class `class` at `foot` with the grid's
+/// scale `s` stands off every road surface of `roads`, drawn as the
+/// renderer draws it ([`crate::flora::GridTrees::tree`]; the rule of
+/// 2026-11-28, [`crate::road_clear`]).
+fn road_clear_tree(
+    pkg: &WorldPackage,
+    roads: &crate::road_clear::RoadSpace,
+    gt: &crate::flora::GridTrees,
+    class: Option<LandClass>,
+    foot: [f32; 3],
+    s: f32,
+) -> bool {
+    let p = [f64::from(foot[0]), f64::from(foot[2])];
+    if !roads.near(p, crate::road_clear::MAX_REACH_M) {
+        return true;
+    }
+    let (sp, scale) = gt.tree(pkg, class, foot, s);
+    roads.clear(
+        foot.map(f64::from),
+        &crate::road_clear::PlantShape::of(sp, scale),
+    )
 }
 
 /// Trees by land use (see [`landuse_trees`]).
@@ -377,6 +408,8 @@ pub fn placeholder_tree_sites(pkg: &WorldPackage, tile: &Tile) -> Vec<TreeSite> 
     let cell = 18.0;
     let cells = (size / cell) as i64;
     let mut sites = Vec::new();
+    let roads = crate::road_clear::RoadSpace::for_tile(pkg, tile.key);
+    let gt = crate::flora::GridTrees::of_tile(pkg, tile.key);
     let road_pts: Vec<([f32; 2], f32)> = tile
         .roads
         .iter()
@@ -410,7 +443,11 @@ pub fn placeholder_tree_sites(pkg: &WorldPackage, tile: &Tile) -> Vec<TreeSite> 
                 continue; // rock faces
             }
             let s = 0.7 + 0.7 * hash(gx, gz, 4);
-            sites.push(([x as f32, y as f32 - 0.3, z as f32], s));
+            let foot = [x as f32, y as f32 - 0.3, z as f32];
+            if !road_clear_tree(pkg, &roads, &gt, None, foot, s) {
+                continue;
+            }
+            sites.push((foot, s));
         }
     }
     sites

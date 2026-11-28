@@ -39,6 +39,7 @@ mod osm_tests;
 #[cfg(test)]
 mod rule_tests;
 mod space;
+pub(crate) use space::edge_heights;
 pub use space::{Blocked, FOOT_CLEAR_M, LEVEL_M, LampSpace, NearRoad, POLE_R_M, ring, ring_edges};
 
 /// Section tag of the roads' lit state.
@@ -680,7 +681,7 @@ pub fn package_lamps_counted(pkg: &WorldPackage) -> (BTreeMap<TileKey, Vec<Lamp>
 
 /// `f` of every key, in order (on all cores natively).
 #[cfg(not(target_arch = "wasm32"))]
-fn each_tile<T: Send>(keys: &[TileKey], f: &(dyn Fn(TileKey) -> T + Sync)) -> Vec<T> {
+pub(crate) fn each_tile<T: Send>(keys: &[TileKey], f: &(dyn Fn(TileKey) -> T + Sync)) -> Vec<T> {
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
         .clamp(1, 16);
@@ -701,7 +702,7 @@ fn each_tile<T: Send>(keys: &[TileKey], f: &(dyn Fn(TileKey) -> T + Sync)) -> Ve
 }
 
 #[cfg(target_arch = "wasm32")]
-fn each_tile<T>(keys: &[TileKey], f: &dyn Fn(TileKey) -> T) -> Vec<T> {
+pub(crate) fn each_tile<T>(keys: &[TileKey], f: &dyn Fn(TileKey) -> T) -> Vec<T> {
     keys.iter().map(|k| f(*k)).collect()
 }
 

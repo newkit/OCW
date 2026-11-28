@@ -245,6 +245,17 @@ pub fn tile_rows(pkg: &WorldPackage, key: TileKey) -> (Vec<RowRun>, Vec<RowPlant
     let n = veg.cells as usize;
     let cs = size / n as f64;
     let clear = Clearance::new(pkg, tile);
+    // Every road near the tile, at the plants' drawn size (the rule of
+    // 2026-11-28, [`crate::road_clear`]).
+    let roads = crate::road_clear::RoadSpace::for_tile(pkg, key);
+    // Tested every 0.5 m along a row: a quarter metre wider, so the row
+    // between two tested points keeps off the road too.
+    let vine = crate::road_clear::vine_shape(region);
+    let vine = crate::road_clear::PlantShape::hedge(vine.height_m, vine.crown_m + 0.25);
+    let off_road = |p: [f64; 2], shape: &crate::road_clear::PlantShape| {
+        let y = pkg.height(p[0], p[1]).unwrap_or(f64::NAN);
+        !y.is_nan() && roads.clear([p[0], y, p[1]], shape)
+    };
     let cell_of = |x: f64, z: f64| -> Option<usize> {
         let (c, r) = ((x - o[0]) / cs, (z - o[1]) / cs);
         (c >= 0.0 && r >= 0.0 && c < n as f64 && r < n as f64).then(|| r as usize * n + c as usize)
@@ -288,7 +299,7 @@ pub fn tile_rows(pkg: &WorldPackage, key: TileKey) -> (Vec<RowRun>, Vec<RowPlant
                 let mut start: Option<f64> = None;
                 let mut t = tlo;
                 while t <= thi + step {
-                    let ok = t <= thi && inside(at(t));
+                    let ok = t <= thi && inside(at(t)) && off_road(at(t), &vine);
                     match (ok, start) {
                         (true, None) => start = Some(t),
                         (false, Some(s)) => {
@@ -322,14 +333,21 @@ pub fn tile_rows(pkg: &WorldPackage, key: TileKey) -> (Vec<RowRun>, Vec<RowPlant
                     if hash(k, j, 33) < GAPS || !inside(p) {
                         continue;
                     }
+                    let scale = 0.85 + 0.3 * hash(k, j, 34);
                     let Some(y) = pkg.height(p[0], p[1]) else {
                         continue;
                     };
+                    let pos = [p[0] as f32, y as f32 - 0.1, p[1] as f32];
+                    // Drawn at 0.8 of its scale (`ocw-render::vegetation`).
+                    let shape = crate::road_clear::PlantShape::of(species, scale * 0.8);
+                    if !roads.clear(pos.map(f64::from), &shape) {
+                        continue;
+                    }
                     plants.push(RowPlant {
-                        pos: [p[0] as f32, y as f32 - 0.1, p[1] as f32],
+                        pos,
                         crop,
                         species,
-                        scale: 0.85 + 0.3 * hash(k, j, 34),
+                        scale,
                         turn: hash(k, j, 35) * std::f32::consts::TAU,
                     });
                 }
@@ -345,11 +363,22 @@ pub fn mapped_trees(pkg: &WorldPackage, key: TileKey) -> Vec<([f32; 3], PlantedT
     let Some(v) = pkg.look.vegetation.as_ref().and_then(|v| v.tiles.get(&key)) else {
         return Vec::new();
     };
+    // Never on a road (the rule of 2026-11-28, [`crate::road_clear`]):
+    // OSM maps street trees at the kerb and tree rows across the roads.
+    let roads = crate::road_clear::RoadSpace::for_tile(pkg, key);
+    let gt = crate::flora::GridTrees::of_tile(pkg, key);
     v.trees
         .iter()
         .filter_map(|t| {
             let y = pkg.height(f64::from(t.pos[0]), f64::from(t.pos[1]))?;
-            Some(([t.pos[0], y as f32 - 0.3, t.pos[1]], *t))
+            let foot = [t.pos[0], y as f32 - 0.3, t.pos[1]];
+            let (sp, scale) = gt.mapped(pkg, foot, t);
+            roads
+                .clear(
+                    foot.map(f64::from),
+                    &crate::road_clear::PlantShape::of(sp, scale),
+                )
+                .then_some((foot, *t))
         })
         .collect()
 }
@@ -384,6 +413,92 @@ pub fn planted(pkg: &WorldPackage, x: f64, z: f64) -> bool {
     };
     let (crop, rows) = v.at(f64::from(pkg.tile_size_m), x, z);
     rows.is_some() && (runs(crop) || plant_species(crop, FloraRegion::Other).is_some())
+}
+
+/// Whether a field cell's centre is on a road (the stands leave the road
+/// and its verge free; moved from `ocw-render::vegetation`).
+pub fn stand_blocked(pkg: &WorldPackage, x: f64, z: f64) -> bool {
+    let key = TileKey::containing([x, z], f64::from(pkg.tile_size_m));
+    pkg.tiles.get(&key).is_some_and(|t| {
+        t.roads.iter().any(|r| {
+            let reach = f64::from(r.width_m) / 2.0 + 4.0;
+            r.points.windows(2).any(|w| {
+                crate::obstacles::segment_distance(
+                    [x, z],
+                    [f64::from(w[0][0]), f64::from(w[0][2])],
+                    [f64::from(w[1][0]), f64::from(w[1][2])],
+                ) < reach
+            })
+        })
+    })
+}
+
+/// Whether the field cell of side `cs` round (x, z) may hold a stand:
+/// its centre off the road and its verge ([`stand_blocked`]) and none of
+/// its corners, edge middles and centre on a road surface of `roads` (the
+/// rule of 2026-11-28, [`crate::road_clear`]; before, a 10 m cell whose
+/// centre kept 4 m from its own tile's road could reach a metre onto it).
+pub fn stand_clear(
+    pkg: &WorldPackage,
+    roads: &crate::road_clear::RoadSpace,
+    x: f64,
+    z: f64,
+    cs: f64,
+) -> bool {
+    if stand_blocked(pkg, x, z) {
+        return false;
+    }
+    let shape = crate::road_clear::PlantShape::hedge(crate::road_clear::STAND_M, 0.0);
+    crate::road_clear::cell_points([x, z], cs).iter().all(|p| {
+        pkg.height(p[0], p[1])
+            .is_none_or(|y| roads.clear([p[0], y, p[1]], &shape))
+    })
+}
+
+/// The crops drawn as a stand on their field's cells.
+pub fn stand_crop(crop: FieldCrop) -> bool {
+    matches!(
+        crop,
+        FieldCrop::Maize
+            | FieldCrop::Sunflower
+            | FieldCrop::Cereal
+            | FieldCrop::Rapeseed
+            | FieldCrop::Potato
+            | FieldCrop::Beet
+    )
+}
+
+/// The field cells of tile `key` that hold a stand (in some season): each
+/// cell's centre (x, z) and side (m).
+pub fn stand_cells(pkg: &WorldPackage, key: TileKey) -> Vec<([f64; 2], f64)> {
+    let Some(veg) = pkg.look.vegetation.as_ref() else {
+        return Vec::new();
+    };
+    let Some(v) = veg.tiles.get(&key).filter(|v| !v.crops.is_empty()) else {
+        return Vec::new();
+    };
+    let size = f64::from(pkg.tile_size_m);
+    let n = veg.cells as usize;
+    let cs = size / n as f64;
+    let o = key.origin(size);
+    let roads = crate::road_clear::RoadSpace::for_tile(pkg, key);
+    let mut out = Vec::new();
+    for r in 0..n {
+        for c in 0..n {
+            let Some(crop) = FieldCrop::from_code(v.crops[r * n + c]) else {
+                continue;
+            };
+            if !stand_crop(crop) {
+                continue;
+            }
+            let (x, z) = (o[0] + (c as f64 + 0.5) * cs, o[1] + (r as f64 + 0.5) * cs);
+            if !stand_clear(pkg, &roads, x, z, cs) {
+                continue;
+            }
+            out.push(([x, z], cs));
+        }
+    }
+    out
 }
 
 /// The solid planted trees of tile `key` (orchard rows, mapped trees;

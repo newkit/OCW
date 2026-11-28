@@ -1250,6 +1250,44 @@ impl GridTrees {
         let scale = s / ((s0 + s1) / 2.0).max(0.1) * stature(self.region, sp, alt);
         (sp, scale)
     }
+
+    /// The species and the drawn scale of a mapped tree (section `VEGE`)
+    /// standing at `foot`: its mapped species, else the town mix by the
+    /// regional rules; its mapped height, else a scale of 0.75 … 1.1
+    /// (moved from `ocw-render`'s `tile_plants` for the road test,
+    /// [`crate::road_clear`]).
+    pub fn mapped(
+        &self,
+        pkg: &crate::WorldPackage,
+        foot: [f32; 3],
+        t: &crate::vegetation::PlantedTree,
+    ) -> (Species, f32) {
+        let (x, z) = (foot[0], foot[2]);
+        let bits = Self::bits(x, z);
+        let alt = f64::from(foot[1]);
+        let sp = if t.species == Species::Unknown {
+            let class = pkg
+                .landuse
+                .as_ref()
+                .and_then(|l| l.class_at(f64::from(pkg.tile_size_m), f64::from(x), f64::from(z)));
+            // Mapped trees stand in towns and along roads: the town mix.
+            let class = class.or(Some(LandClass::Residential));
+            let leaf = self.leaf(pkg, class, x, z, alt);
+            pick_species(
+                &self.site(pkg, class, x, z, alt),
+                leaf_group(leaf),
+                crate::trees::hash(bits.0, bits.1, 19),
+            )
+        } else {
+            t.species
+        };
+        let scale = if t.height_m > 0.0 {
+            (t.height_m / sp.height_m()).clamp(0.3, 2.0)
+        } else {
+            0.75 + 0.35 * crate::trees::hash(bits.0, bits.1, 4)
+        };
+        (sp, scale)
+    }
 }
 
 #[cfg(test)]

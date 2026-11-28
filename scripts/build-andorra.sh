@@ -150,5 +150,8 @@ if [ -z "${OCW_NO_J9:-}" ]; then
   fi
   $WB routes --world "$out"
 fi
+# No plant on a road (the world-building rule of 2026-11-28): the
+# installed package once more, failing the build with the first cases.
+$WB plants-check --world "$out" --list 10
 ls -la "$out"*
 sha256sum "$out"

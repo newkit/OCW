@@ -6538,3 +6538,52 @@ riders = "active = \"Rosa Pedal\"\n[[rider]]\nname = \"Rosa Pedal\"\nweight_kg =
 at = ["2.2=workshop open"]
 shot = 10
 pick = false
+
+# --- No plant on a road (the world-building rule of 2026-11-28) -------------
+# Andorra la Vella's CG-2 and Escaldes, where OSM's mapped street trees stood
+# on the carriageway (`world-builder plants-check`, spec 4.6.1 *Rule: no
+# plant on a road*): the same camera before and after, orbiting a made-up
+# rider who stands where the tree stood (free ride, no power); and a
+# forest road with its clean edge. Render the before
+# pictures with the old placement and the live package, the after ones
+# with OCW_WORLD_ANDORRA=<rebuilt package>.
+
+[[scene]]
+name = "plants-road-vella-cg2"
+description = "No plant on a road: the CG-2 in Andorra la Vella (x -6615, z 3835): mapped street trees of OSM stood on the carriageway (a lime 2 m in, an ash 1.6 m in); a rider in a teal sash kit on a white gravel bike for scale"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-6614.7,3835", "--bots", "0", "--power", "0"]
+riders = "active = \"Gia Sprint\"\n[[rider]]\nname = \"Gia Sprint\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"gravel\"\nframe_color = \"#F5F5F5\"\njersey_color = \"#00897B\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-15 13:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #5D4037 --skin 7", "2.5=camera.orbit 150 6 20"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "plants-road-vella-fir"
+description = "No plant on a road: further east on the CG-2 (x -6549, z 3814), where a mapped tree drawn as a 25 m silver fir stood 1.2 m into the lane; a rider in a red band kit on a black road bike"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-6549.1,3813.5", "--bots", "0", "--power", "0"]
+riders = "active = \"Hal Tempo\"\n[[rider]]\nname = \"Hal Tempo\"\nweight_kg = 79.0\nheight_cm = 185.0\nbike = \"road\"\nframe_color = \"#212121\"\njersey_color = \"#C62828\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-15 13:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #1A1A1A --skin 12 --beard 1", "2.5=camera.orbit 210 8 24"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "plants-road-escaldes"
+description = "No plant on a road: a residential street at x -5983, z 3587 (Escaldes-Engordany), two mapped limes standing on it, a rider in a yellow plain kit on an orange MTB"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-5982.9,3586.9", "--bots", "0", "--power", "0"]
+riders = "active = \"Ivy Climb\"\n[[rider]]\nname = \"Ivy Climb\"\nweight_kg = 55.0\nheight_cm = 160.0\nbike = \"mtb\"\nframe_color = \"#FF6F00\"\njersey_color = \"#FDD835\"\nhelmet_color = \"#1565C0\"\nkit = \"plain\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-15 13:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #D8B26E --skin 3 --glasses 1", "2.5=camera.orbit 140 9 20"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "plants-road-forest-edge"
+description = "No plant on a road: the wooded ramps of the Coll de la Gallina above Sant Julià de Lòria (x -11940, z 9900) – the forest right up to the road's edge, the trunks off the asphalt, the crowns above the lane; a rider in a purple band kit on a green road bike"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-11940,9900", "--bots", "0", "--power", "0"]
+riders = "active = \"Jo Cadence\"\n[[rider]]\nname = \"Jo Cadence\"\nweight_kg = 68.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#2E7D32\"\njersey_color = \"#6A1B9A\"\nhelmet_color = \"#FFB300\"\nkit = \"band\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-22 16:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair afro --hair-colour #111111 --skin 15", "2.5=camera.orbit 170 9 26"]
+shot = 14
+pick = false

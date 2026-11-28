@@ -22,6 +22,7 @@
 
 mod dist;
 mod patch_cmd;
+mod plants_cmd;
 mod recipe_cmd;
 mod traffic_counts_cmd;
 
@@ -572,6 +573,25 @@ enum Cmd {
         /// the check exits 1 (repeatable; spec §4.7 "Tile cover").
         #[arg(long, value_parser = parse_peak)]
         peak: Vec<(f64, f64, f64)>,
+    },
+    /// No plant on a road (the world-building rule of 2026-11-28): every
+    /// plant the package draws (tree grid, mapped trees and tree rows,
+    /// plantation rows, field stands) against the drawn road surfaces
+    /// (strips, graph edges, junction surfaces, bridges); lists the cases
+    /// with their coordinates and exits 1 if there is any. `check`,
+    /// `verify` and `publish` refuse such a package too.
+    PlantsCheck {
+        #[arg(long)]
+        world: PathBuf,
+        /// List this many cases.
+        #[arg(long, default_value_t = 25)]
+        list: usize,
+        /// Only report (exit 0 with cases).
+        #[arg(long)]
+        report_only: bool,
+        /// Also report street lamps and buildings on the road surfaces.
+        #[arg(long)]
+        others: bool,
     },
     /// World lint (spec §4.8.1): steps and kinks in roads, floating and
     /// buried roads, junction steps, near-miss ends, rivers flowing uphill,
@@ -4352,6 +4372,18 @@ fn main() {
             if missing > 0 {
                 std::process::exit(1);
             }
+            plants_cmd::enforce(&world);
+        }
+        Cmd::PlantsCheck {
+            world,
+            list,
+            report_only,
+            others,
+        } => {
+            if others {
+                plants_cmd::others(&world);
+            }
+            plants_cmd::run(&world, list, report_only)
         }
         Cmd::Package {
             src,
@@ -4434,8 +4466,14 @@ fn main() {
             trust_root,
             no_dev_root,
             allow_unsigned,
-        } => dist::verify(&package, trust_root, !no_dev_root, allow_unsigned),
-        Cmd::Publish { package, out } => dist::publish(&package, &out),
+        } => {
+            dist::verify(&package, trust_root, !no_dev_root, allow_unsigned);
+            plants_cmd::enforce(&package);
+        }
+        Cmd::Publish { package, out } => {
+            plants_cmd::enforce(&package);
+            dist::publish(&package, &out)
+        }
         Cmd::Diff { old, new } => dist::diff(&old, &new),
         Cmd::Gpx {
             world,

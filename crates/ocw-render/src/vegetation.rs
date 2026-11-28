@@ -21,7 +21,7 @@
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use ocw_sky::season::{Crop, CropStage, SeasonDay};
-use ocw_world::flora::{FloraRegion, GridTrees, Species, leaf_group, pick_species};
+use ocw_world::flora::{FloraRegion, GridTrees, Species};
 use ocw_world::landuse::LandClass;
 use ocw_world::plantings;
 use ocw_world::trees::hash;
@@ -469,6 +469,7 @@ pub fn tile_plants(
     // (spec 14 Phase 13 Q10, `ocw_world::woods`).
     let gt = GridTrees::of_tile(pkg, key);
     let region = gt.region;
+    let roads = ocw_world::road_clear::RoadSpace::for_tile(pkg, key);
     let grid = |per: u32| -> Vec<TreeChunk> {
         let cs = size / per as f32;
         let n = per as usize;
@@ -505,6 +506,17 @@ pub fn tile_plants(
                scale: f32,
                bits: (i64, i64),
                near_only: bool| {
+        // Never on a road (the rule of 2026-11-28): every source keeps off
+        // the road surfaces already (`ocw_world::road_clear`); a plant
+        // that does not is a bug – caught in debug builds, left out in
+        // release ones.
+        if !roads.clear(
+            [f64::from(base.x), f64::from(base.y), f64::from(base.z)],
+            &ocw_world::road_clear::PlantShape::of(sp, scale),
+        ) {
+            debug_assert!(false, "{sp:?} at {base} stands on a road");
+            return;
+        }
         // On the ground as drawn (the terrain mesh after the junctions
         // lowered it), not on the package's smoothed height: on terrace
         // edges the two differ by metres (spec §4.6.1).
@@ -553,28 +565,7 @@ pub fn tile_plants(
         }
         let base = Vec3::from(foot);
         let bits = (i64::from(base.x.to_bits()), i64::from(base.z.to_bits()));
-        let alt = f64::from(base.y);
-        let sp = if t.species == Species::Unknown {
-            let class = pkg
-                .landuse
-                .as_ref()
-                .and_then(|l| l.class_at(f64::from(size), f64::from(base.x), f64::from(base.z)));
-            // Mapped trees stand in towns and along roads: the town mix.
-            let class = class.or(Some(LandClass::Residential));
-            let leaf = gt.leaf(pkg, class, base.x, base.z, alt);
-            pick_species(
-                &gt.site(pkg, class, base.x, base.z, alt),
-                leaf_group(leaf),
-                hash(bits.0, bits.1, 19),
-            )
-        } else {
-            t.species
-        };
-        let scale = if t.height_m > 0.0 {
-            (t.height_m / sp.height_m()).clamp(0.3, 2.0)
-        } else {
-            0.75 + 0.35 * hash(bits.0, bits.1, 4)
-        };
+        let (sp, scale) = gt.mapped(pkg, foot, &t);
         put(&mut chunks, &mut crowns, sp, base, scale, bits, false);
     }
     // The plantations' rows.
@@ -674,6 +665,7 @@ fn stands(
     let n = veg.cells as usize;
     let cs = size / n as f64;
     let ni = n as i64;
+    let roads = ocw_world::road_clear::RoadSpace::for_tile(pkg, key);
     // The stand per crop at the cell's altitude band (100 m steps).
     let mut cache: std::collections::HashMap<(u8, i64), (f32, [f32; 3])> = Default::default();
     // Whether a stand is drawn in global cell (gc, gr) – its crop code, its
@@ -707,7 +699,7 @@ fn stands(
                 )
             })?;
             let (x, z) = ((gc as f64 + 0.5) * cs, (gr as f64 + 0.5) * cs);
-            if keep.is_some_and(|f| !f([x, z])) || plantings_blocked(pkg, x, z) {
+            if keep.is_some_and(|f| !f([x, z])) || !plantings::stand_clear(pkg, &roads, x, z, cs) {
                 return None;
             }
             let band = (ground.height(x, z).unwrap_or(0.0) / 100.0).round() as i64;
@@ -787,24 +779,6 @@ fn stands(
             });
         }
     }
-}
-
-/// Whether a field cell's centre is on a road (the stands leave the road
-/// and its verge free).
-fn plantings_blocked(pkg: &WorldPackage, x: f64, z: f64) -> bool {
-    let key = TileKey::containing([x, z], f64::from(pkg.tile_size_m));
-    pkg.tiles.get(&key).is_some_and(|t| {
-        t.roads.iter().any(|r| {
-            let reach = f64::from(r.width_m) / 2.0 + 4.0;
-            r.points.windows(2).any(|w| {
-                ocw_world::obstacles::segment_distance(
-                    [x, z],
-                    [f64::from(w[0][0]), f64::from(w[0][2])],
-                    [f64::from(w[1][0]), f64::from(w[1][2])],
-                ) < reach
-            })
-        })
-    })
 }
 
 #[cfg(test)]
