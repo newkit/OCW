@@ -629,7 +629,7 @@ impl Page {
             ],
             Self::Account => &[crate::account::NOTE],
             Self::UnicornControls => &[
-                "Touch: tap or hold a side to steer. Unicorn: cursor keys and + / -, or the gamepad.",
+                "Touch: sides steer, top faster, bottom slower. Unicorn: cursor keys, + / -, gamepad.",
             ],
             Self::Bindings => &[
                 "One or two keys and a gamepad button per ride action. The menu's keys, the sticks, the triggers and the unicorn's flight keys stay fixed.",
@@ -1405,6 +1405,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::UnicornControls => vec![
             setting_row(settings, "controls.touch_steer", "Touch steering"),
             setting_row(settings, "controls.touch_zones", "Touch zones"),
+            setting_row(settings, "controls.touch_controls", "Touch controls"),
             setting_row(settings, "controls.invert_y", "Unicorn: invert Y"),
             setting_row(settings, "controls.god_flight", "Unicorn: flight"),
         ],

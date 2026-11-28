@@ -31,18 +31,22 @@ gives the page a `navigator.gpu` with an adapter, as Safari 26 has:
            (touch pointers) steers and shows its glow; a wake lock that is
            there is held and asked again when the page is shown again;
   both phone cases also check the phone layout (spec 3.2 *Phone layout*,
-           3.2.3 TS5): the compact HUD (scale < 1, at most 2 big and 5
-           lines, in the top quarter / third, no key line), nothing over
-           the road in the middle, the HUD's boxes apart and on screen, the
-           Devices panel collapsed, the power buttons (+ adds power and
-           does not steer, − takes some away, stop brakes, + rides on), a
-           held right side in portrait too;
+           3.2.3 *The on-screen controls*): the compact HUD (scale < 1, at
+           most 2 big and 5 lines, in the top quarter / third, no key
+           line), nothing over the road in the middle, the HUD's boxes
+           apart and on screen, the Devices panel collapsed, the menu and
+           hide buttons (☰, the eye) at the top left, no stop / − / +
+           buttons, the faster / slower zones (a tap at the top adds power
+           and does not steer, a tap at the bottom takes some away and
+           then stops, the top rides on), a held right side in portrait
+           too (scripts/test-web-touch.py has the zones, the hide button
+           and the menu by touch in depth);
   layout-* the first ride's touch layout (spec 3.2.3) at iPhone 15 and
            small Android sizes, portrait and landscape (390 × 844, 844 × 390
            with the notch's insets; 360 × 640, 640 × 360): the first-ride
            tip, the screen tip's banner (Add to Home Screen on the iPhone,
-           Full screen on Android), the power buttons, the chevrons and the
-           HUD's boxes – no two overlap, all inside the safe area, the
+           Full screen on Android), the menu and hide buttons, the chevrons
+           and the HUD's boxes – no two overlap, all inside the safe area, the
            first-ride tip above the rider;
   too-old  an iPhone whose Safari has no WebAssembly SIMD (before 16.4;
            WebAssembly.validate stubbed to refuse the page's SIMD test
@@ -53,7 +57,7 @@ gives the page a `navigator.gpu` with an adapter, as Safari 26 has:
            SIMD (window.ocwSimd);
   mac      Safari on macOS (1280 × 720): the Hills ride on WebGL 2, draws;
            the desktop HUD unchanged (not compact, scale 1, keys), the
-           Devices panel open, no power buttons.
+           Devices panel open, no touch buttons or hints.
   world    (spec 14 Phase 10, 10G: the iPhone that closed the page while a
            world's base loaded, 2026-11-27) a mid-size world (--world,
            default liechtenstein, from target/web/worlds: `make web-worlds`;
@@ -329,9 +333,10 @@ def main():
                 and a[1] < b[1] + b[3] - 0.5 and b[1] < a[1] + a[3] - 0.5)
 
     def phone_layout(pg, label, w, h):
-        """The phone layout (spec 3.2 *Phone layout*, 3.2.3 TS5): a compact
-        HUD, the road's centre clear, nothing on top of another, the Devices
-        panel collapsed, the power buttons change the power."""
+        """The phone layout (spec 3.2 *Phone layout*, 3.2.3 *The on-screen
+        controls*): a compact HUD, the road's centre clear, nothing on top
+        of another, the Devices panel collapsed, the menu and hide buttons,
+        the top / bottom of the screen change the power."""
         hud = hud_layout(pg)
         st = steer(pg)
         portrait = label == "iphone"
@@ -352,53 +357,66 @@ def main():
         boxes = {"top panel": hud.get("top_panel"), "top-right column": hud.get("top_right"),
                  "profile": hud.get("profile"), "map": mp.get("rect") if mp.get("shown") else None,
                  "Devices button": dom_box(pg, "#ocw-devices-show")}
-        for i, b in enumerate(st.get("power_buttons") or []):
-            boxes[f"power button {i}"] = [b[0], b[1], b[2] - b[0], b[3] - b[1]]
+        for name, b in zip(("menu button", "hide button"), hud.get("buttons") or []):
+            boxes[name] = b
         boxes = {k: v for k, v in boxes.items() if v}
         centre = [w * 0.35, h * 0.4, w * 0.3, h * 0.35]
         on_road = [k for k, v in boxes.items() if overlap(v, centre)]
         check(f"{label}: nothing covers the road in the middle of the screen", not on_road,
               {"centre": centre, "on it": on_road, "boxes": boxes})
         names = list(boxes)
-        clashes = [(a, b) for i, a in enumerate(names) for b in names[i + 1:]
-                   if not (a.startswith("power") and b.startswith("power")) and overlap(boxes[a], boxes[b])]
+        clashes = [(a, b) for i, a in enumerate(names) for b in names[i + 1:] if overlap(boxes[a], boxes[b])]
         check(f"{label}: the HUD's boxes do not overlap", not clashes, {"clashes": clashes, "boxes": boxes})
         off = [k for k, v in boxes.items() if v[0] < -0.5 or v[1] < -0.5 or v[0] + v[2] > w + 0.5
                or v[1] + v[3] > h + 0.5]
         check(f"{label}: every box is on the screen", not off, {"off": off, "boxes": boxes})
-        # TS5: the power buttons (stop, −, +) while riding on virtual power.
-        pb = st.get("power_buttons") or []
-        check(f"{label}: the touch power buttons show (virtual power)", st.get("power") and len(pb) == 3, st)
-        if len(pb) == 3:
-            def mid(b):
-                return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
-
+        # The on-screen controls (spec 3.2.3): ☰ and the eye, 44 px or
+        # more, inside the safe area; no stop / − / + buttons.
+        btn = hud.get("buttons") or []
+        check(f"{label}: the menu and hide buttons show (≥ 44 px), no power buttons",
+              st.get("buttons") and len(btn) == 2 and all(b[2] >= 44 and b[3] >= 44 for b in btn)
+              and not st.get("power_buttons"), {"buttons": btn, "power_buttons": st.get("power_buttons")})
+        # The faster / slower zones while riding on virtual power: the top
+        # and the bottom quarter of the safe area.
+        zones = st.get("power_zones") or []
+        check(f"{label}: the faster / slower zones are on (virtual power)", st.get("power") and len(zones) == 2, st)
+        if len(zones) == 2:
             def watts():
                 return float(steer(pg).get("key_power_w") or 0)
 
+            top = (w * 0.6, (zones[0] + (59 if portrait else 0)) / 2 + 30)
+            bottom = (w * 0.22, (zones[1] + h) / 2 - 20)
             l0, p0 = line(pg), watts()
-            tap(pg, *mid(pb[2]))
+            tap(pg, *top)
             p1, l1 = watts(), line(pg)
-            check(f"{label}: a tap on + adds power and does not steer", p1 > p0 and abs(l1 - l0) < 1e-3,
+            check(f"{label}: a tap at the top adds power and does not steer", p1 > p0 and abs(l1 - l0) < 1e-3,
                   f"{p0} → {p1} W, line {l0:.3f} → {l1:.3f}")
-            tap(pg, *mid(pb[1]))
+            flash = steer(pg).get("power_flash") or ""
+            check(f"{label}: the step shows at the top edge (▲ … W)", flash.startswith("▲") and flash.endswith("W"), flash)
+            pg.screenshot(path=f"{base}-{label}-faster.png")
+            tap(pg, *bottom)
             p2 = watts()
-            check(f"{label}: a tap on − takes some away", p2 < p1, f"{p1} → {p2} W")
-            tap(pg, *mid(pb[0]))
+            check(f"{label}: a tap at the bottom takes some away and does not steer",
+                  p2 < p1 and abs(line(pg) - l0) < 1e-3, f"{p1} → {p2} W")
+            for _ in range(4):
+                tap(pg, *bottom)
             pg.wait_for_timeout(300)
-            p3 = watts()
-            check(f"{label}: stop: no extra power, the brake on", p3 == 0.0, f"{p2} → {p3} W")
+            p3, st3 = watts(), steer(pg)
+            check(f"{label}: slower with no power left stops: the brake on", p3 == 0.0 and st3.get("braking"),
+                  f"{p2} → {p3} W, braking {st3.get('braking')}, {st3.get('power_flash')}")
             pg.screenshot(path=f"{base}-{label}-stopped.png")
-            tap(pg, *mid(pb[2]))
+            tap(pg, *top)
             pg.wait_for_timeout(300)
-            check(f"{label}: + rides on after stop", watts() > 0, steer(pg))
+            st4 = steer(pg)
+            check(f"{label}: the top rides on after the stop", watts() > 0 and not st4.get("braking"), st4)
             pg.wait_for_timeout(3000)
             pg.screenshot(path=f"{base}-{label}-riding.png")
 
     def touch_layout(pg, label, errors):
         """The first ride's touch layout (spec 3.2.3): the first-ride tip,
-        the screen tip's banner, the power buttons, the chevrons and the
-        HUD's boxes apart, inside the safe area, the tip above the rider."""
+        the screen tip's banner, the menu and hide buttons, the chevrons and
+        the HUD's boxes apart, inside the safe area, the tip above the
+        rider."""
         (w, h), (it, ir, ib, il), _, _, _ = LAYOUTS[label]
         pg.wait_for_timeout(1200)
         hud, st, sc = hud_layout(pg), steer(pg), screen(pg)
@@ -407,16 +425,17 @@ def main():
                  "profile": hud.get("profile"), "Devices button": dom_box(pg, "#ocw-devices-show")}
         for i, c in enumerate(hud.get("chevrons") or []):
             boxes[f"chevron {i}"] = c
-        for i, b in enumerate(st.get("power_buttons") or []):
-            boxes[f"power button {i}"] = [b[0], b[1], b[2] - b[0], b[3] - b[1]]
+        for name, b in zip(("menu button", "hide button"), hud.get("buttons") or []):
+            boxes[name] = b
         shown = {k: v for k, v in boxes.items() if v}
-        check(f"{label}: the first-ride tip, the screen tip and the power buttons show",
-              st.get("tip") and boxes["first-ride tip"] and boxes["screen tip"] and st.get("power")
-              and len(st.get("power_buttons") or []) == 3,
-              {"steer": {k: st.get(k) for k in ("shown", "tip", "power")}, "screen": sc.get("tip"), "boxes": boxes})
+        check(f"{label}: the first-ride tip, the screen tip and the menu and hide buttons show",
+              st.get("tip") and boxes["first-ride tip"] and boxes["screen tip"] and st.get("buttons")
+              and len(hud.get("buttons") or []) == 2 and not st.get("power_buttons"),
+              {"steer": {k: st.get(k) for k in ("shown", "tip", "power", "buttons")}, "screen": sc.get("tip"),
+               "boxes": boxes})
         names = list(shown)
         clashes = [(x, y) for i, x in enumerate(names) for y in names[i + 1:] if overlap(shown[x], shown[y])]
-        check(f"{label}: nothing overlaps (tips, power buttons, chevrons, HUD)", not clashes,
+        check(f"{label}: nothing overlaps (tips, menu and hide buttons, chevrons, HUD)", not clashes,
               {"clashes": clashes, "boxes": shown})
         off = [k for k, v in shown.items() if v[0] < il - 0.5 or v[1] < it - 0.5 or v[0] + v[2] > w - ir + 0.5
                or v[1] + v[3] > h - ib + 0.5]
@@ -478,17 +497,17 @@ def main():
             where = "behind the notch"
         l1 = line(pg)
         check(f"{label}: taps {where} do not steer", abs(l1 - l0) < 1e-3, f"{l0:.3f} → {l1:.3f}")
-        tap(pg, w * 0.75, h * 0.75)
+        tap(pg, w * 0.75, h * 0.6)
         l2 = line(pg)
         check(f"{label}: a tap on the right half moves the line +0.5 m", abs(l2 - l1 - 0.5) < 0.02,
               f"{l1:.3f} → {l2:.3f}")
-        tap(pg, w * 0.25, h * 0.75)
+        tap(pg, w * 0.25, h * 0.6)
         l3 = line(pg)
         check(f"{label}: a tap on the left half moves it back", abs(l3 - l2 + 0.5) < 0.02, f"{l2:.3f} → {l3:.3f}")
         sc = screen(pg)
-        # A held right side (touch pointers on the canvas), clear of the
-        # power buttons.
-        x, y = w * 0.7, h * 0.72
+        # A held right side (touch pointers on the canvas), in the half
+        # between the faster / slower zones.
+        x, y = w * 0.7, h * 0.6
         pg.evaluate(POINTER_JS, ["pointerdown", x, y])
         for _ in range(6):
             pg.wait_for_timeout(150)
@@ -713,7 +732,9 @@ def main():
                           hud.get("compact") is False and hud.get("ui_scale") == 1.0
                           and "up: faster" in hud.get("text", ""), hud)
                     check(f"{label}: the Devices panel starts open on a desktop", dev.get("expanded"), dev)
-                    check(f"{label}: no touch power buttons without touch", not steer(pg).get("power"), steer(pg))
+                    st_mac = steer(pg)
+                    check(f"{label}: no touch buttons or hints without touch", not st_mac.get("buttons")
+                          and not st_mac.get("shown") and not st_mac.get("power_buttons"), st_mac)
                     check(f"{label}: no page errors", not errors, errors[:5])
                 if label == "iphone":
                     # WebKit has no devicePixelContentBoxSize: winit keeps the

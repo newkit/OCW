@@ -693,7 +693,48 @@ pressed or held ← / →.
 - **Two fingers move the camera**: drag to orbit, pinch to come closer or
   go further back. One finger only steers.
 - Not steering: the band in the middle (12 % of the width), the band at the
-  top (15 % of the height), 16 px at every edge, the junction fan.
+  top (15 % of the height), 16 px at every edge, the junction fan, the
+  menu and hide buttons – and, without a trainer, the top and bottom
+  quarter of the screen (they are *faster* and *slower*, below).
+
+**The on-screen controls** (spec 3.2.3 *The on-screen controls*):
+
+- **☰ – the menu button**, top left under the bike computer, always there
+  on a touch device: a tap opens the menu (what Esc and the gamepad's
+  Start do), a tap on it over the open menu closes it. In the menu every
+  row is a tap, *Back* goes one page up, the **‹ ›** arrows of a row
+  change its value, and a text field
+  (the link of *Ride → Join a ride*, the ANT+ key) shows a text bar at the
+  top of the page: tap into it and the phone's keyboard comes up.
+- **The eye – hide / show the controls**, beside ☰: hides the chevrons,
+  the faster / slower marks, the tips and the page's Devices button.
+  **Hidden controls are only not drawn – every touch area still works**
+  (the first time a note says so: "Controls hidden – they still work").
+  The two buttons stay; the choice is remembered (*Settings → Controls →
+  Touch and unicorn → Touch controls* `shown` / `hidden`).
+- **Faster / slower: the top and the bottom of the screen** (without a
+  trainer; they replaced the + / − / stop buttons). **Touch the top
+  quarter of the screen for faster, the bottom quarter for slower**; the
+  half between steers, as above.
+  - A **tap at the top** adds 25 W, a **tap at the bottom** takes 10 W
+    away (what + and − did). **Hold** the top and the power keeps rising
+    (250 W a second, as the held ↑ key); hold the bottom and it falls the
+    same way, down to no extra power.
+  - **Stopping:** with no extra power left, one more *tap* at the bottom
+    stops – the brake, no power, as the ↓ key (a hold never brakes). A tap
+    at the top rides on.
+  - Each step shows for a moment at the edge you touched – "▲ 220 W",
+    "▼ 180 W", "▼ stop" – with a glow along that edge, and the bike
+    computer's power follows. Two short marks at each side with "▲ faster"
+    and "▼ slower" show where the zones end (hidden with the eye).
+  - No step by accident: only one finger alone counts – a second finger
+    (the two-finger camera, a pinch) or a drag of 10 px cancels it –, the
+    notch, the home indicator and 16 px at every edge are left out, and
+    the zones are off while the menu, the console, the page log or a text
+    field is open.
+  - With a trainer or power meter connected the zones are off (as the
+    buttons were hidden) and the left / right halves take the whole
+    height again. Keyboard, gamepad and trainers work as before.
 
 **Hints:** faint chevrons ‹ › at the lower left and right show where to
 touch, a glow along the edge of the side you hold, and once per device a
@@ -703,7 +744,8 @@ again when you use a key, the mouse or a gamepad. *Settings → Controls →
 Touch and unicorn*: *Touch steering* `auto` (the default) / `on` (always
 the hints) / `off` (no steering by touch), *Touch zones* `full` (the whole
 height below the top band) / `lower` (only the lower half, so the upper
-half is free for the camera). Console: `set controls.touch_steer on`; page
+half is free for the camera), *Touch controls* `shown` / `hidden` (the eye
+button). Console: `set controls.touch_steer on`; page
 option `?touch=on|off` for one visit.
 
 The desktop app steers the same way on Windows and Linux touch screens
@@ -728,9 +770,11 @@ gradient in two lines at the top, with the weather,
 wind, clock, place and time in a few short lines below; the key help is
 left out while you steer by touch, and the Devices panel starts as a
 small button where nothing can connect (iOS has no Web Bluetooth).
-Without a trainer, the **stop / − / +** buttons on the right
-change the virtual power: + adds 25 W (hold it to keep adding, as ↑ does),
-− takes 10 W away, stop brakes (as ↓ does), + rides on again. A
+Without a trainer, **touch the top of the screen for faster and the bottom
+for slower** (*The on-screen controls* above: a tap at the top adds 25 W,
+hold it to keep adding, as ↑ does; a tap at the bottom takes 10 W away and
+stops once none is left, as ↓ does; the top rides on again). The menu is
+the **☰** button at the top left. A
 larger HUD: *Settings → Display → Accessibility → HUD size*.
 
 #### A slow or broken download on the phone
@@ -1015,6 +1059,7 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make test-web-gpu` | The page's GPU choice (`ocw-gpu.js`'s rules, pure), then WebGPU failures injected into the real app (a validation error, a refused device, no frame): each ride comes back on WebGL 2 with the note and draws; the remembered failure; `?gpu=webgpu`; a healthy WebGPU ride raises no alarm; Safari on an iPhone 15 takes WebGL 2 |
 | `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 (portrait and landscape) and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws; on the iPhone the manifest and its icons, the safe-area insets passed in (`?safe-insets=`), taps on each half steer and taps behind the notch or on the home bar do not, a held side, no full screen (the Add to Home Screen tip), the wake lock missing (tolerated) and present (asked again), no page errors |
 | `make test-web-log` | The page log on phones (Playwright, `make deps-webkit`): WebKit as an iPhone 15 and Chromium as an Android phone – `?log=1` shows the panel before the wasm with the environment header and the page's, the app's (Rust) and the uncaught lines; Copy (the clipboard read back in Chromium), Download, the 2,000-line ring buffer, the load before after a reload and after a load killed without pagehide, five taps on the version stamp, and *Show log* on the too-old, blocked-wasm and no-GPU screens; into `test-output/web-log/` |
+| `make test-web-touch` | The on-screen touch controls (spec 3.2.3; Playwright, `make deps-webkit`): WebKit as an iPhone / iPad and Chromium as an Android phone / tablet (430 × 932, 932 × 430, 820 × 1180, 1180 × 820, touch emulation) on the virtual trainer – the menu and hide buttons, no stop / − / + buttons, the top of the screen is faster and the bottom slower (tap, hold, no step for drags, pinches or the notch), hidden controls are not drawn and still work (remembered over a reload), the menu by touch (Settings and back, the ‹ › arrows, a text field through the page's text bar), the page log switches the zones off; screenshots and a screen video of the phone's touch session into `test-output/web-touch/` |
 | `make test-web-ios` | WebKit with the iPhone 15 profile, a long ride (`IOS_MINUTES`, 5) with the page hidden and shown every minute and the memory every 5 s; then the WebGL context lost while hidden (the app stops, the ride loads again once) and again (a message, no second reload) – the iPhone's restarts of 2026-11-22; `scripts/test-web-ios.py --world ID --route NAME --deaths` rides a world and emulates two kills of the tab (less memory, then a message instead of a restart loop) |
 | `scripts/test-web-safari.py` | The real Safari on a Mac over `safaridriver` (`--gpu webgpu` tries Safari's WebGPU): the GPU the page chose, the watchdog's state, a screenshot. It needs the Mac's desktop logged in and `sudo safaridriver --enable` once |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |

@@ -1,11 +1,17 @@
-//! Touch steering's hints (spec §3.2.3 *Visual feedback*): the chevrons
-//! ‹ › at the lower left and right (40 % opacity, 15 % after 8 s without
-//! a touch, a flash on a tap step), a glow along the edge of the side
-//! being held, the first-ride tip and the touch power buttons (stop, −, +
-//! above the right chevron while no power device is connected, TS5;
-//! [`power_buttons`] is their layout, shared with the hit test in
-//! `ocw_ui::touch`). Part of the HUD (hidden with `hud off`). The shared UI (`ocw_ui::touch`) decides what shows and
-//! writes [`TouchHud`]; this module only draws it.
+//! The touch controls' drawing (spec §3.2.3 *Visual feedback*, *The
+//! on-screen controls*): the chevrons ‹ › at the lower left and right
+//! (40 % opacity, 15 % after 8 s without a touch, a flash on a tap step),
+//! a glow along the edge of the side being held, the first-ride tip; the
+//! **menu button** (☰) and the **hide button** (an eye) beside it
+//! ([`corner_buttons`] is their layout, shared with the hit test in
+//! `ocw_ui::touch`), always drawn on a touch device; the marks of the
+//! **faster / slower zones** (the top and bottom quarter of the screen,
+//! which replaced the + / − / stop buttons) and their feedback ("▲ 220 W"
+//! at the touched edge). With the controls hidden ([`TouchHud::hidden`])
+//! only the two buttons and the feedback are drawn – every touch area
+//! still works. Part of the HUD (hidden with `hud off`). The shared UI
+//! (`ocw_ui::touch`) decides what shows and writes [`TouchHud`]; this
+//! module only draws it.
 
 use bevy::prelude::*;
 use bevy::text::Justify;
@@ -17,16 +23,28 @@ impl Plugin for TouchHudPlugin {
         app.init_resource::<TouchHud>()
             .init_resource::<crate::hud_fit::HudLayout>()
             .init_resource::<TouchLayout>()
+            .init_resource::<ButtonAnchor>()
             .add_systems(Startup, spawn)
-            .add_systems(Update, (update, place_power_buttons, place_tip));
+            .add_systems(
+                Update,
+                (
+                    anchor_buttons,
+                    (update, place_buttons, place_power, place_tip),
+                )
+                    .chain(),
+            );
     }
 }
 
-/// What the touch hints show this frame.
+/// What the touch controls show this frame.
 #[derive(Resource, Debug, Clone, PartialEq, Default)]
 pub struct TouchHud {
-    /// The hints are shown (a touch device, or after a touch).
+    /// Touch is in use (a touch device, or after a touch): the HUD is in
+    /// its touch form and the hints are drawn unless [`Self::hidden`].
     pub shown: bool,
+    /// The rider hid the on-screen controls (the eye button): chevrons,
+    /// zone marks and tips are not drawn; the touch areas still work.
+    pub hidden: bool,
     /// No touch for a while: the chevrons are fainter.
     pub dimmed: bool,
     /// The side held now (the edge glow).
@@ -37,109 +55,149 @@ pub struct TouchHud {
     pub flash_right: bool,
     /// The first-ride tip, if it still shows.
     pub tip: Option<String>,
-    /// Where the zones start (share of the window's height from the top).
+    /// Where the steering zones start and end (shares of the UI area's
+    /// height from the top; the glow's span).
     pub zone_top: f32,
-    /// The touch power buttons show (TS5: hints shown and the power is
-    /// the virtual trainer's).
-    pub power: bool,
-    /// The power button held now (drawn brighter).
-    pub power_held: Option<PowerButton>,
+    pub zone_bottom: f32,
+    /// The menu and hide buttons show (a touch device, also while the
+    /// controls are hidden and over the open menu).
+    pub buttons: bool,
+    /// The menu is open: only the menu button stays, above the veil.
+    pub menu_open: bool,
+    /// The button a finger is on (drawn darker).
+    pub button_held: Option<CornerButton>,
+    /// The faster / slower zones are on (the power is the virtual
+    /// trainer's): where the top zone ends and the bottom zone starts
+    /// (shares of the UI area's height).
+    pub power: Option<(f32, f32)>,
+    /// The zone held now (the glow along that edge).
+    pub power_held: Option<PowerEdge>,
+    /// The feedback of a step or a hold: the edge, the text ("▲ 220 W")
+    /// and where across the UI area (a share of its width).
+    pub power_flash: Option<(PowerEdge, String, f32)>,
+    /// A short note beside the buttons ("Controls hidden – they still
+    /// work", the first time).
+    pub toast: Option<String>,
 }
 
-/// A touch power button (spec 3.2.3 *Power without a trainer*, TS5): the
-/// keyboard's ↓ (stop: brake, power 0), −10 W (no key since v5.18) and ↑ (a tap a
-/// step, a hold ramps), fed into the shared `KeyThrottle`.
+impl TouchHud {
+    /// The hints (chevrons, zone marks, tips) are drawn: not hidden, and
+    /// not under the open menu.
+    pub fn hints(&self) -> bool {
+        self.shown && !self.hidden && !self.menu_open
+    }
+
+    /// Anything of the hints' layer is drawn (the hints or the feedback
+    /// of a touch, which shows with hidden controls too).
+    fn layer(&self) -> bool {
+        self.hints()
+            || self.left_held
+            || self.right_held
+            || self.power_held.is_some()
+            || self.power_flash.is_some()
+    }
+}
+
+/// An edge of the screen with a power zone: the top is faster, the
+/// bottom slower.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PowerButton {
-    Stop,
-    Down,
-    Up,
+pub enum PowerEdge {
+    Top,
+    Bottom,
 }
 
-impl PowerButton {
-    pub const ALL: [PowerButton; 3] = [PowerButton::Stop, PowerButton::Down, PowerButton::Up];
+impl PowerEdge {
+    pub const ALL: [PowerEdge; 2] = [PowerEdge::Top, PowerEdge::Bottom];
 
-    /// The button's label.
+    /// The feedback's arrow.
+    pub fn arrow(self) -> &'static str {
+        match self {
+            Self::Top => "\u{25b2}",
+            Self::Bottom => "\u{25bc}",
+        }
+    }
+
+    /// The zone's mark.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Stop => "stop",
-            Self::Down => "\u{2212}",
-            Self::Up => "+",
+            Self::Top => "\u{25b2} faster",
+            Self::Bottom => "\u{25bc} slower",
         }
     }
 }
 
-/// A power button's side (CSS px, the browser's logical px: a touch
-/// target of about 9 mm, spec 3.2.2 – kept at any HUD scale) and the gap
-/// between them.
-pub const POWER_BUTTON_PX: f32 = 56.0;
-pub const POWER_GAP_PX: f32 = 12.0;
-/// The smallest a power button gets (CSS px; Apple's 44 pt touch target)
-/// when a portrait column lacks room.
-pub const POWER_BUTTON_MIN_PX: f32 = 44.0;
+/// The two buttons that are always drawn on a touch device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CornerButton {
+    /// ☰: opens (and closes) the menu, as Esc / gamepad Start.
+    Menu,
+    /// The eye: hides / shows the other on-screen controls.
+    Hide,
+}
+
+impl CornerButton {
+    pub const ALL: [CornerButton; 2] = [CornerButton::Menu, CornerButton::Hide];
+}
+
+/// A corner button's side (CSS px, the browser's logical px: above
+/// Apple's 44 pt and Android's 48 dp touch targets, kept at any HUD
+/// scale), the gap between the two and their distance from the UI area's
+/// edges (the safe area: clear of the notch).
+pub const CORNER_BUTTON_PX: f32 = 48.0;
+pub const CORNER_GAP_PX: f32 = 8.0;
+pub const CORNER_MARGIN_PX: f32 = 12.0;
 /// The right chevron's distance from the bottom (share of the height) and
 /// from the right edge (UI px).
 const CHEV_BOTTOM: f32 = 0.36;
 const CHEV_RIGHT: f32 = 36.0;
 
-/// The power buttons' rectangles (min, max; UI px inside the UI area
-/// `ui` UI px large at `ui_scale`), right-aligned with the right chevron's
-/// outer edge, above the right steering zone: in landscape a row stop,
-/// −, + (+ nearest the thumb) at the top, under the top-right column; in
-/// portrait a column (+ at the top) along the right edge just above the
-/// chevron – off the road in the middle either way. They keep below every rectangle of `avoid`
-/// they would overlap (the top panel, the top-right column; UI px). The
-/// renderer draws them there and the touch zones leave them out.
-pub fn power_buttons(ui: Vec2, ui_scale: f32, avoid: &[Rect]) -> [(PowerButton, Rect); 3] {
+/// The menu and hide buttons' rectangles (min, max; UI px inside the UI
+/// area `ui` UI px large at `ui_scale`): a row ☰, eye at the top left –
+/// below every rectangle of `avoid` it would overlap (the HUD's top
+/// panel; UI px), and right of the left chevron's column if that pushed
+/// it down to the chevron (a small phone in landscape). The renderer
+/// draws them there and the touch zones leave them out.
+pub fn corner_buttons(ui: Vec2, ui_scale: f32, avoid: &[Rect]) -> [(CornerButton, Rect); 2] {
     let k = ui_scale.max(0.1);
-    let side = POWER_BUTTON_PX / k;
-    let gap = POWER_GAP_PX / k;
-    let right = ui.x - CHEV_RIGHT;
-    let bottom = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H - gap;
-    let portrait = ui.y > ui.x;
-    let (w, h) = if portrait {
-        (side, 3.0 * side + 2.0 * gap)
-    } else {
-        (3.0 * side + 2.0 * gap, side)
-    };
-    let mut top = if portrait {
-        (bottom - h).max(0.0)
-    } else {
-        12.0
-    };
+    let (side, gap, margin) = (
+        CORNER_BUTTON_PX / k,
+        CORNER_GAP_PX / k,
+        CORNER_MARGIN_PX / k,
+    );
+    let w = 2.0 * side + gap;
+    let mut left = margin;
+    let mut top = margin;
     let mut sorted: Vec<Rect> = avoid.to_vec();
     sorted.sort_by(|a, b| a.min.y.total_cmp(&b.min.y));
-    for a in sorted {
-        let block = Rect::new(right - w, top, right, top + h);
-        if !block.intersect(a).is_empty() {
+    for a in &sorted {
+        let block = Rect::new(left, top, left + w, top + side);
+        if !block.intersect(*a).is_empty() {
             top = a.max.y + gap;
         }
     }
-    // A portrait column pushed down by a panel shrinks to keep above the
-    // chevron, down to the smallest touch target.
-    let mut side = side;
-    if portrait && top + h > bottom {
-        side = ((bottom - top - 2.0 * gap) / 3.0).clamp(POWER_BUTTON_MIN_PX / k, side);
+    let chev_top = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H;
+    if top + side + gap > chev_top && top < chev_top + CHEV_H {
+        left = CHEV_LEFT + CHEV_W + gap;
     }
-    let mut out = [(PowerButton::Stop, Rect::default()); 3];
-    for (i, b) in PowerButton::ALL.into_iter().enumerate() {
-        let r = if portrait {
-            // + at the top, stop at the bottom.
-            let y0 = top + (2 - i) as f32 * (side + gap);
-            Rect::new(right - side, y0, right, y0 + side)
-        } else {
-            let x1 = right - (2 - i) as f32 * (side + gap);
-            Rect::new(x1 - side, top, x1, top + side)
-        };
-        out[i] = (b, r);
-    }
-    out
+    // Never off the UI area (a tiny window).
+    top = top.min((ui.y - side - margin).max(0.0));
+    [
+        (
+            CornerButton::Menu,
+            Rect::new(left, top, left + side, top + side),
+        ),
+        (
+            CornerButton::Hide,
+            Rect::new(left + side + gap, top, left + w, top + side),
+        ),
+    ]
 }
 
-/// The rectangles the power buttons keep below ([`power_buttons`], UI
-/// px): the top panel and the top-right column of the last frame
-/// ([`crate::hud::HudBoxes`], window px), less the UI's offset `off`.
-pub fn power_avoid(boxes: &crate::hud::HudBoxes, off: Vec2, ui_scale: f32) -> Vec<Rect> {
+/// The rectangles the corner buttons and the first-ride tip keep below
+/// ([`corner_buttons`], [`tip_place`]; UI px): the top panel and the
+/// top-right column of the last frame ([`crate::hud::HudBoxes`], window
+/// px), less the UI's offset `off`.
+pub fn top_boxes(boxes: &crate::hud::HudBoxes, off: Vec2, ui_scale: f32) -> Vec<Rect> {
     let k = ui_scale.max(0.1);
     [boxes.top_panel, boxes.top_right]
         .into_iter()
@@ -149,6 +207,30 @@ pub fn power_avoid(boxes: &crate::hud::HudBoxes, off: Vec2, ui_scale: f32) -> Ve
             Rect::from_corners(min, min + Vec2::new(w, h) / k)
         })
         .collect()
+}
+
+/// The HUD's boxes the corner buttons are placed below: the HUD's
+/// ([`crate::hud::HudBoxes`]) as they were before the menu opened. The
+/// open menu changes the top panel's lines (its status line moves into
+/// the menu); the menu button must not move under the finger that will
+/// close the menu. Read by the drawing here and by the hit test in
+/// `ocw_ui::touch`.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct ButtonAnchor(pub Option<crate::hud::HudBoxes>);
+
+/// Follows the HUD's boxes while the menu is closed.
+fn anchor_buttons(
+    boxes: Option<Res<crate::hud::HudBoxes>>,
+    menu: Option<Res<crate::menu::MenuView>>,
+    mut anchor: ResMut<ButtonAnchor>,
+) {
+    if menu.is_some_and(|m| m.open) {
+        return;
+    }
+    let now = boxes.as_deref().cloned();
+    if anchor.0 != now {
+        anchor.0 = now;
+    }
 }
 
 /// The left chevron's distance from the left edge (UI px).
@@ -161,11 +243,12 @@ pub const TIP_GAP_PX: f32 = 8.0;
 pub const BANNER_PX: f32 = 44.0;
 
 /// Where the first-ride tip goes (UI px): below the HUD's top boxes, in
-/// a band of its own – in portrait left of the power buttons' column
-/// (the page's screen-tip banner in a slot right above it), in landscape
-/// between the chevrons and below the power buttons' row (the banner
-/// goes to the bottom there, the page places it) – above the rider in
-/// the middle, clear of the chevrons, the power buttons and the panels.
+/// a band of its own – in portrait over the width below the menu and
+/// hide buttons (the page's screen-tip banner in a slot right above it),
+/// in landscape between the chevrons and right of the two buttons (the
+/// banner goes to the bottom there, the page places it) – above the
+/// rider in the middle, clear of the chevrons, the buttons and the
+/// panels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TipPlace {
     /// The tip's top edge and its horizontal span (it is centred in it).
@@ -178,29 +261,32 @@ pub struct TipPlace {
 
 /// [`TipPlace`] in the UI area `ui` (UI px at `ui_scale`), below the
 /// boxes of `avoid` (the top panel and the top-right column, UI px,
-/// [`power_avoid`]) and clear of the power buttons `power` (while shown).
+/// [`top_boxes`]) and clear of the corner buttons `buttons` (while
+/// shown).
 pub fn tip_place(
     ui: Vec2,
     ui_scale: f32,
     avoid: &[Rect],
-    power: Option<&[(PowerButton, Rect)]>,
+    buttons: Option<&[(CornerButton, Rect)]>,
 ) -> TipPlace {
     let k = ui_scale.max(0.1);
     let gap = TIP_GAP_PX / k;
     let portrait = ui.y > ui.x;
     let mut top = avoid.iter().map(|r| r.max.y).fold(0.0, f32::max) + gap;
-    let (left, mut right) = if portrait {
+    let (mut left, right) = if portrait {
         (gap, ui.x - gap)
     } else {
         (CHEV_LEFT + CHEV_W + gap, ui.x - CHEV_RIGHT - CHEV_W - gap)
     };
-    if let Some(p) = power.filter(|p| !p.is_empty()) {
-        let min_x = p.iter().map(|(_, r)| r.min.x).fold(f32::MAX, f32::min);
-        let max_y = p.iter().map(|(_, r)| r.max.y).fold(0.0, f32::max);
-        if portrait {
-            right = right.min(min_x - gap);
-        } else {
-            top = top.max(max_y + gap);
+    if let Some(b) = buttons.filter(|b| !b.is_empty()) {
+        let max_x = b.iter().map(|(_, r)| r.max.x).fold(0.0, f32::max);
+        let max_y = b.iter().map(|(_, r)| r.max.y).fold(0.0, f32::max);
+        if max_y + gap > top {
+            if portrait {
+                top = max_y + gap;
+            } else {
+                left = left.max(max_x + gap);
+            }
         }
     }
     let banner = portrait.then(|| {
@@ -218,23 +304,67 @@ pub fn tip_place(
 
 /// The touch layout for the page (window px, logical – CSS px in the
 /// browser: `[left, top, width, height]`): the screen tip's slot
-/// ([`TipPlace::banner`]) and the chevrons, for the page's banner and
-/// the layout checks (`window.ocw.hudLayout()`).
+/// ([`TipPlace::banner`]), the chevrons and the menu and hide buttons,
+/// for the page's banner and the layout checks
+/// (`window.ocw.hudLayout()`).
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct TouchLayout {
     pub banner: Option<[f32; 4]>,
     pub chevrons: Vec<[f32; 4]>,
+    /// The menu button, then the hide button (while they show).
+    pub buttons: Vec<[f32; 4]>,
+    /// The bands of the faster / slower zones' marks and feedback (just
+    /// inside each zone's line, over the width; while the marks show):
+    /// the page keeps its banner out of them.
+    pub zone_bands: Vec<[f32; 4]>,
 }
 
 /// The first-ride tip's box (measured by the HUD: `HudBoxes::touch_tip`).
 #[derive(Component)]
 pub(crate) struct TipPanel;
 
+/// The root of the menu and hide buttons (above the menu's veil).
 #[derive(Component)]
-struct PowerRow;
+struct ButtonsRoot;
 
 #[derive(Component)]
-struct PowerKey(PowerButton);
+struct CornerKey(CornerButton);
+
+/// The stroke through the eye while the controls are hidden.
+#[derive(Component)]
+struct EyeStroke;
+
+#[derive(Component)]
+struct Toast;
+
+#[derive(Component)]
+struct ToastText;
+
+/// A tick of an edge's zone mark.
+#[derive(Component)]
+struct ZoneTick(PowerEdge);
+
+#[derive(Component)]
+struct ZoneLabel(PowerEdge);
+
+/// The glow along the top / bottom edge while its zone is held or just
+/// stepped.
+#[derive(Component)]
+struct EdgeGlow(PowerEdge);
+
+#[derive(Component)]
+struct FlashBox;
+
+#[derive(Component)]
+struct FlashText;
+
+/// The zone marks' ticks (UI px), the marks' opacity and the feedback
+/// box's size.
+const TICK_W: f32 = 28.0;
+const TICK_H: f32 = 3.0;
+pub const ZONE_MARK_ALPHA: f32 = 0.35;
+const FLASH_W: f32 = 180.0;
+const FLASH_H: f32 = 40.0;
 
 /// The chevrons' opacity: shown, dimmed, flashing.
 pub const CHEVRON_ALPHA: f32 = 0.4;
@@ -399,92 +529,411 @@ fn spawn(mut commands: Commands) {
                     TipText,
                 ));
             });
-            // The touch power buttons (TS5), placed by
-            // [`place_power_buttons`].
-            r.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    display: Display::None,
-                    ..default()
-                },
-                PowerRow,
-                Pickable::IGNORE,
-            ))
-            .with_children(|row| {
-                for b in PowerButton::ALL {
-                    row.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border: UiRect::all(px(2)),
-                            border_radius: BorderRadius::all(px(10)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
-                        BorderColor::all(Color::WHITE.with_alpha(0.5)),
-                        PowerKey(b),
-                        Pickable::IGNORE,
-                    ))
-                    .with_child((
-                        Text::new(b.label()),
-                        TextFont {
-                            font_size: if b == PowerButton::Stop { 16.0 } else { 28.0 }.into(),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE.with_alpha(0.9)),
+            // The faster / slower zones (placed by [`place_power`]): two
+            // ticks at each zone's line and its label, the glow along
+            // the edge and the feedback of a step.
+            for edge in PowerEdge::ALL {
+                for right in [false, true] {
+                    let mut n = Node {
+                        position_type: PositionType::Absolute,
+                        width: px(TICK_W),
+                        height: px(TICK_H),
+                        display: Display::None,
+                        ..default()
+                    };
+                    if right {
+                        n.right = px(0);
+                    } else {
+                        n.left = px(0);
+                    }
+                    r.spawn((
+                        n,
+                        BackgroundColor(Color::WHITE.with_alpha(ZONE_MARK_ALPHA)),
+                        ZoneTick(edge),
                         Pickable::IGNORE,
                     ));
                 }
-            });
+                r.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        right: px(TICK_W + 8.0),
+                        display: Display::None,
+                        ..default()
+                    },
+                    Text::new(edge.label()),
+                    TextFont {
+                        font_size: 16.0.into(),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE.with_alpha(ZONE_MARK_ALPHA + 0.2)),
+                    ZoneLabel(edge),
+                    Pickable::IGNORE,
+                ));
+                for (i, alpha) in [GLOW_ALPHA, GLOW_ALPHA * 0.4].into_iter().enumerate() {
+                    let off = px(i as f32 * GLOW_PX / 2.0);
+                    let mut n = Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        right: px(0),
+                        height: px(GLOW_PX / 2.0),
+                        display: Display::None,
+                        ..default()
+                    };
+                    match edge {
+                        PowerEdge::Top => n.top = off,
+                        PowerEdge::Bottom => n.bottom = off,
+                    }
+                    r.spawn((
+                        n,
+                        BackgroundColor(ACCENT.with_alpha(alpha)),
+                        EdgeGlow(edge),
+                        Pickable::IGNORE,
+                    ));
+                }
+            }
+            r.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: px(FLASH_W),
+                    height: px(FLASH_H),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(px(FLASH_H / 2.0)),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                FlashBox,
+                Pickable::IGNORE,
+            ))
+            .with_child((
+                Text::new(""),
+                TextFont {
+                    font_size: 22.0.into(),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                FlashText,
+                Pickable::IGNORE,
+            ));
+        });
+    // The menu and hide buttons: a root of their own above the menu's
+    // veil (the menu button stays to close it), placed by
+    // [`place_buttons`].
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                display: Display::None,
+                ..default()
+            },
+            GlobalZIndex(101),
+            ButtonsRoot,
+            crate::hud::HudPanel,
+            crate::access::AccessExempt,
+            Pickable::IGNORE,
+        ))
+        .with_children(|r| {
+            let button = |border: f32| {
+                (
+                    Node {
+                        position_type: PositionType::Absolute,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(5),
+                        border: UiRect::all(px(2)),
+                        border_radius: BorderRadius::all(px(10)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+                    BorderColor::all(Color::WHITE.with_alpha(border)),
+                    crate::navi_map::MapAvoid,
+                )
+            };
+            // ☰: three bars. The button takes the pointer (no
+            // `Pickable::IGNORE`): over the open menu a tap on it never
+            // reaches a row below.
+            r.spawn((button(0.5), CornerKey(CornerButton::Menu)))
+                .with_children(|b| {
+                    for _ in 0..3 {
+                        b.spawn((
+                            Node {
+                                width: px(24),
+                                height: px(3.5),
+                                border_radius: BorderRadius::all(px(2)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::WHITE.with_alpha(0.9)),
+                            Pickable::IGNORE,
+                        ));
+                    }
+                });
+            // The eye: a lid with a pupil, struck through while the
+            // controls are hidden. Smaller and fainter than ☰.
+            r.spawn((button(0.3), CornerKey(CornerButton::Hide), Pickable::IGNORE))
+                .with_children(|b| {
+                    b.spawn((
+                        Node {
+                            width: px(26),
+                            height: px(16),
+                            border: UiRect::all(px(2.5)),
+                            border_radius: BorderRadius::all(px(8)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BorderColor::all(Color::WHITE.with_alpha(0.8)),
+                        Pickable::IGNORE,
+                    ))
+                    .with_child((
+                        Node {
+                            width: px(6),
+                            height: px(6),
+                            border_radius: BorderRadius::all(px(3)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::WHITE.with_alpha(0.8)),
+                        Pickable::IGNORE,
+                    ));
+                    b.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            width: px(32),
+                            height: px(3),
+                            border_radius: BorderRadius::all(px(1.5)),
+                            display: Display::None,
+                            ..default()
+                        },
+                        UiTransform::from_rotation(Rot2::degrees(-40.0)),
+                        BackgroundColor(Color::WHITE.with_alpha(0.9)),
+                        EyeStroke,
+                        Pickable::IGNORE,
+                    ));
+                });
+            // The note beside the buttons.
+            r.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(px(12), px(6)),
+                    border_radius: BorderRadius::all(px(8)),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+                Toast,
+                Pickable::IGNORE,
+            ))
+            .with_child((
+                Text::new(""),
+                TextFont {
+                    font_size: 16.0.into(),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                ToastText,
+                Pickable::IGNORE,
+            ));
         });
 }
 
-/// Shows and places the power buttons ([`power_buttons`]) every frame:
-/// the layout follows the window and the HUD's scale.
+/// The corner buttons' rectangles of this frame (UI px) and the UI's
+/// offset and scale.
+fn buttons_now(
+    layout: &crate::hud_fit::HudLayout,
+    scale: Option<&UiScale>,
+    boxes: Option<&crate::hud::HudBoxes>,
+    window: Option<&Window>,
+    safe: Option<&crate::safe_area::SafeArea>,
+) -> ([(CornerButton, Rect); 2], Vec<Rect>, Vec2, f32) {
+    let k = scale.map_or(1.0, |s| s.0).max(0.1);
+    let off = crate::safe_area::ui_offset(window, safe);
+    let avoid = boxes.map(|b| top_boxes(b, off, k)).unwrap_or_default();
+    (corner_buttons(layout.ui_px, k, &avoid), avoid, off, k)
+}
+
+/// Shows and places the menu and hide buttons ([`corner_buttons`]) and
+/// the note beside them every frame: the layout follows the window, the
+/// HUD's scale and the top panel.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system
-fn place_power_buttons(
+fn place_buttons(
     hud: Res<TouchHud>,
     layout: Res<crate::hud_fit::HudLayout>,
     scale: Option<Res<UiScale>>,
-    boxes: Option<Res<crate::hud::HudBoxes>>,
+    boxes: Res<ButtonAnchor>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     safe: Option<Res<crate::safe_area::SafeArea>>,
-    mut row: Query<&mut Node, (With<PowerRow>, Without<PowerKey>)>,
-    mut keys: Query<(&mut Node, &mut BackgroundColor, &PowerKey), Without<PowerRow>>,
+    mut root: Query<
+        &mut Node,
+        (
+            With<ButtonsRoot>,
+            Without<CornerKey>,
+            Without<Toast>,
+            Without<EyeStroke>,
+        ),
+    >,
+    mut keys: Query<
+        (&mut Node, &mut BackgroundColor, &CornerKey),
+        (Without<ButtonsRoot>, Without<Toast>, Without<EyeStroke>),
+    >,
+    mut stroke: Query<
+        &mut Node,
+        (
+            With<EyeStroke>,
+            Without<ButtonsRoot>,
+            Without<CornerKey>,
+            Without<Toast>,
+        ),
+    >,
+    mut toast: Query<
+        &mut Node,
+        (
+            With<Toast>,
+            Without<ButtonsRoot>,
+            Without<CornerKey>,
+            Without<EyeStroke>,
+        ),
+    >,
+    mut toast_text: Query<&mut Text, With<ToastText>>,
 ) {
-    let on = hud.shown && hud.power;
-    let display = if on { Display::Flex } else { Display::None };
-    for mut n in &mut row {
-        if n.display != display {
-            n.display = display;
+    let show = |on: bool| if on { Display::Flex } else { Display::None };
+    for mut n in &mut root {
+        if n.display != show(hud.buttons) {
+            n.display = show(hud.buttons);
         }
     }
-    if !on {
+    if !hud.buttons {
         return;
     }
-    let k = scale.map_or(1.0, |s| s.0);
-    let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
-    let avoid = boxes.map(|b| power_avoid(&b, off, k)).unwrap_or_default();
-    let rects = power_buttons(layout.ui_px, k, &avoid);
-    for (mut n, mut bg, k) in &mut keys {
-        let Some((_, r)) = rects.iter().find(|(b, _)| *b == k.0) else {
+    let (rects, _, _, k) = buttons_now(
+        &layout,
+        scale.as_deref(),
+        boxes.0.as_ref(),
+        windows.single().ok(),
+        safe.as_deref(),
+    );
+    for (mut n, mut bg, key) in &mut keys {
+        let Some((_, r)) = rects.iter().find(|(b, _)| *b == key.0) else {
             continue;
         };
+        // Over the open menu only ☰ stays.
+        let display = show(key.0 == CornerButton::Menu || !hud.menu_open);
         let (left, top, w, h) = (px(r.min.x), px(r.min.y), px(r.width()), px(r.height()));
-        if n.left != left || n.top != top || n.width != w || n.height != h {
+        if n.left != left || n.top != top || n.width != w || n.height != h || n.display != display {
             n.left = left;
             n.top = top;
             n.width = w;
             n.height = h;
+            n.display = display;
         }
-        let held = hud.power_held == Some(k.0);
-        let want = Color::srgba(0.0, 0.0, 0.0, if held { 0.75 } else { 0.45 });
+        let held = hud.button_held == Some(key.0);
+        let open = key.0 == CornerButton::Menu && hud.menu_open;
+        let want = Color::srgba(0.0, 0.0, 0.0, if held || open { 0.75 } else { 0.45 });
         if bg.0 != want {
             bg.0 = want;
         }
+    }
+    for mut n in &mut stroke {
+        if n.display != show(hud.hidden) {
+            n.display = show(hud.hidden);
+        }
+    }
+    let hide = rects[1].1;
+    for mut n in &mut toast {
+        let display = show(hud.toast.is_some() && !hud.menu_open);
+        let (left, top, max) = (
+            px(hide.max.x + CORNER_GAP_PX / k),
+            px(hide.min.y),
+            px((layout.ui_px.x - hide.max.x - 2.0 * CORNER_GAP_PX / k).max(1.0)),
+        );
+        if n.display != display || n.left != left || n.top != top || n.max_width != max {
+            n.display = display;
+            n.left = left;
+            n.top = top;
+            n.max_width = max;
+            n.min_height = px(hide.height());
+        }
+    }
+    if let (Ok(mut t), Some(text)) = (toast_text.single_mut(), &hud.toast)
+        && t.0 != *text
+    {
+        t.0 = text.clone();
+    }
+}
+
+/// Where the feedback box goes (UI px: left, top) for a step at the share
+/// `x` of the width: over the touched place, just inside the zone's line
+/// – below the HUD's top panel, above the height profile.
+pub fn flash_place(ui: Vec2, edge: PowerEdge, band: (f32, f32), x: f32) -> Vec2 {
+    let left = (x * ui.x - FLASH_W / 2.0).clamp(8.0, (ui.x - FLASH_W - 8.0).max(8.0));
+    let top = match edge {
+        PowerEdge::Top => band.0 * ui.y - FLASH_H - 10.0,
+        PowerEdge::Bottom => band.1 * ui.y + 10.0,
+    };
+    Vec2::new(left, top.max(0.0))
+}
+
+/// Shows and places the faster / slower zones' marks, glow and feedback.
+#[allow(clippy::type_complexity)] // Bevy queries
+fn place_power(
+    hud: Res<TouchHud>,
+    layout: Res<crate::hud_fit::HudLayout>,
+    mut ticks: Query<(&mut Node, &ZoneTick), (Without<ZoneLabel>, Without<FlashBox>)>,
+    mut labels: Query<(&mut Node, &ZoneLabel), (Without<ZoneTick>, Without<FlashBox>)>,
+    mut glows: Query<
+        (&mut Node, &EdgeGlow),
+        (Without<ZoneTick>, Without<ZoneLabel>, Without<FlashBox>),
+    >,
+    mut flash: Query<&mut Node, (With<FlashBox>, Without<ZoneTick>, Without<ZoneLabel>)>,
+    mut flash_text: Query<&mut Text, With<FlashText>>,
+) {
+    if !hud.is_changed() && !layout.is_changed() {
+        return;
+    }
+    let show = |on: bool| if on { Display::Flex } else { Display::None };
+    let ui = layout.ui_px;
+    let marks = hud.hints().then_some(hud.power).flatten();
+    let line = |edge: PowerEdge, band: (f32, f32)| match edge {
+        PowerEdge::Top => band.0 * ui.y,
+        PowerEdge::Bottom => band.1 * ui.y,
+    };
+    for (mut n, t) in &mut ticks {
+        n.display = show(marks.is_some());
+        if let Some(band) = marks {
+            n.top = px(line(t.0, band) - TICK_H / 2.0);
+        }
+    }
+    for (mut n, l) in &mut labels {
+        n.display = show(marks.is_some());
+        if let Some(band) = marks {
+            // Inside its zone: above the top line, below the bottom one.
+            n.top = px(match l.0 {
+                PowerEdge::Top => line(l.0, band) - 24.0,
+                PowerEdge::Bottom => line(l.0, band) + 6.0,
+            });
+        }
+    }
+    let lit = |edge| {
+        hud.power_held == Some(edge) || hud.power_flash.as_ref().is_some_and(|f| f.0 == edge)
+    };
+    for (mut n, g) in &mut glows {
+        n.display = show(lit(g.0));
+    }
+    for mut n in &mut flash {
+        n.display = show(hud.power_flash.is_some());
+        if let (Some((edge, _, x)), Some(band)) = (&hud.power_flash, hud.power) {
+            let at = flash_place(ui, *edge, band, *x);
+            n.left = px(at.x);
+            n.top = px(at.y);
+        }
+    }
+    if let (Ok(mut t), Some((_, text, _))) = (flash_text.single_mut(), &hud.power_flash)
+        && t.0 != *text
+    {
+        t.0 = text.clone();
     }
 }
 
@@ -495,25 +944,26 @@ fn place_tip(
     hud: Res<TouchHud>,
     layout: Res<crate::hud_fit::HudLayout>,
     scale: Option<Res<UiScale>>,
-    boxes: Option<Res<crate::hud::HudBoxes>>,
+    boxes: Res<ButtonAnchor>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     safe: Option<Res<crate::safe_area::SafeArea>>,
     mut tip_box: Query<&mut Node, With<TipBox>>,
     mut out: ResMut<TouchLayout>,
 ) {
-    if !hud.shown {
+    if !hud.shown && !hud.buttons {
         out.set_if_neq(TouchLayout::default());
         return;
     }
-    let k = scale.map_or(1.0, |s| s.0).max(0.1);
-    let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
-    let avoid = boxes
-        .as_deref()
-        .map(|b| power_avoid(b, off, k))
-        .unwrap_or_default();
+    let (rects, avoid, off, k) = buttons_now(
+        &layout,
+        scale.as_deref(),
+        boxes.0.as_ref(),
+        windows.single().ok(),
+        safe.as_deref(),
+    );
     let ui = layout.ui_px;
-    let power = hud.power.then(|| power_buttons(ui, k, &avoid));
-    let place = tip_place(ui, k, &avoid, power.as_ref().map(|p| p.as_slice()));
+    let buttons = hud.buttons.then_some(&rects[..]);
+    let place = tip_place(ui, k, &avoid, buttons);
     for mut n in &mut tip_box {
         let (top, left, width) = (px(place.top), px(place.left), px(place.right - place.left));
         if n.top != top || n.left != left || n.width != width {
@@ -528,9 +978,8 @@ fn place_tip(
         [min.x, min.y, size.x, size.y]
     };
     let chev_top = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H;
-    out.set_if_neq(TouchLayout {
-        banner: place.banner.filter(|_| hud.tip.is_some()).map(window),
-        chevrons: vec![
+    let chevrons = if hud.hints() {
+        vec![
             window(Rect::new(
                 CHEV_LEFT,
                 chev_top,
@@ -543,7 +992,31 @@ fn place_tip(
                 ui.x - CHEV_RIGHT,
                 chev_top + CHEV_H,
             )),
-        ],
+        ]
+    } else {
+        Vec::new()
+    };
+    out.set_if_neq(TouchLayout {
+        banner: place
+            .banner
+            .filter(|_| hud.hints() && hud.tip.is_some())
+            .map(window),
+        chevrons,
+        buttons: buttons
+            .map(|b| b.iter().map(|(_, r)| window(*r)).collect())
+            .unwrap_or_default(),
+        zone_bands: hud
+            .hints()
+            .then_some(hud.power)
+            .flatten()
+            .map(|band| {
+                let h = FLASH_H + 10.0;
+                vec![
+                    window(Rect::new(0.0, band.0 * ui.y - h, ui.x, band.0 * ui.y)),
+                    window(Rect::new(0.0, band.1 * ui.y, ui.x, band.1 * ui.y + h)),
+                ]
+            })
+            .unwrap_or_default(),
     });
 }
 
@@ -563,13 +1036,14 @@ pub fn chevron_alpha(hud: &TouchHud, right: bool) -> f32 {
     }
 }
 
-#[allow(clippy::type_complexity)] // Bevy queries
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy queries
 fn update(
     hud: Res<TouchHud>,
-    mut root: Query<&mut Node, (With<Root>, Without<Glow>, Without<TipBox>)>,
-    mut glows: Query<(&mut Node, &Glow), (Without<Root>, Without<TipBox>)>,
+    mut root: Query<&mut Node, (With<Root>, Without<Glow>, Without<TipBox>, Without<Chevron>)>,
+    mut glows: Query<(&mut Node, &Glow), (Without<Root>, Without<TipBox>, Without<Chevron>)>,
+    mut chevrons: Query<&mut Node, (With<Chevron>, Without<Root>, Without<Glow>, Without<TipBox>)>,
     mut bars: Query<(&mut BackgroundColor, &ChevronBar)>,
-    mut tip_box: Query<&mut Node, (With<TipBox>, Without<Root>, Without<Glow>)>,
+    mut tip_box: Query<&mut Node, (With<TipBox>, Without<Root>, Without<Glow>, Without<Chevron>)>,
     mut tip_text: Query<&mut Text, With<TipText>>,
     layout: Res<crate::hud_fit::HudLayout>,
 ) {
@@ -578,20 +1052,26 @@ fn update(
     }
     let show = |on: bool| if on { Display::Flex } else { Display::None };
     for mut n in &mut root {
-        n.display = show(hud.shown);
+        n.display = show(hud.layer());
     }
-    if !hud.shown {
+    if !hud.layer() {
         return;
     }
     for (mut n, g) in &mut glows {
         n.display = show(if g.0 { hud.right_held } else { hud.left_held });
         n.top = percent(hud.zone_top * 100.0);
+        n.bottom = percent(((1.0 - hud.zone_bottom) * 100.0).clamp(0.0, 100.0));
+    }
+    // Hidden controls: no chevrons, no tip – the glow of a held side
+    // stays as the touch's feedback.
+    for mut n in &mut chevrons {
+        n.display = show(hud.hints());
     }
     for (mut c, b) in &mut bars {
         c.0 = Color::WHITE.with_alpha(chevron_alpha(&hud, b.0));
     }
     for mut n in &mut tip_box {
-        n.display = show(hud.tip.is_some());
+        n.display = show(hud.hints() && hud.tip.is_some());
     }
     if let (Ok(mut t), Some(tip)) = (tip_text.single_mut(), &hud.tip)
         && t.0 != *tip
@@ -625,67 +1105,101 @@ mod tests {
         assert_eq!(chevron_alpha(&hud, false), CHEVRON_FLASH_ALPHA);
     }
 
-    /// The power buttons (TS5) sit right above the right chevron – a row
-    /// stop, −, + in landscape, a column along the right edge in portrait
-    /// –, inside the window, 56 CSS px at any HUD scale, at phone and
-    /// desktop sizes; they keep below a panel in their way.
-    #[test]
-    fn the_power_buttons_sit_above_the_right_chevron() {
-        for (ui, scale) in [
+    /// The UI sizes of the cases below: (UI px, scale) of a desktop
+    /// window, an iPhone 15 Pro Max (430 × 932 CSS px less the insets) in
+    /// portrait and landscape, a small Android phone both ways and a
+    /// tablet both ways.
+    fn sizes() -> Vec<(Vec2, f32)> {
+        let fit = |css: Vec2| {
+            let k = crate::hud_fit::screen_fit(css);
+            (css / k, k)
+        };
+        vec![
             (Vec2::new(1280.0, 720.0), 1.0),
             (Vec2::new(1920.0, 1080.0), 1.5),
-            (Vec2::new(393.0, 566.0) / 0.7278, 0.7278),
-            (Vec2::new(393.0, 759.0) / 0.7278, 0.7278),
-            (Vec2::new(734.0, 372.0) / 0.75, 0.75),
-        ] {
-            let r = power_buttons(ui, scale, &[]);
-            let kinds: Vec<_> = r.iter().map(|(b, _)| *b).collect();
-            assert_eq!(kinds, PowerButton::ALL);
-            let chev_top = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H;
-            let portrait = ui.y > ui.x;
-            for (i, (_, b)) in r.iter().enumerate() {
-                assert!((b.width() * scale - POWER_BUTTON_PX).abs() < 0.01, "{ui}");
-                assert!((b.height() * scale - POWER_BUTTON_PX).abs() < 0.01, "{ui}");
-                assert!(
-                    b.min.x >= 0.0 && b.max.x <= ui.x && b.min.y >= 0.0,
-                    "{ui}: {b:?}"
+            fit(Vec2::new(430.0, 932.0 - 93.0)),
+            fit(Vec2::new(932.0 - 118.0, 430.0 - 21.0)),
+            fit(Vec2::new(360.0, 640.0)),
+            fit(Vec2::new(640.0, 360.0)),
+            fit(Vec2::new(820.0, 1180.0)),
+            fit(Vec2::new(1180.0, 820.0)),
+        ]
+    }
+
+    fn chevron_rects(ui: Vec2) -> [Rect; 2] {
+        let chev_top = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H;
+        [
+            Rect::new(CHEV_LEFT, chev_top, CHEV_LEFT + CHEV_W, chev_top + CHEV_H),
+            Rect::new(
+                ui.x - CHEV_RIGHT - CHEV_W,
+                chev_top,
+                ui.x - CHEV_RIGHT,
+                chev_top + CHEV_H,
+            ),
+        ]
+    }
+
+    /// A top panel as the HUD lays it out: over the width on a narrow
+    /// screen, else over the left 60 %; up to a third of the height.
+    fn top_panel(ui: Vec2, share: f32) -> Rect {
+        if ui.x < crate::hud_fit::NARROW_UI_PX {
+            Rect::new(10.0, 10.0, ui.x - 10.0, ui.y * share)
+        } else {
+            Rect::new(10.0, 10.0, ui.x * 0.6, ui.y * share)
+        }
+    }
+
+    /// The menu and hide buttons: a row ☰, eye at the top left, 48 CSS px
+    /// at any HUD scale (above the 44 pt touch target), 12 px inside the
+    /// UI area (the safe area), below the top panel and clear of the
+    /// chevrons – at phone (portrait and landscape), tablet and desktop
+    /// sizes.
+    #[test]
+    fn the_menu_and_hide_buttons_sit_at_the_top_left_below_the_panel() {
+        for (ui, scale) in sizes() {
+            // Without a HUD: the corner.
+            let r = corner_buttons(ui, scale, &[]);
+            assert_eq!([r[0].0, r[1].0], CornerButton::ALL, "the menu button first");
+            for (_, b) in &r {
+                assert!((b.width() * scale - CORNER_BUTTON_PX).abs() < 0.01, "{ui}");
+                assert!((b.height() * scale - CORNER_BUTTON_PX).abs() < 0.01);
+                assert!(b.width() * scale >= 44.0);
+            }
+            assert!((r[0].1.min.x * scale - CORNER_MARGIN_PX).abs() < 0.01);
+            assert!((r[0].1.min.y * scale - CORNER_MARGIN_PX).abs() < 0.01);
+            let gap = (r[1].1.min.x - r[0].1.max.x) * scale;
+            assert!((gap - CORNER_GAP_PX).abs() < 0.01, "{ui}: {gap}");
+            // With the top panel, at a quarter and at a third of the
+            // height (the most the phone layout lets it take): below it,
+            // on the screen, off the chevrons and the road's middle.
+            for share in [0.2, 0.25, 0.36] {
+                let panel = top_panel(ui, share);
+                let column = Rect::new(
+                    ui.x - 260.0,
+                    panel.max.y + 4.0,
+                    ui.x - 10.0,
+                    panel.max.y + 24.0,
                 );
-                assert!(b.max.y < chev_top, "{ui}: above the chevron");
-                if i > 0 {
-                    let prev = r[i - 1].1;
-                    let gap = if portrait {
-                        prev.min.y - b.max.y
-                    } else {
-                        b.min.x - prev.max.x
-                    } * scale;
-                    assert!((gap - POWER_GAP_PX).abs() < 0.01, "{ui}: {gap}");
+                let r = corner_buttons(ui, scale, &[panel, column]);
+                for (_, b) in &r {
+                    assert!(b.min.y >= panel.max.y, "{ui} {share}: {b:?}");
+                    assert!(b.intersect(column).is_empty(), "{ui} {share}");
+                    assert!(
+                        b.min.x >= 0.0 && b.max.x <= ui.x && b.max.y <= ui.y,
+                        "{ui} {share}: {b:?}"
+                    );
+                    for c in chevron_rects(ui) {
+                        assert!(b.intersect(c).is_empty(), "{ui} {share}: {b:?} {c:?}");
+                    }
+                    assert!(b.max.x < ui.x * 0.45, "{ui} {share}: off the middle");
                 }
-            }
-            // + nearest the thumb, in line with the chevron's outer edge.
-            assert!((r[2].1.max.x - (ui.x - CHEV_RIGHT)).abs() < 0.01);
-            // Off the middle of the window (the road): in portrait along
-            // the right edge.
-            let left = r.iter().map(|(_, b)| b.min.x).fold(f32::MAX, f32::min);
-            assert!(
-                left > ui.x * if portrait { 0.75 } else { 0.4 },
-                "{ui}: {left}"
-            );
-            // A panel in the way pushes them below it (a portrait column
-            // shrinks to stay above the chevron, not below 44 CSS px) …
-            let panel = Rect::new(0.0, 0.0, ui.x, r[2].1.min.y + 10.0);
-            let below = power_buttons(ui, scale, &[panel]);
-            assert!(below.iter().all(|(_, b)| b.min.y > panel.max.y), "{ui}");
-            if portrait {
-                let side = below[0].1.width() * scale;
-                assert!(
-                    (POWER_BUTTON_MIN_PX - 0.01..POWER_BUTTON_PX).contains(&side),
-                    "{ui}: {side}"
+                // A panel beside them does not move them.
+                let beside = Rect::new(ui.x - 50.0, 0.0, ui.x, ui.y);
+                assert_eq!(
+                    corner_buttons(ui, scale, &[beside]),
+                    corner_buttons(ui, scale, &[])
                 );
-                assert!(below[0].1.max.y < chev_top, "{ui}");
             }
-            // … one beside them does not.
-            let beside = Rect::new(0.0, 0.0, 10.0, ui.y);
-            assert_eq!(power_buttons(ui, scale, &[beside]), r);
         }
         // The boxes the HUD measured, in window px, to UI px.
         let boxes = crate::hud::HudBoxes {
@@ -693,21 +1207,23 @@ mod tests {
             top_right: Some([200.0, 161.0, 184.0, 15.0]),
             ..Default::default()
         };
-        let a = power_avoid(&boxes, Vec2::new(0.0, 59.0), 0.5);
+        let a = top_boxes(&boxes, Vec2::new(0.0, 59.0), 0.5);
         assert_eq!(a.len(), 2);
         assert_eq!(a[0], Rect::new(18.0, 18.0, 768.0, 196.0));
     }
 
-    /// The first-ride tip's band (spec 3.2.3): below the top boxes, in
-    /// portrait left of the power buttons' column with the screen tip's
-    /// slot above it, in landscape between the chevrons below the power
-    /// buttons' row – clear of the buttons and the chevrons, in the upper
-    /// half (above the rider), at iPhone 15 and small Android sizes.
+    /// The first-ride tip's band (spec 3.2.3): below the top boxes – in
+    /// portrait below the menu and hide buttons with the screen tip's
+    /// slot above it, in landscape between the chevrons right of the
+    /// buttons – clear of the buttons and the chevrons, in the upper half
+    /// (above the rider), at iPhone and small Android sizes.
     #[test]
     fn the_first_ride_tip_keeps_clear_of_the_buttons_and_chevrons() {
         for css in [
             Vec2::new(390.0, 844.0 - 93.0),
             Vec2::new(844.0 - 118.0, 390.0 - 21.0),
+            Vec2::new(430.0, 932.0 - 93.0),
+            Vec2::new(932.0 - 118.0, 430.0 - 21.0),
             Vec2::new(360.0, 640.0),
             Vec2::new(640.0, 360.0),
         ] {
@@ -727,32 +1243,22 @@ mod tests {
                 if portrait { 175.0 } else { 40.0 },
             );
             let avoid = [panel, column];
-            let power = power_buttons(ui, k, &avoid);
-            let t = tip_place(ui, k, &avoid, Some(&power));
+            let buttons = corner_buttons(ui, k, &avoid);
+            let t = tip_place(ui, k, &avoid, Some(&buttons));
             let tip = Rect::new(t.left, t.top, t.right, t.top + 60.0 / k);
             assert!(t.right - t.left > 150.0 / k, "{css}: {t:?}");
             assert!(tip.max.y <= ui.y * 0.5, "{css}: above the rider {t:?}");
-            for r in avoid.iter().chain(power.iter().map(|(_, r)| r)) {
+            for r in avoid.iter().chain(buttons.iter().map(|(_, r)| r)) {
                 assert!(tip.intersect(*r).is_empty(), "{css}: {t:?} {r:?}");
             }
-            let chev_top = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H;
-            let chevrons = [
-                Rect::new(CHEV_LEFT, chev_top, CHEV_LEFT + CHEV_W, chev_top + CHEV_H),
-                Rect::new(
-                    ui.x - CHEV_RIGHT - CHEV_W,
-                    chev_top,
-                    ui.x - CHEV_RIGHT,
-                    chev_top + CHEV_H,
-                ),
-            ];
-            for c in chevrons {
+            for c in chevron_rects(ui) {
                 assert!(tip.intersect(c).is_empty(), "{css}: {t:?} {c:?}");
             }
             match t.banner {
                 Some(b) => {
                     assert!(portrait, "{css}");
                     assert!(b.max.y < t.top && b.min.y >= panel.max.y, "{css}: {b:?}");
-                    for (_, r) in &power {
+                    for (_, r) in &buttons {
                         assert!(b.intersect(*r).is_empty(), "{css}: {b:?} {r:?}");
                     }
                     assert!((b.height() * k - BANNER_PX).abs() < 0.01);
@@ -760,10 +1266,39 @@ mod tests {
                 None => assert!(!portrait, "{css}: the banner slot in portrait"),
             }
         }
-        // Without the power buttons the tip takes the width.
+        // Without the buttons the tip takes the width below the panel.
         let ui = Vec2::new(390.0, 751.0) / 0.75;
         let t = tip_place(ui, 0.75, &[], None);
         assert!((t.right - (ui.x - TIP_GAP_PX / 0.75)).abs() < 0.01, "{t:?}");
+        assert!((t.left - TIP_GAP_PX / 0.75).abs() < 0.01, "{t:?}");
+    }
+
+    /// The feedback of a faster / slower step: over the touched place,
+    /// inside its zone, on the screen.
+    #[test]
+    fn the_power_feedback_sits_inside_the_touched_zone() {
+        assert!(crate::font::covers(
+            "\u{25b2}\u{25bc} faster slower stop 220 W"
+        ));
+        for (ui, _) in sizes() {
+            let band = (0.25, 0.75);
+            for x in [0.0, 0.1, 0.5, 0.97, 1.0] {
+                let top = flash_place(ui, PowerEdge::Top, band, x);
+                let bottom = flash_place(ui, PowerEdge::Bottom, band, x);
+                for p in [top, bottom] {
+                    assert!(p.x >= 0.0 && p.x + FLASH_W <= ui.x, "{ui} {x}: {p}");
+                }
+                assert!(top.y >= 0.0 && top.y + FLASH_H < band.0 * ui.y, "{ui}");
+                assert!(bottom.y > band.1 * ui.y && bottom.y + FLASH_H < ui.y);
+            }
+            let mid = flash_place(ui, PowerEdge::Top, band, 0.5);
+            assert!((mid.x + FLASH_W / 2.0 - ui.x / 2.0).abs() < 0.01);
+        }
+    }
+
+    fn display<C: Component>(app: &mut App) -> Vec<Display> {
+        let mut q = app.world_mut().query_filtered::<&Node, With<C>>();
+        q.iter(app.world()).map(|n| n.display).collect()
     }
 
     /// The hints draw headless and hide with the setting.
@@ -772,16 +1307,12 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins).add_plugins(TouchHudPlugin);
         app.update();
-        let root_display = |app: &mut App| {
-            let mut q = app.world_mut().query_filtered::<&Node, With<Root>>();
-            q.single(app.world()).unwrap().display
-        };
-        assert_eq!(root_display(&mut app), Display::None);
+        assert_eq!(display::<Root>(&mut app), [Display::None]);
         app.world_mut().resource_mut::<TouchHud>().shown = true;
         app.world_mut().resource_mut::<TouchHud>().right_held = true;
         app.world_mut().resource_mut::<TouchHud>().tip = Some("Tap".into());
         app.update();
-        assert_eq!(root_display(&mut app), Display::Flex);
+        assert_eq!(display::<Root>(&mut app), [Display::Flex]);
         let mut q = app.world_mut().query::<(&Node, &Glow)>();
         let lit: Vec<bool> = q
             .iter(app.world())
@@ -791,31 +1322,201 @@ mod tests {
         assert_eq!(lit, [true, true], "both strips of the right glow");
         let mut q = app.world_mut().query::<&Text>();
         assert!(q.iter(app.world()).any(|t| t.0 == "Tap"));
-        let row_display = |app: &mut App| {
-            let mut q = app.world_mut().query_filtered::<&Node, With<PowerRow>>();
-            q.single(app.world()).unwrap().display
-        };
         assert_eq!(
-            row_display(&mut app),
-            Display::None,
-            "no power buttons by default"
+            display::<ZoneTick>(&mut app),
+            [Display::None; 4],
+            "no zone marks without the zones"
         );
-        app.world_mut().resource_mut::<TouchHud>().power = true;
-        app.update();
-        assert_eq!(row_display(&mut app), Display::Flex);
-        let mut q = app.world_mut().query::<(&Node, &PowerKey)>();
-        let placed: Vec<_> = q.iter(app.world()).map(|(n, k)| (k.0, n.width)).collect();
-        assert_eq!(placed.len(), 3);
-        assert!(
-            placed.iter().all(|(_, w)| *w == px(POWER_BUTTON_PX)),
-            "{placed:?}"
-        );
+        assert_eq!(display::<ButtonsRoot>(&mut app), [Display::None]);
         app.world_mut().resource_mut::<TouchHud>().shown = false;
+        app.world_mut().resource_mut::<TouchHud>().right_held = false;
         app.update();
-        assert_eq!(
-            row_display(&mut app),
-            Display::None,
-            "hidden with the hints"
+        assert_eq!(display::<Root>(&mut app), [Display::None]);
+    }
+
+    /// No stop, + or − button is left; the faster / slower zones show as
+    /// two ticks and a label each, and a step's feedback at its edge.
+    #[test]
+    fn the_zones_are_marked_and_a_step_flashes_at_its_edge() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins).add_plugins(TouchHudPlugin);
+        {
+            let mut h = app.world_mut().resource_mut::<TouchHud>();
+            h.shown = true;
+            h.buttons = true;
+            h.power = Some((0.25, 0.75));
+        }
+        app.update();
+        let mut q = app.world_mut().query::<&Text>();
+        let texts: Vec<String> = q.iter(app.world()).map(|t| t.0.clone()).collect();
+        for gone in ["stop", "+", "\u{2212}"] {
+            assert!(!texts.iter().any(|t| t == gone), "{gone:?}: {texts:?}");
+        }
+        assert!(texts.iter().any(|t| t == "\u{25b2} faster"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "\u{25bc} slower"), "{texts:?}");
+        assert_eq!(display::<ZoneTick>(&mut app), [Display::Flex; 4]);
+        assert_eq!(display::<ZoneLabel>(&mut app), [Display::Flex; 2]);
+        assert_eq!(display::<FlashBox>(&mut app), [Display::None]);
+        assert_eq!(display::<EdgeGlow>(&mut app), [Display::None; 4]);
+        // The marks sit at the zones' lines (720 px high by default).
+        let mut q = app.world_mut().query::<(&Node, &ZoneTick)>();
+        for (n, t) in q.iter(app.world()) {
+            let y = if t.0 == PowerEdge::Top { 180.0 } else { 540.0 };
+            assert_eq!(n.top, px(y - TICK_H / 2.0));
+        }
+        // A step at the bottom: its text and the glow of that edge.
+        app.world_mut().resource_mut::<TouchHud>().power_flash =
+            Some((PowerEdge::Bottom, "\u{25bc} 180 W".into(), 0.5));
+        app.update();
+        assert_eq!(display::<FlashBox>(&mut app), [Display::Flex]);
+        let mut q = app.world_mut().query::<(&Node, &EdgeGlow)>();
+        let lit: Vec<PowerEdge> = q
+            .iter(app.world())
+            .filter(|(n, _)| n.display == Display::Flex)
+            .map(|(_, g)| g.0)
+            .collect();
+        assert_eq!(lit, [PowerEdge::Bottom; 2]);
+        let mut q = app.world_mut().query_filtered::<&Text, With<FlashText>>();
+        assert_eq!(q.single(app.world()).unwrap().0, "\u{25bc} 180 W");
+        // With a power device: no zones, no marks.
+        {
+            let mut h = app.world_mut().resource_mut::<TouchHud>();
+            h.power = None;
+            h.power_flash = None;
+        }
+        app.update();
+        assert_eq!(display::<ZoneTick>(&mut app), [Display::None; 4]);
+        assert_eq!(display::<FlashBox>(&mut app), [Display::None]);
+    }
+
+    /// Hidden controls: the chevrons, the zone marks and the tip are not
+    /// drawn; the menu and hide buttons stay (the eye struck through),
+    /// the feedback of a touch still shows, and a note says so once.
+    #[test]
+    fn hidden_controls_draw_only_the_two_buttons_and_the_feedback() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins).add_plugins(TouchHudPlugin);
+        {
+            let mut h = app.world_mut().resource_mut::<TouchHud>();
+            h.shown = true;
+            h.buttons = true;
+            h.tip = Some("Tap".into());
+            h.power = Some((0.25, 0.75));
+        }
+        app.update();
+        assert_eq!(display::<Chevron>(&mut app), [Display::Flex; 2]);
+        assert_eq!(display::<TipBox>(&mut app), [Display::Flex]);
+        assert_eq!(display::<ButtonsRoot>(&mut app), [Display::Flex]);
+        assert_eq!(display::<CornerKey>(&mut app), [Display::Flex; 2]);
+        assert_eq!(display::<EyeStroke>(&mut app), [Display::None]);
+        assert_eq!(display::<Toast>(&mut app), [Display::None]);
+        // The bands of the zones' marks and feedback, for the page.
+        let bands = app.world().resource::<TouchLayout>().zone_bands.clone();
+        assert_eq!(bands.len(), 2);
+        assert_eq!(bands[0], [0.0, 130.0, 1280.0, 50.0]);
+        assert_eq!(bands[1], [0.0, 540.0, 1280.0, 50.0]);
+        // The buttons are 48 px (scale 1) at the top left.
+        let mut q = app.world_mut().query::<(&Node, &CornerKey)>();
+        for (n, k) in q.iter(app.world()) {
+            assert_eq!((n.width, n.height), (px(48), px(48)));
+            let left = if k.0 == CornerButton::Menu {
+                12.0
+            } else {
+                68.0
+            };
+            assert_eq!((n.left, n.top), (px(left), px(12)));
+        }
+        {
+            let mut h = app.world_mut().resource_mut::<TouchHud>();
+            h.hidden = true;
+            h.toast = Some("Controls hidden \u{2013} they still work".into());
+        }
+        app.update();
+        assert_eq!(display::<Root>(&mut app), [Display::None]);
+        assert_eq!(display::<ZoneTick>(&mut app), [Display::None; 4]);
+        assert_eq!(display::<ZoneLabel>(&mut app), [Display::None; 2]);
+        assert_eq!(display::<ButtonsRoot>(&mut app), [Display::Flex]);
+        assert_eq!(display::<CornerKey>(&mut app), [Display::Flex; 2]);
+        assert_eq!(display::<EyeStroke>(&mut app), [Display::Flex]);
+        assert_eq!(display::<Toast>(&mut app), [Display::Flex]);
+        let layout = app.world().resource::<TouchLayout>().clone();
+        assert!(layout.chevrons.is_empty() && layout.banner.is_none());
+        assert!(
+            layout.zone_bands.is_empty(),
+            "no marks: no bands to keep free"
         );
+        assert_eq!(layout.buttons.len(), 2);
+        // A touch's feedback still shows: the held side's glow, a step.
+        {
+            let mut h = app.world_mut().resource_mut::<TouchHud>();
+            h.left_held = true;
+            h.power_flash = Some((PowerEdge::Top, "\u{25b2} 220 W".into(), 0.3));
+        }
+        app.update();
+        assert_eq!(display::<Root>(&mut app), [Display::Flex]);
+        assert_eq!(display::<Chevron>(&mut app), [Display::None; 2]);
+        assert_eq!(display::<TipBox>(&mut app), [Display::None]);
+        assert_eq!(display::<FlashBox>(&mut app), [Display::Flex]);
+        let mut q = app.world_mut().query::<(&Node, &Glow)>();
+        assert_eq!(
+            q.iter(app.world())
+                .filter(|(n, g)| n.display == Display::Flex && !g.0)
+                .count(),
+            2
+        );
+        // Over the open menu only ☰ stays (it closes the menu).
+        app.world_mut().resource_mut::<TouchHud>().menu_open = true;
+        app.update();
+        let mut q = app.world_mut().query::<(&Node, &CornerKey)>();
+        for (n, k) in q.iter(app.world()) {
+            let want = if k.0 == CornerButton::Menu {
+                Display::Flex
+            } else {
+                Display::None
+            };
+            assert_eq!(n.display, want, "{:?}", k.0);
+        }
+        assert_eq!(display::<Toast>(&mut app), [Display::None]);
+    }
+
+    /// The buttons stay where they were when the menu opened, whatever
+    /// the open menu does to the HUD's top panel (regression: on a tablet
+    /// the panel lost a line under the menu and ☰ moved up, away from
+    /// the finger that came to close the menu).
+    #[test]
+    fn the_buttons_keep_their_place_under_the_open_menu() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(TouchHudPlugin)
+            .init_resource::<crate::menu::MenuView>();
+        let panel = |h: f32| crate::hud::HudBoxes {
+            top_panel: Some([10.0, 10.0, 600.0, h]),
+            ..Default::default()
+        };
+        app.insert_resource(panel(120.0));
+        {
+            let mut h = app.world_mut().resource_mut::<TouchHud>();
+            h.shown = true;
+            h.buttons = true;
+        }
+        app.update();
+        let top = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&Node, &CornerKey)>();
+            q.iter(app.world()).map(|(n, _)| n.top).collect::<Vec<_>>()
+        };
+        assert_eq!(top(&mut app), [px(138), px(138)], "below the panel");
+        // The menu opens and the panel shrinks: the buttons stay.
+        app.world_mut().resource_mut::<crate::menu::MenuView>().open = true;
+        app.world_mut().resource_mut::<TouchHud>().menu_open = true;
+        app.insert_resource(panel(80.0));
+        app.update();
+        app.update();
+        assert_eq!(top(&mut app), [px(138), px(138)]);
+        assert_eq!(app.world().resource::<ButtonAnchor>().0, Some(panel(120.0)));
+        // Closed again: they follow the panel.
+        app.world_mut().resource_mut::<crate::menu::MenuView>().open = false;
+        app.world_mut().resource_mut::<TouchHud>().menu_open = false;
+        app.update();
+        assert_eq!(top(&mut app), [px(98), px(98)]);
     }
 }

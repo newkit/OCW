@@ -7,6 +7,7 @@
 
 use crate::client::ClientCore;
 
+pub mod power_zones;
 pub mod touch;
 
 /// Free ride: what the junction keys do this frame (spec 2.2.1, 3.2.5).
@@ -36,6 +37,9 @@ pub const POWER_STEP_W: f64 = 25.0;
 pub const POWER_RAMP_W_PER_S: f64 = 250.0;
 /// Highest keyboard power reachable with ↑.
 pub const MAX_KEY_POWER_W: f64 = 1000.0;
+/// Power taken by a tap on the screen's bottom zone (as the former touch
+/// − button).
+pub const SLOWER_STEP_W: f64 = 10.0;
 /// Minimum time between power updates while ↑ is held.
 pub const KEY_SEND_INTERVAL_S: f64 = 0.1;
 
@@ -144,15 +148,22 @@ pub struct ThrottleKeys {
     pub up_held: bool,
     /// ↓ went down this frame: stop.
     pub down_pressed: bool,
-    /// +10 W / −10 W: the touch power buttons only (spec 3.2.3 TS5); no
-    /// key changes the power by 10 W since v5.18 (Page Up / Page Down
-    /// were, spec 3.2.5).
+    /// +10 W / −10 W: no key changes the power by 10 W since v5.18 (Page
+    /// Up / Page Down were, spec 3.2.5); the touch − button did until
+    /// the screen zones replaced it ([`Self::slower_pressed`]).
     pub plus_10: bool,
     pub minus_10: bool,
+    /// A tap on the screen's bottom zone (spec 3.2.3 *Faster / slower
+    /// zones*): [`SLOWER_STEP_W`] less keyboard power; with none left it
+    /// stops (as ↓: the brake, power 0).
+    pub slower_pressed: bool,
+    /// A finger held on the bottom zone: the keyboard power ramps down
+    /// (to 0, never the brake).
+    pub slower_held: bool,
 }
 
 impl ThrottleKeys {
-    /// Both inputs together (the keys and the touch power buttons).
+    /// Both inputs together (the keys and the touch zones).
     pub fn or(self, o: Self) -> Self {
         Self {
             up_pressed: self.up_pressed || o.up_pressed,
@@ -160,11 +171,13 @@ impl ThrottleKeys {
             down_pressed: self.down_pressed || o.down_pressed,
             plus_10: self.plus_10 || o.plus_10,
             minus_10: self.minus_10 || o.minus_10,
+            slower_pressed: self.slower_pressed || o.slower_pressed,
+            slower_held: self.slower_held || o.slower_held,
         }
     }
 }
 
-/// Keyboard power (↑ / ↓; the touch buttons' ±10 W): added to the rider's device
+/// Keyboard power (↑ / ↓; the touch zones' steps): added to the rider's device
 /// power (virtual or real trainer), so the keys work with any device. The
 /// same rules in the desktop and the browser app.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -187,7 +200,20 @@ impl KeyThrottle {
         now: f64,
     ) -> (Vec<Vec<u8>>, bool) {
         let mut out = Vec::new();
-        if keys.down_pressed {
+        // The bottom zone's tap: a step down; with no keyboard power left
+        // it is ↓ (stop) – "slower" ends in a stop.
+        let mut stop = keys.down_pressed;
+        if keys.slower_pressed {
+            if self.watts > 0.0 {
+                self.watts = (self.watts - SLOWER_STEP_W).max(0.0);
+            } else if !keys.up_pressed && !client.braking() {
+                stop = true;
+            }
+        }
+        if keys.slower_held && !keys.up_held {
+            self.watts = (self.watts - POWER_RAMP_W_PER_S * dt).max(0.0);
+        }
+        if stop {
             self.watts = 0.0;
             out.extend(client.set_brake(true));
         }
@@ -203,7 +229,7 @@ impl KeyThrottle {
             self.last_sent_s = now;
             out.extend(client.set_key_power(self.watts));
         }
-        (out, keys.down_pressed)
+        (out, stop)
     }
 }
 
@@ -389,5 +415,56 @@ mod tests {
         assert_eq!(client.key_power_w(), 10.0);
         t.update(&mut client, up, 0.0, 3.0);
         assert!(!client.braking());
+    }
+
+    /// The screen's bottom zone (spec 3.2.3): a tap takes 10 W of the
+    /// keyboard power, with none left it stops (brake, as ↓); held it
+    /// ramps down to 0 and never brakes; ↑ rides on.
+    #[test]
+    fn slower_steps_down_then_stops_and_a_hold_ramps_down() {
+        let mut client = ClientCore::new(
+            ocw_world::Route::test_loop(),
+            "K",
+            ocw_core::RiderProfile::default(),
+        );
+        let mut t = KeyThrottle {
+            watts: 25.0,
+            ..KeyThrottle::default()
+        };
+        let slower = ThrottleKeys {
+            slower_pressed: true,
+            ..ThrottleKeys::default()
+        };
+        for (i, want) in [15.0, 5.0, 0.0].into_iter().enumerate() {
+            let (_, stop) = t.update(&mut client, slower, 0.01, 1.0 + i as f64);
+            assert!(!stop && !client.braking());
+            assert_eq!(t.watts, want);
+        }
+        // Nothing left: the next tap stops.
+        let (_, stop) = t.update(&mut client, slower, 0.01, 5.0);
+        assert!(stop && client.braking());
+        // Stopped already: another tap is nothing new.
+        let (msgs, stop) = t.update(&mut client, slower, 0.01, 6.0);
+        assert!(!stop && msgs.is_empty() && client.braking());
+        // ↑ (the top zone) rides on.
+        let up = ThrottleKeys {
+            up_pressed: true,
+            ..ThrottleKeys::default()
+        };
+        t.update(&mut client, up, 0.0, 7.0);
+        assert!(!client.braking());
+        assert_eq!(t.watts, POWER_STEP_W);
+        // Held: 250 W/s down, to 0 and no further – no brake.
+        t.watts = 300.0;
+        let held = ThrottleKeys {
+            slower_held: true,
+            ..ThrottleKeys::default()
+        };
+        t.update(&mut client, held, 0.4, 8.0);
+        assert_eq!(t.watts, 200.0);
+        let (_, stop) = t.update(&mut client, held, 2.0, 9.0);
+        assert!(!stop && !client.braking());
+        assert_eq!(t.watts, 0.0);
+        assert_eq!(client.key_power_w(), 0.0);
     }
 }
