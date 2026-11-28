@@ -2054,7 +2054,7 @@ mod tests {
     #[test]
     fn the_newkit_frameset_is_a_named_bike_in_its_livery() {
         let mut w = wallet();
-        w.grant("Ann", 9_000);
+        w.grant("Ann", 12_000); // two aero framesets
         let r = w
             .buy_bike(cat(), "Ann", "frame.road-aero.newkit", &[])
             .unwrap();
@@ -2063,7 +2063,11 @@ mod tests {
         let b = g.bike("road-aero-2").unwrap();
         assert_eq!(b.profile(), ProfileId::RoadAero);
         assert_eq!(b.paint(), Some(ocw_core::bike::NEWKIT_LIVERY));
-        assert_eq!(g.label(cat(), b), "newk it 2", "numbered like every bought bike");
+        assert_eq!(
+            g.label(cat(), b),
+            "newk it 2",
+            "numbered like every bought bike"
+        );
         assert_eq!(
             g.part_on(cat(), b, Slot::Frame).unwrap().model,
             ocw_assets::livery::FRAME_VARIANT
