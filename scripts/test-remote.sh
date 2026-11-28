@@ -190,13 +190,14 @@ for st_os in linux macos; do
   (
     set -e
     sf=""
-    for f in snapshot_tree stale_report sync_tree; do
+    for f in snapshot_tree stale_report stale_script stale_paths sweep_candidates sync_tree; do
       sf+=$(awk -v f="$f" '$0 ~ "^" f "\\(\\) \\{" { p = 1; print; if ($0 ~ /\}[ \t]*$/) exit; next } p { print } p && /^}/ { exit }' scripts/remote.sh)$'\n'
     done
     sf+=$(awk '/^read -r -d .. stale_sh / { p = 1 } p { print } p && /^EOF/ { exit }' scripts/remote.sh)$'\n'
-    sf+=$(grep '^rsync_sync_opts=' scripts/remote.sh)$'\n'
+    sf+=$(grep -E '^(rsync_sync_opts|sweep_dirs|sweep_skip|sweep_max)=' scripts/remote.sh)$'\n'
     eval "$sf"
-    check "$(printf '%s' "$stale_sh" | grep -c "'" || true)" 0 "stale ($st_os): the machine script has no single quote (sh -c '…')"
+    check "$(stale_script | grep -c "'" || true)" 0 "stale ($st_os): the machine script has no single quote (sh -c '…')"
+    check "$(stale_script | grep -c '@DIRS@\|@SKIP@' || true)" 0 "stale ($st_os): the sweep's directories and names are filled in"
     x=$(mktemp -d)
     trap 'rm -rf "$x"' EXIT
     printf '#!/usr/bin/env bash\nshift; exec bash -c "$*"\n' >"$x/fake-ssh"; chmod +x "$x/fake-ssh"
@@ -239,6 +240,41 @@ for st_os in linux macos; do
     check "$(grep -c 'refused 3 stale path' "$log")/$(grep -c 'deleted 1 stale' "$log")" 1/1 "stale ($st_os): the refused paths are reported"
     snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
     check "$(wc -c <"$log" | tr -d ' ')" 0 "stale ($st_os): nothing to delete, nothing said"
+    # First sync of a checkout seeded from an older tree (v7.00; OCW-HEAD
+    # and OCW-merge-ios, 2026-11-27/28: an old apps/desktop/src/workshop/
+    # next to workshop.rs): the stale source files of the source
+    # directories go, build outputs, data, caches, git-ignored files, the
+    # top level and the directories the sync does not own stay.
+    repo=$x/seeded
+    mkdir -p "$repo/apps/desktop/src/workshop" "$repo/target/debug" "$repo/data/pilot" "$repo/test-output" "$repo/config" \
+      "$repo/tools/x/__pycache__" "$repo/tools/x/node_modules/m" "$repo/crates/old/src" "$repo/artwork/old" "$repo/worlds/old" "$repo/crates/ocw-ui/src/workshop"
+    echo "pub fn old() {}" >"$repo/apps/desktop/src/workshop/mod.rs"; echo "pub fn old() {}" >"$repo/crates/old/src/lib.rs"
+    echo "pub fn w0() {}" >"$repo/crates/ocw-ui/src/workshop/mod.rs"
+    echo bin >"$repo/target/debug/ocw"; echo pkg >"$repo/data/pilot/p.ocw"; echo shot >"$repo/test-output/a.txt"; echo s >"$repo/config/machines.toml"
+    echo pyc >"$repo/tools/x/__pycache__/a.pyc"; echo js >"$repo/tools/x/node_modules/m/i.js"; echo log >"$repo/crates/old/build.log"
+    echo top >"$repo/release.txt"; echo art >"$repo/artwork/old/a.glb"; echo w >"$repo/worlds/old/p.toml"
+    ln -s "$x/outside" "$repo/scripts"
+    snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
+    check "$(cd "$repo" && ls apps/desktop/src/workshop/mod.rs crates/old/src/lib.rs 2>/dev/null | wc -l)/$([ -d "$repo/apps/desktop/src/workshop" ] && echo left || echo gone)/$(cat "$repo/crates/ocw-ui/src/workshop/mod.rs" "$repo/apps/desktop/src/main.rs" | tr '\n' ' ')" \
+      "0/gone/pub fn w() {} mod workshop; " "stale ($st_os): the first sync deletes the stale source files of an older tree, then the tree arrives"
+    check "$(cd "$repo" && cat target/debug/ocw data/pilot/p.ocw test-output/a.txt config/machines.toml tools/x/__pycache__/a.pyc tools/x/node_modules/m/i.js crates/old/build.log release.txt artwork/old/a.glb worlds/old/p.toml "$x/outside/victim.txt" | tr '\n' ' ')" \
+      "bin pkg shot s pyc js log top art w keep " "stale ($st_os): the first sync keeps target/, data/, test-output/, config/, caches, git-ignored files, the top level, artwork/, worlds/ and symlinked directories"
+    check "$(grep -c 'first sync of this checkout' "$log")/$(grep -c 'deleted 2 file(s) there that are not in this tree (first sync: left from an older tree): apps/desktop/src/workshop/mod.rs crates/old/src/lib.rs$' "$log")" \
+      "1/1" "stale ($st_os): the sweep is reported with its count and paths"
+    mkdir -p "$repo/crates/old/src"; echo "pub fn old() {}" >"$repo/crates/old/src/lib.rs"
+    snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
+    check "$(cat "$repo/crates/old/src/lib.rs")/$(wc -c <"$log" | tr -d ' ')" "pub fn old() {}/0" \
+      "stale ($st_os): a later sync deletes only the previous list's files (a file no sync sent stays)"
+    # Turned off, and refused when there are too many (a wrong checkout).
+    rm -rf "$x/seeded"; mkdir -p "$repo/crates/old/src"; echo o >"$repo/crates/old/src/lib.rs"
+    snapshot_tree; OCW_FIRST_SWEEP=0 sync_tree 2>"$log"; rm -rf "$snap_dir"
+    check "$(cat "$repo/crates/old/src/lib.rs")" o "stale ($st_os): OCW_FIRST_SWEEP=0 sweeps nothing"
+    rm -rf "$x/seeded"; mkdir -p "$repo/crates/old/src"; echo o >"$repo/crates/old/src/lib.rs"; echo o >"$repo/crates/old/src/b.rs"
+    sweep_max=1
+    snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
+    sweep_max=2000
+    check "$(cat "$repo/crates/old/src/lib.rs")/$(grep -c '2 files there are not in this tree – more than 1, so none deleted' "$log")" o/1 \
+      "stale ($st_os): more than sweep_max candidates delete nothing"
     [ "$fail" = 0 ]
   ) || fail=1
 done
@@ -256,12 +292,13 @@ done
 (
   set -e
   wf=""
-  for f in psq ps_encoded snapshot_tree win_changed win_send stale_paths stale_report sync_tree_windows; do
+  for f in psq ps_encoded snapshot_tree win_changed win_send stale_paths stale_report sweep_candidates win_list_script sync_tree_windows; do
     wf+=$(awk -v f="$f" '$0 ~ "^" f "\\(\\) \\{" { p = 1; print; if ($0 ~ /\}[ \t]*$/) exit; next } p { print } p && /^}/ { exit }' scripts/remote.sh)$'\n'
   done
-  for v in win_manifest_ps win_manifest_write_ps win_remove_ps; do
+  for v in win_manifest_ps win_manifest_write_ps win_remove_ps win_list_ps; do
     wf+=$(awk -v v="$v" '$0 ~ "^read -r -d .. " v " " { p = 1 } p { print } p && /^EOF/ { exit }' scripts/remote.sh)$'\n'
   done
+  wf+=$(grep -E '^(sweep_dirs|sweep_skip|sweep_max)=' scripts/remote.sh)$'\n'
   eval "$wf"
   x=$(mktemp -d)
   trap 'rm -rf "$x"' EXIT
@@ -293,6 +330,15 @@ done
       powershell*)
         local dc ns paths ps n=0 bad=0 i=0 names="" d
         dc=$(decode "$c")
+        if [ "$dc" = "$(win_list_script)" ]; then
+          # The first sync's listing: files under the sweep directories,
+          # skipped names left out.
+          for d in $sweep_dirs; do
+            [ -d "$root/$d" ] && [ ! -L "$root/$d" ] || continue
+            (cd "$root" && find "$d" \( -name target -o -name node_modules -o -name __pycache__ \) -prune -o -type f -print) | while IFS= read -r p; do printf '@@found\t%s\r\n' "$p"; done
+          done
+          return 0
+        fi
         if [ "$dc" != "${win_manifest_ps//@REPO@/"$(psq "$repo")"}" ]; then
           # The remove script: its paths and stale count, checked against
           # remote.sh's template, then played (files only, inside root).
@@ -386,7 +432,19 @@ done
     "1/0/s bin " "windows stale: .., drive-letter, backslash, config/ and target/ paths are never sent to the machine"
   check "$(grep -c 'first sync of this checkout' "$x/log")" 0 "windows stale: a checkout with a manifest is no first sync"
   rm -rf "$root"; sync
-  check "$(grep -c 'first sync of this checkout' "$x/log")" 1 "windows stale: a new checkout deletes nothing and says so"
+  check "$(grep -c 'first sync of this checkout' "$x/log")/$(grep -c 'deleted' "$x/log")" 1/0 "windows stale: a new checkout deletes nothing and says so"
+  # A checkout seeded from an older tree (v7.00): its first sync deletes the
+  # stale source files, target/, data/, caches and the top level stay.
+  rm -rf "$root"; mkdir -p "$root/apps/desktop/src/workshop" "$root/target/debug" "$root/data/pilot" "$root/crates/a" "$root/tools/x/__pycache__"
+  echo old >"$root/apps/desktop/src/workshop/mod.rs"; echo old >"$root/crates/a/old.rs"; echo bin >"$root/target/debug/ocw.exe"; echo pkg >"$root/data/pilot/p.ocw"
+  echo pyc >"$root/tools/x/__pycache__/a.pyc"; echo top >"$root/release.txt"
+  sync
+  check "$(cd "$root" && ls apps/desktop/src/workshop/mod.rs crates/a/old.rs 2>/dev/null | wc -l)/$([ -d "$root/apps" ] && echo left || echo gone)/$(cat "$root/crates/b.rs" "$root/target/debug/ocw.exe" "$root/data/pilot/p.ocw" "$root/tools/x/__pycache__/a.pyc" "$root/release.txt" | tr '\n' ' ')" \
+    "0/gone/code bin pkg pyc top " "windows stale: the first sync deletes an older tree's stale source files, target/, data/, caches and the top level stay"
+  check "$(grep -c 'deleted 2 file(s) there that are not in this tree (first sync: left from an older tree): apps/desktop/src/workshop/mod.rs crates/a/old.rs$' "$x/log")" 1 \
+    "windows stale: the sweep is reported with its count and paths"
+  mkdir -p "$root/crates/a"; echo old >"$root/crates/a/old.rs"; sync
+  check "$(cat "$root/crates/a/old.rs")/$(grep -c 'first sync' "$x/log")" old/0 "windows stale: a later sync sweeps nothing"
   rm -rf "$snap_dir"
   [ "$fail" = 0 ]
 ) || fail=1

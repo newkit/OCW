@@ -42,7 +42,9 @@
 # there too: each sync keeps the list of the files it sent in the checkout's
 # .ocw-sync/ and deletes the files of the previous list that are gone from
 # the new one – nothing else (build outputs, git-ignored files, target/,
-# data/, test-output/, config/ stay; see stale_sh).
+# data/, test-output/, config/ stay; see stale_sh). A checkout's first sync
+# (no list there yet, e.g. seeded from an older checkout) deletes the files
+# of its source directories that are not in the tree here (see sweep_dirs).
 #
 # Each `run` leaves a task marker on the machine while it runs (read by
 # tools/build-dashboard): a JSON file PID-START.json in /tmp/ocw-tasks/
@@ -238,52 +240,109 @@ rsync_sync_opts=(-rlpgoD --checksum)
 # .ocw-sync/; absolute paths and paths with `..` are refused, and so are
 # files reached through a symlinked directory leading out of the checkout;
 # only files and symlinks are deleted, never directories, except those left
-# empty by it (up to the checkout). A checkout without a list yet (its first
-# sync) deletes nothing. Deleting before the copy keeps a case-only rename
-# right on macOS / Windows (the old name is the new file there: deleted,
-# then sent again). No extra ssh call: Linux / macOS run it in the `mkdir`
-# call (stdin: the new list), Windows reads the old list with the manifest
-# and deletes in the call that already removed deleted files.
-# The machine side for Linux / macOS (POSIX sh, run as `sh -c '…' x REPO`,
-# so no single quotes in it): prints "@@ocw-stale first" or
-# "@@ocw-stale removed N refused M: FIRST-NAMES".
+# empty by it (up to the checkout). Deleting before the copy keeps a
+# case-only rename right on macOS / Windows (the old name is the new file
+# there: deleted, then sent again). No extra ssh call: Linux / macOS run it
+# in the `mkdir` call (stdin: the new list), Windows reads the old list with
+# the manifest and deletes in the call that already removed deleted files.
+#
+# First sync of a checkout (no list there yet, v7.00): new checkouts are
+# often seeded from an older one (a copied or reused directory), and the
+# files of that older tree survived – an old apps/desktop/src/workshop/
+# broke builds in OCW-HEAD (marge, the Mac) and OCW-merge-ios (leela) on
+# 2026-11-27/28. So the first sync sweeps the source directories the sync
+# owns (sweep_dirs; not the top level, artwork/, assets/, worlds/ or
+# .claude/): every file there that is not in the snapshot's list is deleted
+# – except under a directory or with a name of sweep_skip (target,
+# node_modules, caches, …) and files git ignores here (`check-ignore
+# --no-index`: __pycache__/, *.png, keys, …), so outputs tools write into
+# source directories stay (a survey of every synced checkout on marge,
+# leela and the Mac on 2026-11-28 found none besides stale sources). The
+# machine lists the candidates in the same call (@@ocw-found), this side
+# filters them (sweep_candidates), and a second call – only on a first sync
+# with candidates – deletes them with the rules of stale files (and only
+# inside sweep_dirs, never a file just sent). More than sweep_max
+# candidates delete nothing (a wrong OCW_REMOTE_DIR); OCW_FIRST_SWEEP=0
+# turns the sweep off. Before the copy, like the stale files.
+sweep_dirs="apps crates services scripts proto tools vendor deploy packaging docs web .cargo .github"
+sweep_skip="target node_modules __pycache__ .venv venv .git .ocw-sync .pytest_cache .mypy_cache .cache .DS_Store"
+sweep_max=2000
+# The machine side for Linux / macOS (POSIX sh, run as `sh -c '…' x REPO
+# [sweep]`, so no single quotes in it; stale_script fills in @DIRS@ and
+# @SKIP@): prints "@@ocw-stale first" and an "@@ocw-found PATH" line per
+# sweep candidate, or "@@ocw-stale removed N refused M: FIRST-NAMES"; with
+# `sweep` (stdin: the paths to delete) "@@ocw-stale swept N refused M:
+# FIRST-NAMES".
 read -r -d '' stale_sh <<'EOF' || true
 cd "$1" || exit 1
-mkdir -p .ocw-sync && cat >.ocw-sync/synced.new || exit 1
-if [ ! -f .ocw-sync/synced.txt ]; then mv .ocw-sync/synced.new .ocw-sync/synced.txt; echo "@@ocw-stale first"; exit 0; fi
+mkdir -p .ocw-sync || exit 1
 root=$(pwd -P); n=0; bad=0; names=""
+ocw_owned() {
+  for d in @DIRS@; do
+    case "$1" in "$d"/*) ;; *) continue ;; esac
+    for s in @SKIP@; do case "/$1/" in */"$s"/*) return 1 ;; esac; done
+    return 0
+  done
+  return 1
+}
+ocw_rm() {
+  while IFS= read -r p; do
+    case "$p" in
+      ""|/*|..|../*|*/..|*/../*) bad=$((bad + 1)); continue ;;
+      config|config/*|target|target/*|data|data/*|test-output|test-output/*|.git|.git/*|.ocw-sync|.ocw-sync/*) continue ;;
+    esac
+    if [ "$2" = sweep ]; then ocw_owned "$p" || continue; fi
+    [ -f "$p" ] || [ -L "$p" ] || continue
+    d=$(dirname "$p")
+    real=$(cd "$d" 2>/dev/null && pwd -P) || continue
+    case "$real/" in "$root"/*) ;; *) bad=$((bad + 1)); continue ;; esac
+    rm -f "$p" || continue
+    n=$((n + 1)); if [ $n -le 5 ]; then names="$names $p"; fi
+    while [ "$d" != . ] && rmdir "$d" 2>/dev/null; do d=$(dirname "$d"); done
+  done <"$1"
+}
+if [ "$2" = sweep ]; then
+  [ -f .ocw-sync/synced.txt ] || exit 1
+  cat >.ocw-sync/sweep || exit 1
+  LC_ALL=C sort -u .ocw-sync/synced.txt >.ocw-sync/sent.sorted
+  LC_ALL=C sort -u .ocw-sync/sweep | LC_ALL=C comm -23 - .ocw-sync/sent.sorted >.ocw-sync/stale
+  ocw_rm .ocw-sync/stale sweep
+  rm -f .ocw-sync/sweep .ocw-sync/sent.sorted .ocw-sync/stale
+  echo "@@ocw-stale swept $n refused $bad:$names"; exit 0
+fi
+cat >.ocw-sync/synced.new || exit 1
 LC_ALL=C sort -u .ocw-sync/synced.new >.ocw-sync/new.sorted
+if [ ! -f .ocw-sync/synced.txt ]; then
+  mv .ocw-sync/synced.new .ocw-sync/synced.txt; echo "@@ocw-stale first"
+  for d in @DIRS@; do
+    if [ -d "$d" ] && [ ! -L "$d" ]; then find "$d" \( -name target -o -name node_modules -o -name .git \) -prune -o \( -type f -o -type l \) -print; fi
+  done | LC_ALL=C sort -u | LC_ALL=C comm -23 - .ocw-sync/new.sorted | while IFS= read -r p; do
+    if ocw_owned "$p"; then echo "@@ocw-found $p"; fi
+  done
+  rm -f .ocw-sync/new.sorted; exit 0
+fi
 LC_ALL=C sort -u .ocw-sync/synced.txt | LC_ALL=C comm -23 - .ocw-sync/new.sorted >.ocw-sync/stale
-while IFS= read -r p; do
-  case "$p" in
-    ""|/*|..|../*|*/..|*/../*) bad=$((bad + 1)); continue ;;
-    config|config/*|target|target/*|data|data/*|test-output|test-output/*|.git|.git/*|.ocw-sync|.ocw-sync/*) continue ;;
-  esac
-  [ -f "$p" ] || [ -L "$p" ] || continue
-  d=$(dirname "$p")
-  real=$(cd "$d" 2>/dev/null && pwd -P) || continue
-  case "$real/" in "$root"/*) ;; *) bad=$((bad + 1)); continue ;; esac
-  rm -f "$p" || continue
-  n=$((n + 1)); if [ $n -le 5 ]; then names="$names $p"; fi
-  while [ "$d" != . ] && rmdir "$d" 2>/dev/null; do d=$(dirname "$d"); done
-done <.ocw-sync/stale
+ocw_rm .ocw-sync/stale
 mv .ocw-sync/synced.new .ocw-sync/synced.txt; rm -f .ocw-sync/new.sorted .ocw-sync/stale
 echo "@@ocw-stale removed $n refused $bad:$names"
 EOF
+stale_script() { local s=${stale_sh//@DIRS@/$sweep_dirs}; printf '%s' "${s//@SKIP@/$sweep_skip}"; }
 
 # `stale_report OUTPUT`: a line on stderr for the machine's report
 # ("@@ocw-stale …" from stale_sh, "@@ocw-sync removed|first …" from the
-# Windows side); nothing when nothing was deleted.
+# Windows side, "swept" from the first sync's sweep); nothing when nothing
+# was deleted.
 stale_report() {
-  local l n bad names
-  l=$(printf '%s\n' "$1" | tr -d '\r' | grep -m1 -E '^@@ocw-(stale|sync) (first|removed)' || true)
+  local l n bad names what="stale file(s) there (removed or moved away here)"
+  l=$(printf '%s\n' "$1" | tr -d '\r' | grep -m1 -E '^@@ocw-(stale|sync) (first|removed|swept)' || true)
   case "$l" in
     *" first")
-      echo "remote.sh: first sync of this checkout with a file list (.ocw-sync/): no stale files deleted" >&2 ;;
-    *" removed "*)
-      l=${l#* removed }; n=${l%% *}; l=${l#* refused }; bad=${l%%:*}; names=${l#*:}
+      echo "remote.sh: first sync of this checkout with a file list (.ocw-sync/): its source directories are checked for files of an older tree" >&2 ;;
+    *" removed "* | *" swept "*)
+      case "$l" in *" swept "*) what="file(s) there that are not in this tree (first sync: left from an older tree)" ;; esac
+      l=${l#@@ocw-* }; l=${l#* }; n=${l%% *}; l=${l#* refused }; bad=${l%%:*}; names=${l#*:}
       if [ "${n:-0}" != 0 ]; then
-        echo "remote.sh: deleted $n stale file(s) there (removed or moved away here):$names$([ "$n" -gt 5 ] && echo ' …')" >&2
+        echo "remote.sh: deleted $n $what:$names$([ "$n" -gt 5 ] && echo ' …')" >&2
       fi
       if [ "${bad:-0}" != 0 ]; then
         echo "remote.sh: refused $bad stale path(s) leading out of the checkout (absolute, .., symlinked directory)" >&2
@@ -292,18 +351,53 @@ stale_report() {
   return 0
 }
 
+# `sweep_candidates FOUND`: the paths of FOUND (files in the machine's
+# source directories that are not in the snapshot) the first sync deletes
+# there: not in the snapshot's list, inside sweep_dirs, no sweep_skip
+# component, not ignored by git here, and by the path rules of stale_paths
+# (refused ones dropped). None (and a line on stderr) when there are more
+# than sweep_max.
+sweep_candidates() {
+  local c k
+  c=$(stale_paths "$1" "$snap_dir/list" | while IFS= read -r p; do
+    case "$p" in '!'*) continue ;; esac
+    ok=0
+    for d in $sweep_dirs; do case "$p" in "$d"/*) ok=1 ;; esac; done
+    for s in $sweep_skip; do case "/$p/" in */"$s"/*) ok=0 ;; esac; done
+    if [ $ok = 1 ]; then printf '%s\n' "$p"; fi
+  done)
+  [ -n "$c" ] || return 0
+  c=$(printf '%s\n' "$c" | grep -vxF -f <(printf '%s\n' "$c" | git check-ignore --no-index --stdin || true) || true)
+  [ -n "$c" ] || return 0
+  k=$(printf '%s\n' "$c" | wc -l | tr -d ' ')
+  if [ "$k" -gt "$sweep_max" ]; then
+    echo "remote.sh: first sync: $k files there are not in this tree – more than $sweep_max, so none deleted (the right checkout?)" >&2
+    return 0
+  fi
+  printf '%s\n' "$c"
+}
+
 sync_tree() {
   if [ "$os" = windows ]; then
     sync_tree_windows
     return
   fi
-  local out stale_cmd="sh -c '$stale_sh' ocw-stale $repo"
+  local out stale_cmd="sh -c '$(stale_script)' ocw-stale $repo"
   if [ "${OCW_SEED:-0}" = 1 ]; then
     out=$("${SSH[@]}" "$target" "${seed_sh//$'\n'/ } mkdir -p $repo && ocw_seed $main_repo $repo && $stale_cmd" <"$snap_dir/present") || return 1
   else
     out=$("${SSH[@]}" "$target" "mkdir -p $repo && $stale_cmd" <"$snap_dir/present") || return 1
   fi
   stale_report "$out"
+  # The first sync's sweep (see sweep_dirs): before the copy.
+  if [ "${OCW_FIRST_SWEEP:-1}" != 0 ] && printf '%s\n' "$out" | grep -qx '@@ocw-stale first'; then
+    printf '%s\n' "$out" | sed -n 's/^@@ocw-found //p' >"$snap_dir/found"
+    sweep_candidates "$snap_dir/found" >"$snap_dir/sweep"
+    if [ -s "$snap_dir/sweep" ]; then
+      out=$("${SSH[@]}" "$target" "$stale_cmd sweep" <"$snap_dir/sweep") || return 1
+      stale_report "$out"
+    fi
+  fi
   if [ "$os" = macos ]; then
     # macOS ships openrsync, which lacks --delete-missing-args: send only the
     # files that exist and delete tracked files removed here with rm.
@@ -370,6 +464,28 @@ foreach ($p in $ps) {
 }
 [Console]::Out.WriteLine('@@ocw-sync removed ' + $n + ' refused ' + $bad + ':' + $names)
 EOF
+# The first sync's sweep on Windows (see sweep_dirs): prints "@@found<TAB>
+# PATH" (forward slashes) for every file under the checkout's sweep_dirs
+# (@DIRS@: 'apps','crates',…), not descending into junctions or symlinked
+# directories, skipping the names of sweep_skip (@SKIP@); this side filters
+# them (sweep_candidates) and deletes them with win_remove_ps.
+read -r -d '' win_list_ps <<'EOF' || true
+$r = @REPO@; $root = [IO.Path]::GetFullPath($r).TrimEnd('\') + '\'; $skip = @(@SKIP@); $rp = [IO.FileAttributes]::ReparsePoint
+function L($d) {
+  foreach ($e in [IO.Directory]::EnumerateFileSystemEntries($d)) {
+    if ($skip -contains [IO.Path]::GetFileName($e)) { continue }
+    $a = [IO.File]::GetAttributes($e)
+    if ($a -band [IO.FileAttributes]::Directory) { if (-not ($a -band $rp)) { L $e } } else { [Console]::Out.WriteLine('@@found' + [char]9 + $e.Substring($root.Length).Replace('\', '/')) }
+  }
+}
+foreach ($d in @(@DIRS@)) { $p = Join-Path $root $d; if ([IO.Directory]::Exists($p) -and -not ([IO.File]::GetAttributes($p) -band $rp)) { L $p } }
+EOF
+win_list_script() {
+  local s=${win_list_ps//@REPO@/"$(psq "$repo")"} d k="" v=""
+  for d in $sweep_dirs; do k+="${k:+,}'$d'"; done
+  for d in $sweep_skip; do v+="${v:+,}'$d'"; done
+  s=${s//@DIRS@/$k}; printf '%s' "${s//@SKIP@/$v}"
+}
 # `stale_paths PREV NEW`: the paths of PREV that are not in NEW and may be
 # deleted there (the rules of stale_sh; Windows also refuses drive letters,
 # backslashes and a leading '@ that would end the here-string). Prints
@@ -446,6 +562,19 @@ sync_tree_windows() {
     grep -v '^!' "$snap_dir/stale" >"$snap_dir/remove" || true
   else
     stale_report "@@ocw-sync first"
+    # The first sync's sweep (see sweep_dirs), in chunks of 100 like below.
+    if [ "${OCW_FIRST_SWEEP:-1}" != 0 ]; then
+      "${SSH[@]}" "$target" "$(ps_encoded "$(win_list_script)")" | tr -d '\r' | sed -n 's/^@@found	//p' >"$snap_dir/found" || : >"$snap_dir/found"
+      sweep_candidates "$snap_dir/found" >"$snap_dir/sweep"
+      local sa=0 st
+      st=$(wc -l <"$snap_dir/sweep")
+      while [ "$sa" -lt "$st" ]; do
+        ps=${win_remove_ps//@REPO@/"$(psq "$repo")"}; ps=${ps//@STALE@/100}
+        out=$("${SSH[@]}" "$target" "$(ps_encoded "${ps//@PATHS@/"$(tail -n +$((sa + 1)) "$snap_dir/sweep" | head -n 100)"}")" | tr -d '\r') || true
+        stale_report "${out//@@ocw-sync removed/@@ocw-sync swept}"
+        sa=$((sa + 100))
+      done
+    fi
   fi
   ns=$(wc -l <"$snap_dir/remove")
   while IFS= read -r f; do
