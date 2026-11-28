@@ -101,6 +101,10 @@ pub fn stages() -> Vec<String> {
     STAGES.lock().map(|s| s.clone()).unwrap_or_default()
 }
 
+/// A phone's big land-use chunk comes in range requests of this size
+/// (`StreamConfig::slice_bytes`, 10G).
+pub const SLICE_BYTES: u64 = 4 << 20;
+
 /// The page's world options (`?world=…&route=…`, see `crate::parse_query`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldOptions {
@@ -241,6 +245,9 @@ impl WorldOptions {
             }),
             skip_sections: self.skip_sections.clone(),
             log: Some(ocw_worldstore::stream::driver::StageLog(Arc::new(stage))),
+            // A phone: the land use's big chunk in slices, never held whole
+            // (10G; Tenerife's is 75 MB).
+            slice_bytes: self.course_rings.map(|_| SLICE_BYTES),
         })
     }
 }

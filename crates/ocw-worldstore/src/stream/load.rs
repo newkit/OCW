@@ -237,6 +237,58 @@ pub async fn load_chunks<F: RangeFetch, S: ChunkStore>(
     .await
 }
 
+/// Chunk `index` of `file` fetched in range requests of `slice` bytes,
+/// each slice handed to `sink` as it comes and dropped, the chunk's
+/// SHA-256 computed over the slices and checked against the manifest at
+/// the end (spec 14 Phase 10, 10G: a phone never holds a 75 MB chunk).
+/// The sink sees the bytes before they are verified: a damaged chunk
+/// fails the load at its end (no second fetch), and whatever the sink
+/// built from it must be dropped with the error.
+pub async fn stream_chunk<F: RangeFetch>(
+    fetch: &F,
+    manifest: &Manifest,
+    file: &FileEntry,
+    file_url: &str,
+    index: usize,
+    slice: u64,
+    sink: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+) -> Result<LoadStats, StreamError> {
+    use sha2::Digest;
+    let mut stats = LoadStats::default();
+    let Some(c) = file.chunks.get(index) else {
+        return Err(VerifyError::MissingFile(format!("{}: chunk {index}", file.path)).into());
+    };
+    let mut hash = sha2::Sha256::new();
+    let mut at = c.offset;
+    let end = c.offset + c.size;
+    while at < end {
+        let to = (at + slice.max(1)).min(end);
+        let part = fetch_range(fetch, file_url, at..to, &mut stats).await?;
+        if part.len() as u64 != to - at {
+            return Err(StreamError::Corrupt {
+                file: file.path.clone(),
+                chunk: c.name.clone(),
+            });
+        }
+        hash.update(&part);
+        sink(&part).map_err(StreamError::Decode)?;
+        at = to;
+    }
+    let digest: [u8; 32] = hash.finalize().into();
+    let ok = manifest
+        .file(&file.path)
+        .and_then(|f| f.chunks.iter().find(|x| x.name == c.name))
+        .is_some_and(|x| x.size == c.size && x.sha256.0 == digest);
+    if !ok {
+        return Err(StreamError::Corrupt {
+            file: file.path.clone(),
+            chunk: c.name.clone(),
+        });
+    }
+    stats.network_chunks += 1;
+    Ok(stats)
+}
+
 /// [`load_chunks`] telling `log` of its stages (the base's page log
 /// lines, spec 14 Phase 10, 10G): fetched and verified, stored in the
 /// cache.

@@ -948,6 +948,16 @@ tiles: the neighbour tiles meshed within 300 m of the rider and on the
 road 600 m ahead …"; `reach=off` meshes all nine again, `reach=N` sets
 the distance (m).
 
+Tenerife's base itself was the other half: its land use is one 75 MB
+piece, and the phone held it whole while it picked out the tiles along the
+route (the wasm memory from 172 to 244 MB). **Now** a phone fetches the
+land use, the seasonal colours (23 MB) and the water lines (17 MB) in 4 MB
+pieces, checks them as they come and keeps only the tiles along the route
+(the log: "section LUSE (74.8 MB) fetched in slices of 4.2 MB, verified
+and decoded as it came"): Tenerife's base ends at 222 MB instead of 247.
+These pieces are not kept in the browser's world cache, so Tenerife
+downloads them again on the next visit.
+
 Tap these and send "rides" or "closed" (ride at least a minute; for the
 first that closed, the log of the reloaded page):
 
