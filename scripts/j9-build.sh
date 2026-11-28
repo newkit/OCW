@@ -4,7 +4,8 @@
 # steps of scripts/j8-build.sh: the road condition from OSM (`world-builder
 # condition`), the junctions (`world-builder junctions`: J8's, with the
 # clusters that no star-shaped outline holds drawn as one simple polygon),
-# the light terrain smoothing (`world-builder smooth-terrain`) and the
+# the light terrain smoothing (`world-builder smooth-terrain`), the
+# tunnels shaped into the terrain and checked (`world-builder tunnels`) and the
 # street lamps mapped in OSM (`world-builder street-lamps`). The manifests
 # and the route files beside them; the lint of the new package next to the
 # J8 one's (data/j8-build, its lint as J8's build wrote it). The live
@@ -20,7 +21,7 @@ WB=${WB:-target/release/world-builder}
 [ -n "${WB_PREBUILT:-}" ] || cargo build --release -p world-builder
 pkgs=("$@")
 [ ${#pkgs[@]} -gt 0 ] || pkgs=(pilot/liechtenstein tenerife/tenerife blackforest/blackforest-north blackforest/blackforest-middle blackforest/blackforest)
-keys='^(road\.vertical\.(kink|step|grade_over_limit)|junction\.(seam|measured|overlap|mouth|no_surface)|side\.|lamp\.(foot|osm\.placed|placed))'
+keys='^(tunnel\.|road\.vertical\.(kink|step|grade_over_limit)|junction\.(seam|measured|overlap|mouth|no_surface)|side\.|lamp\.(foot|osm\.placed|placed))'
 for p in "${pkgs[@]}"; do
   dir=${p%/*}
   mkdir -p "$OUT/$dir"
@@ -35,6 +36,15 @@ for p in "${pkgs[@]}"; do
   grep -E "^junctions" "$OUT/$p.junctions.log" || true
   "$WB" smooth-terrain --world "$OUT/$p.ocwpkg" --out "$OUT/$p.ocwpkg" > "$OUT/$p.smooth.log" 2>&1
   grep -E "^clean: terrain smoothed" "$OUT/$p.smooth.log" || tail -3 "$OUT/$p.smooth.log"
+  # Tunnels in the terrain (spec 4.3, the tunnel check): mounds over
+  # shallow tunnels, the road laid in the open and under galleries; fails
+  # when a tube still stands out of the terrain.
+  if ! "$WB" tunnels --world "$OUT/$p.ocwpkg" --out "$OUT/$p.ocwpkg" "${pbf[@]}" > "$OUT/$p.tunnels.log" 2>&1; then
+    grep -E "^tunnel(s shaped|\.exposed| check)" "$OUT/$p.tunnels.log" | head -20 >&2
+    echo "$p: the tunnel check failed (see $OUT/$p.tunnels.log)" >&2
+    exit 1
+  fi
+  grep -E "^(tunnels shaped|tunnel check)" "$OUT/$p.tunnels.log" || true
   "$WB" street-lamps --world "$OUT/$p.ocwpkg" --out "$OUT/$p.ocwpkg" "${pbf[@]}" > "$OUT/$p.lamps.log" 2>&1
   grep -E "street lamps|mapped street lamps" "$OUT/$p.lamps.log" || tail -3 "$OUT/$p.lamps.log"
   end=$(date +%s.%N)

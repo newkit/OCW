@@ -541,6 +541,33 @@ warmup = 6
 video = 8
 
 [[scene]]
+name = "tunnel-ceiling-day"
+description = "Inside the Steg tunnel (km 9.1) at noon: the sprayed-concrete vault, the light band at the foot of the walls, soot over the lanes, the cable tray with its lamps, reflectors and markings (spec 3.2, v7.09)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
+riders = "active = \"Jo Climber\"\n[[rider]]\nname = \"Jo Climber\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#00838F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 12:30", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #6B3E26 --skin 4", "1=dev.bot_bike 1 --bike gravel", "2.5=teleport 9.1"]
+shot = 9
+
+[[scene]]
+name = "tunnel-ceiling-night"
+description = "Inside the Steg tunnel (km 9.1) at night: the same view lit only by the tunnel lamps and the bike light (spec 3.2, v7.09)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
+riders = "active = \"Kai Descent\"\n[[rider]]\nname = \"Kai Descent\"\nweight_kg = 79.0\nheight_cm = 186.0\nbike = \"gravel\"\nframe_color = \"#455A64\"\njersey_color = \"#C0CA33\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 23:30", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #1A1A1A --skin 12 --beard 1", "1=dev.bot_bike 2 --bike road", "2.5=teleport 9.1"]
+shot = 9
+
+[[scene]]
+name = "tunnel-portal-day"
+description = "The Steg tunnel's lower portal from outside (route km 8.74) on a summer afternoon: the concrete portal frame in the slope (spec 3.2, v7.09)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+riders = "active = \"Lu Cadence\"\n[[rider]]\nname = \"Lu Cadence\"\nweight_kg = 57.0\nheight_cm = 162.0\nbike = \"road\"\nframe_color = \"#FBC02D\"\njersey_color = \"#3949AB\"\nhelmet_color = \"#3949AB\"\nkit = \"plain\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #C49A6C --skin 6", "2.5=teleport 8.72", "3=camera.orbit 160 10 16"]
+shot = 9
+
+[[scene]]
 name = "vaduz-buildings"
 description = "Free ride in Vaduz centre: extruded OSM buildings with flat and gable roofs along the street, orbit camera from the front"
 world = true

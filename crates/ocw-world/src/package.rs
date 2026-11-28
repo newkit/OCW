@@ -452,6 +452,11 @@ impl WorldPackage {
             write_vegetation(v, &mut payload);
             sections.push((VEGETATION_TAG, payload));
         }
+        if let Some(t) = &self.look.tunnels {
+            let mut payload = Vec::new();
+            crate::tunnels::write_tunnels(t, &mut payload);
+            sections.push((crate::tunnels::TUNNELS_TAG, payload));
+        }
         if let Some(w) = &self.look.water_lines {
             let mut payload = Vec::new();
             write_water_lines(w, &mut payload);
@@ -1008,6 +1013,15 @@ impl SectionReader {
             // trees keep the regional leaf mix and the land use's chances).
             match read_forest(payload) {
                 Ok(f) => s.look.forest = Some(f),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == crate::tunnels::TUNNELS_TAG {
+            // Optional (spec 4.3, v7.09): a newer layout is skipped (the
+            // renderer classifies the tunnels from the terrain). Small, so
+            // also in skeletons and streamed bases.
+            match crate::tunnels::read_tunnels(payload) {
+                Ok(t) => s.look.tunnels = Some(t),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -1645,6 +1659,8 @@ impl WorldPackage {
                     .map(|w| crate::water_lines::WaterLines {
                         tiles: cut_map(&w.tiles, keep),
                     }),
+                // Package-wide: kept whole.
+                tunnels: look.tunnels.clone(),
             },
             obstacles: self.obstacles.as_ref().map(|o| Obstacles {
                 tree_side: o.tree_side,

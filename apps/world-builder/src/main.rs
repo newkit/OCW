@@ -459,6 +459,35 @@ enum Cmd {
     /// is settled under the roads again; prints the change (max / mean).
     /// `package` does the same while cleaning. Every other section as it
     /// was (the manifest is renewed).
+    /// Tunnels in the terrain (spec 4.3 *Tunnels and bridges in the
+    /// terrain*, 4.8.1 `tunnel.*`): measures every tunnel of the package
+    /// against the terrain (how much of its tube stands in the open, cover,
+    /// sections bored / gallery / open) and the roads the terrain buries;
+    /// with --out (or --in-place) shapes the terrain round the tunnels
+    /// (mounds over shallow bored stretches, cut and fill under open
+    /// stretches and galleries) and writes the package. Exits 2 when a
+    /// bored stretch is still exposed (the build check), unless
+    /// --report-only.
+    Tunnels {
+        #[arg(long)]
+        world: PathBuf,
+        /// Write the shaped package here.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Shape and rewrite --world itself.
+        #[arg(long)]
+        in_place: bool,
+        /// The OSM extract(s): the `tunnel=*` values (building passages
+        /// get no tube).
+        #[arg(long)]
+        pbf: Vec<PathBuf>,
+        /// Report only, never fail.
+        #[arg(long)]
+        report_only: bool,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     SmoothTerrain {
         /// The package (rewritten in place unless --out is given).
         #[arg(long)]
@@ -3228,6 +3257,89 @@ fn smooth_terrain(
     });
 }
 
+/// `world-builder tunnels` (spec 4.3, 4.8.1 `tunnel.*`).
+fn tunnels(
+    world: &std::path::Path,
+    out: Option<PathBuf>,
+    pbf: &[PathBuf],
+    report_only: bool,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    use ocw_worldgen::tunnels as tn;
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let tags = if pbf.is_empty() {
+        tn::TunnelTags::new()
+    } else {
+        let osm = ocw_worldgen::osm::OsmData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
+        tn::tunnel_tags(&osm)
+    };
+    let before = tn::measure(&pkg, &tags);
+    let buried = tn::buried_roads(&pkg);
+    print!("{}", tn::format_report(&pkg, &before, &buried));
+    if let Some(path) = out {
+        let st = stage("shape terrain", || tn::shape(&mut pkg, &tags));
+        println!(
+            "tunnels shaped: {} tunnels, {} vertices raised (up to {:.1} m), {} laid under open roads and galleries (moved up to {:.1} m), {} mound vertices kept (another road, or too high), {} left under a road more than {:.0} m above them, {:.0} m of bored stretches made open road (cutting or underpass)",
+            st.tunnels,
+            st.raised,
+            st.max_raise_m,
+            st.laid,
+            st.max_lay_m,
+            st.kept_for_roads,
+            st.left_floating,
+            tn::FILL_MAX_M,
+            st.cut_open_m
+        );
+        let after = tn::measure(&pkg, &tags);
+        let report = tn::format_report(&pkg, &after, &[]);
+        println!("after shaping: {}", report.lines().next().unwrap_or(""));
+        let bytes = stage("serialise", || pkg.to_bytes());
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        });
+        if path != world {
+            dist::carry_manifest(world, &path);
+        }
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+                patches: None,
+            },
+            key,
+        );
+        println!("{}: {:.1} MB", path.display(), bytes.len() as f64 / 1e6);
+    }
+    let exposed = tn::check(&pkg, &tags);
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    for (way, a, b, w, at) in &exposed {
+        let (la, lo) = proj.unproject(*at);
+        println!(
+            "tunnel.exposed way {way}: {a:.0}-{b:.0} m, the tube {w:.1} m out of the terrain at {la:.5},{lo:.5}"
+        );
+    }
+    println!(
+        "tunnel check: {} exposed stretches ({:.0} m); {:.1} s",
+        exposed.len(),
+        exposed.iter().map(|e| e.2 - e.1 + 2.0).sum::<f64>(),
+        t.elapsed().as_secs_f64()
+    );
+    if !exposed.is_empty() && !report_only {
+        std::process::exit(2);
+    }
+}
+
 fn shore_report(s: &ocw_worldgen::shore::ShoreStats) -> String {
     format!(
         "clean: shorelines fitted to {} outlines: {} band vertices ({} raised up to {:.2} m, {} lowered up to {:.2} m, {} kept under roads and buildings, {} without a level near, {} land vertices left dry below the water), {} new water levels",
@@ -4123,6 +4235,23 @@ fn main() {
             });
             junctions(&world, out, &pbf, key.as_ref());
             print_stage_profile(None);
+        }
+        Cmd::Tunnels {
+            world,
+            out,
+            in_place,
+            pbf,
+            report_only,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            let out = if in_place { Some(world.clone()) } else { out };
+            tunnels(&world, out, &pbf, report_only, key.as_ref());
         }
         Cmd::SmoothTerrain {
             world,

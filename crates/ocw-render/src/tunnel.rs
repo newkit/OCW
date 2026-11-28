@@ -22,8 +22,6 @@
 
 use std::collections::HashMap;
 
-use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use ocw_world::Track;
 
@@ -42,10 +40,15 @@ pub const MIN_TUNNEL_M: f64 = 10.0;
 /// The tube reaches this far beyond the covered stretch (portal, m).
 pub const PORTAL_M: f64 = 4.0;
 /// Tube: walls this high above the road, the arch's crown at
-/// [`TUBE_CROWN_M`], and [`TUBE_SIDE_M`] beside the road edge.
-pub const TUBE_WALL_M: f64 = 4.0;
-pub const TUBE_CROWN_M: f64 = 6.0;
-pub const TUBE_SIDE_M: f64 = 1.0;
+/// [`TUBE_CROWN_M`], and [`TUBE_SIDE_M`] beside the road edge (the
+/// shared cross-section of [`ocw_world::tunnels`]).
+pub const TUBE_WALL_M: f64 = ocw_world::tunnels::WALL_M;
+pub const TUBE_CROWN_M: f64 = ocw_world::tunnels::CROWN_M;
+pub const TUBE_SIDE_M: f64 = ocw_world::tunnels::SIDE_M;
+/// Tunnels of the package's road graph are drawn within this distance of
+/// the rider (m) and dropped beyond [`DROP_M`].
+pub const NEAR_M: f64 = 1500.0;
+pub const DROP_M: f64 = 2000.0;
 /// The camera in a tunnel: this far behind the rider along the road, this
 /// high above it, looking at a point [`TUNNEL_LOOK_AHEAD_M`] ahead.
 pub const TUNNEL_CAM_BEHIND_M: f64 = 4.5;
@@ -189,65 +192,126 @@ pub fn tube_profile(width: f64) -> Vec<[f64; 2]> {
     p
 }
 
-/// Mesh of the tube along `track` from `from` to `to`: one quad per profile
-/// segment and step, flat-shaded with the normal pointing inwards. The
-/// floor is dark asphalt (package roads have no strip in a tunnel).
-pub fn tube_mesh(track: &dyn Track, from: f64, to: f64) -> Mesh {
+/// The axis of `track` from `from` to `to` every [`SCAN_STEP_M`] (a
+/// route without a package: the tube follows the track).
+pub fn track_axis(track: &dyn Track, from: f64, to: f64) -> Vec<crate::tunnel_mesh::AxisPoint> {
     let n = ((to - from) / SCAN_STEP_M).ceil().max(1.0) as usize;
-    // Unlit colours (sunlight and tree shadows would reach through the
-    // hill): concrete walls, a darker vault with a strip of lamps along
-    // the crown, a dark asphalt floor.
-    let wall = [0.30, 0.29, 0.27, 1.0];
-    let vault = [0.20, 0.19, 0.18, 1.0];
-    let lamps = [0.95, 0.85, 0.55, 1.0];
-    let floor = [0.09, 0.09, 0.10, 1.0];
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut colors = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    let ring = |d: f64| -> Vec<Vec3> {
-        let s = track.sample(d);
-        tube_profile(track.road_width_at(d))
-            .iter()
-            .map(|&[l, h]| to_vec3(s.offset_position(l)) + Vec3::Y * h as f32)
-            .collect()
-    };
-    let mut prev = ring(from);
-    for i in 1..=n {
-        let d = (from + i as f64 * SCAN_STEP_M).min(to);
-        let next = ring(d);
-        let segments = prev.len() - 1;
-        for k in 0..segments {
-            let (a, b, c, e) = (prev[k], prev[k + 1], next[k], next[k + 1]);
-            // Inward normal: the ring runs over the top from left to right
-            // (b after a), the next ring is ahead (c), so (c - a) × (b - a)
-            // points into the tube.
-            let normal = (c - a).cross(b - a).normalize_or_zero();
-            let base = positions.len() as u32;
-            for v in [a, b, c, e] {
-                positions.push(v.to_array());
-                normals.push(normal.to_array());
-                colors.push(match k {
-                    _ if k == segments - 1 => floor,
-                    0 => wall,
-                    _ if k == segments - 2 => wall,
-                    _ if k == segments / 2 - 1 || k == segments / 2 => lamps,
-                    _ => vault,
-                });
+    (0..=n)
+        .map(|i| {
+            let d = (from + i as f64 * SCAN_STEP_M).min(to);
+            let s = track.sample(d);
+            let r = s.right();
+            crate::tunnel_mesh::AxisPoint {
+                s: d - from,
+                pos: to_vec3(s.position) + Vec3::Y * crate::ROAD_SURFACE_LIFT_M,
+                right: Vec2::new(r[0] as f32, r[1] as f32),
+                width: track.road_width_at(d),
             }
-            indices.extend([base, base + 1, base + 2, base + 1, base + 3, base + 2]);
+        })
+        .collect()
+}
+
+/// The tube along `track` from `from` to `to` (a bored tunnel over its
+/// whole length, with its portals): the meshes of
+/// [`crate::tunnel_mesh::tunnel_meshes`].
+pub fn tube_meshes(track: &dyn Track, from: f64, to: f64) -> crate::tunnel_mesh::TunnelMeshes {
+    let axis = track_axis(track, from, to);
+    let len = axis.last().map_or(0.0, |a| a.s);
+    let secs = [ocw_world::tunnels::Section {
+        from: crate::tunnel_mesh::COLLAR_M,
+        to: (len - crate::tunnel_mesh::COLLAR_M).max(crate::tunnel_mesh::COLLAR_M),
+        kind: ocw_world::tunnels::SectionKind::Bored,
+    }];
+    let seed = (from * 10.0).round() as u64;
+    crate::tunnel_mesh::tunnel_meshes(&axis, &secs, seed)
+}
+
+/// One tunnel of the package's road graph near the rider: its axis
+/// samples (home metres), sections and entities.
+struct Structure {
+    samples: Vec<ocw_world::tunnels::AxisSample>,
+    sections: Vec<ocw_world::tunnels::Section>,
+    entities: Vec<Entity>,
+}
+
+/// The materials of tunnels (one set for all).
+#[derive(Clone)]
+struct TunnelMaterials {
+    tube: Handle<StandardMaterial>,
+    fittings: Handle<StandardMaterial>,
+    glow: Handle<StandardMaterial>,
+    lit: Handle<StandardMaterial>,
+}
+
+impl TunnelMaterials {
+    fn new(materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) -> Self {
+        let tex = images.add(crate::tunnel_mesh::tunnel_image());
+        Self {
+            // Unlit (sunlight and tree shadows would reach through the
+            // hill): the lamps' light is baked into the vertex colours.
+            tube: materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(tex.clone()),
+                unlit: true,
+                cull_mode: None,
+                double_sided: true,
+                ..default()
+            }),
+            fittings: materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                cull_mode: None,
+                double_sided: true,
+                ..default()
+            }),
+            // Lamps, signs and reflectors: brighter than white, so they
+            // bloom where the camera has bloom.
+            glow: materials.add(StandardMaterial {
+                base_color: Color::LinearRgba(LinearRgba::rgb(2.6, 2.4, 2.1)),
+                unlit: true,
+                cull_mode: None,
+                double_sided: true,
+                ..default()
+            }),
+            lit: materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(tex),
+                perceptual_roughness: 0.95,
+                cull_mode: None,
+                double_sided: true,
+                ..default()
+            }),
         }
-        prev = next;
     }
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
+}
+
+fn spawn_meshes(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &TunnelMaterials,
+    m: crate::tunnel_mesh::TunnelMeshes,
+) -> Vec<Entity> {
+    let mut out = Vec::new();
+    for (arrays, mat) in [
+        (m.tube, &mats.tube),
+        (m.fittings, &mats.fittings),
+        (m.glow, &mats.glow),
+        (m.lit, &mats.lit),
+    ] {
+        if arrays.indices.is_empty() {
+            continue;
+        }
+        out.push(
+            commands
+                .spawn((
+                    SceneEntity,
+                    Mesh3d(meshes.add(arrays.mesh())),
+                    MeshMaterial3d(mat.clone()),
+                ))
+                .id(),
+        );
+    }
+    out
 }
 
 /// The tunnels around the local rider and their tube entities.
@@ -257,8 +321,14 @@ pub struct Tunnels {
     pub stretches: Vec<(f64, f64)>,
     /// Their tubes as cut into the terrain near the rider (the portals).
     pub cut: crate::tunnel_cut::TunnelCut,
+    /// Gallery stretches (from, to distance) on the local rider's track:
+    /// the tunnel camera there too (the sun still comes in).
+    pub galleries: Vec<(f64, f64)>,
     /// Spawned tubes by their end points (rounded to 0.1 m).
-    tubes: HashMap<[i64; 4], Entity>,
+    tubes: HashMap<[i64; 4], Vec<Entity>>,
+    /// The package's tunnels near the rider by (member, edge).
+    structures: HashMap<(usize, usize), Structure>,
+    materials: Option<TunnelMaterials>,
     since_scan: f32,
     scanned_at: Option<f64>,
 }
@@ -266,7 +336,21 @@ pub struct Tunnels {
 impl Tunnels {
     /// Forgets everything (a ride switch despawns the tubes with the scene).
     pub fn reset(&mut self) {
+        let materials = self.materials.take();
         *self = Self::default();
+        self.materials = materials;
+    }
+
+    /// Where the tunnel camera is wanted: the tunnels and the galleries.
+    pub fn camera_stretches(&self) -> Vec<(f64, f64)> {
+        let mut v = self.stretches.clone();
+        v.extend(self.galleries.iter().copied());
+        v
+    }
+
+    /// The package tunnels drawn near the rider (tests, logs).
+    pub fn structure_count(&self) -> usize {
+        self.structures.len()
     }
 }
 
@@ -284,16 +368,133 @@ fn tube_key(track: &dyn Track, (a, b): (f64, f64)) -> [i64; 4] {
     [p[0], p[2], q[0], q[2]].map(|v| (v * 10.0).round() as i64)
 }
 
+/// A package tunnel: (member, edge index), its samples and sections.
+type NearTunnel = (
+    (usize, usize),
+    Vec<ocw_world::tunnels::AxisSample>,
+    Vec<ocw_world::tunnels::Section>,
+);
+
+/// The package's tunnels near `at` (home metres): (member, edge index)
+/// → samples in home metres and sections: those the world builder stored
+/// (section `TUNL`), else classified from the package's own terrain.
+fn package_tunnels_near(
+    set: &ocw_world::WorldSet,
+    at: [f64; 2],
+    radius: f64,
+    have: &HashMap<(usize, usize), Structure>,
+) -> Vec<NearTunnel> {
+    let mut out = Vec::new();
+    for (mi, m) in set.members().iter().enumerate() {
+        let Some(pkg) = m.package() else {
+            continue;
+        };
+        let Some(g) = pkg.graph.as_ref() else {
+            continue;
+        };
+        let local = m.frame.invert(at);
+        for (ei, e) in g.edges.iter().enumerate() {
+            if !e.tunnel || have.contains_key(&(mi, ei)) {
+                continue;
+            }
+            let near = e
+                .points
+                .iter()
+                .any(|p| (p[0] - local[0]).hypot(p[1] - local[1]) < radius);
+            if !near {
+                continue;
+            }
+            let ground = |x: f64, z: f64| pkg.surface_height(x, z);
+            let mut samples = ocw_world::tunnels::probe(e, &ground);
+            // Only with all its terrain loaded (tried again on the next
+            // scan): a tile not streamed in yet leaves gaps.
+            let expected = (e.length_m() / ocw_world::tunnels::STEP_M).ceil().max(1.0) as usize + 1;
+            if samples.len() < expected {
+                continue;
+            }
+            // As the world builder decided them (section TUNL), else from
+            // the terrain.
+            let sections = ocw_world::tunnels::TunnelSections::sections_of(
+                pkg.look.tunnels.as_ref(),
+                e,
+                &samples,
+            );
+            for x in &mut samples {
+                x.p = m.frame.apply(x.p);
+            }
+            out.push(((mi, ei), samples, sections));
+        }
+    }
+    out
+}
+
+/// Whether a structure is still within `radius` of `at`.
+fn structure_near(st: &Structure, at: [f64; 2], radius: f64) -> bool {
+    st.samples
+        .iter()
+        .any(|x| (x.p[0] - at[0]).hypot(x.p[1] - at[1]) < radius)
+}
+
+/// The kind of a structure at its sample `x`.
+fn kind_at(st: &Structure, s: f64) -> ocw_world::tunnels::SectionKind {
+    st.sections
+        .iter()
+        .find(|k| s >= k.from - 1e-6 && s <= k.to + 1e-6)
+        .map_or(ocw_world::tunnels::SectionKind::Open, |k| k.kind)
+}
+
+/// The gallery stretches (from, to distance) of `track` between `from`
+/// and `to`: where the road runs under a gallery's roof.
+fn gallery_stretches(
+    track: &dyn Track,
+    structures: &HashMap<(usize, usize), Structure>,
+    from: f64,
+    to: f64,
+) -> Vec<(f64, f64)> {
+    use ocw_world::tunnels::SectionKind;
+    let galleries: Vec<&ocw_world::tunnels::AxisSample> = structures
+        .values()
+        .flat_map(|st| {
+            st.samples
+                .iter()
+                .filter(|x| matches!(kind_at(st, x.s), SectionKind::Gallery { .. }))
+        })
+        .collect();
+    if galleries.is_empty() {
+        return Vec::new();
+    }
+    let (lo, hi) = track.extent().unwrap_or((from, to));
+    let (from, to) = (from.max(lo), to.min(hi));
+    let mut runs: Vec<(f64, f64)> = Vec::new();
+    let mut d = (from / SCAN_STEP_M).round() * SCAN_STEP_M;
+    while d <= to {
+        let p = track.sample(d).position;
+        let under = galleries.iter().any(|x| {
+            let (dx, dz) = (p[0] - x.p[0], p[2] - x.p[1]);
+            dx.hypot(dz) <= x.half.max(SCAN_STEP_M) && (p[1] - x.road_y).abs() < 3.0
+        });
+        if under {
+            match runs.last_mut() {
+                Some(r) if d - r.1 <= 3.0 * SCAN_STEP_M => r.1 = d,
+                _ => runs.push((d, d)),
+            }
+        }
+        d += SCAN_STEP_M;
+    }
+    runs
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn update_tunnels(
     mut commands: Commands,
     view: Res<RideView>,
     ground: Option<Res<Ground>>,
+    package: Option<Res<crate::package::PackageWorld>>,
     time: Res<Time>,
     mut tunnels: ResMut<Tunnels>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut material: Local<Option<Handle<StandardMaterial>>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let Some(local) = view.local() else {
         return;
@@ -317,54 +518,110 @@ fn update_tunnels(
         ),
         None => Vec::new(),
     };
-    let pieces = match &ground {
-        Some(g) => crate::tunnel_cut::cut_pieces(track, &|x, z| (g.0)(x, z), &stretches, d),
-        None => Vec::new(),
+    let mats = tunnels
+        .materials
+        .get_or_insert_with(|| TunnelMaterials::new(&mut materials, &mut images))
+        .clone();
+    let here = track.sample(d).position;
+    let here2 = [here[0], here[2]];
+    // With a package the tunnels of its road graph are drawn as what they
+    // are in the terrain (tube, gallery, open road); without one, a tube
+    // along the track's covered stretches.
+    let pieces = if let Some(pkg) = &package {
+        let tunnels = &mut *tunnels;
+        tunnels.structures.retain(|_, st| {
+            let keep = structure_near(st, here2, DROP_M);
+            if !keep {
+                for e in &st.entities {
+                    commands.entity(*e).try_despawn();
+                }
+            }
+            keep
+        });
+        for (key, samples, sections) in
+            package_tunnels_near(&pkg.set, here2, NEAR_M, &tunnels.structures)
+        {
+            let width = samples
+                .first()
+                .map_or(6.0, |x| (x.half - ocw_world::tunnels::SIDE_M) * 2.0);
+            let axis: Vec<crate::tunnel_mesh::AxisPoint> = samples
+                .iter()
+                .map(|x| {
+                    crate::tunnel_mesh::AxisPoint::from_sample(x, width, crate::ROAD_SURFACE_LIFT_M)
+                })
+                .collect();
+            let seed = (key.0 as u64) << 32 | key.1 as u64;
+            let m = crate::tunnel_mesh::tunnel_meshes(&axis, &sections, seed);
+            let entities = spawn_meshes(&mut commands, &mut meshes, &mats, m);
+            tunnels.structures.insert(
+                key,
+                Structure {
+                    samples,
+                    sections,
+                    entities,
+                },
+            );
+        }
+        // The old tubes along the track are not needed.
+        for (_, es) in tunnels.tubes.drain() {
+            for e in es {
+                commands.entity(e).try_despawn();
+            }
+        }
+        tunnels.galleries = gallery_stretches(
+            track,
+            &tunnels.structures,
+            d - SCAN_BEHIND_M,
+            d + SCAN_AHEAD_M,
+        );
+        match &ground {
+            Some(g) => crate::tunnel_cut::structure_cut_pieces(
+                tunnels
+                    .structures
+                    .values()
+                    .map(|st| (st.samples.as_slice(), st.sections.as_slice())),
+                &|x, z| (g.0)(x, z),
+                here2,
+            ),
+            None => Vec::new(),
+        }
+    } else {
+        let wanted: HashMap<[i64; 4], (f64, f64)> =
+            stretches.iter().map(|&s| (tube_key(track, s), s)).collect();
+        tunnels.tubes.retain(|key, es| {
+            let keep = wanted.contains_key(key);
+            if !keep {
+                for e in es.iter() {
+                    commands.entity(*e).try_despawn();
+                }
+            }
+            keep
+        });
+        for (key, (a, b)) in wanted {
+            if tunnels.tubes.contains_key(&key) {
+                continue;
+            }
+            let m = tube_meshes(track, a, b);
+            let es = spawn_meshes(&mut commands, &mut meshes, &mats, m);
+            tunnels.tubes.insert(key, es);
+        }
+        match &ground {
+            Some(g) => crate::tunnel_cut::cut_pieces(track, &|x, z| (g.0)(x, z), &stretches, d),
+            None => Vec::new(),
+        }
     };
     let cut = crate::tunnel_cut::TunnelCut::new(&pieces);
     if cut != tunnels.cut {
         tunnels.cut = cut;
     }
-    let wanted: HashMap<[i64; 4], (f64, f64)> =
-        stretches.iter().map(|&s| (tube_key(track, s), s)).collect();
-    tunnels.tubes.retain(|key, entity| {
-        let keep = wanted.contains_key(key);
-        if !keep {
-            commands.entity(*entity).try_despawn();
-        }
-        keep
-    });
-    for (key, (a, b)) in wanted {
-        if tunnels.tubes.contains_key(&key) {
-            continue;
-        }
-        let mat = material
-            .get_or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: Color::WHITE, // vertex colours
-                    unlit: true,
-                    cull_mode: None,
-                    double_sided: true,
-                    ..default()
-                })
-            })
-            .clone();
-        let entity = commands
-            .spawn((
-                SceneEntity,
-                Mesh3d(meshes.add(tube_mesh(track, a, b))),
-                MeshMaterial3d(mat),
-            ))
-            .id();
-        tunnels.tubes.insert(key, entity);
-    }
     if stretches != tunnels.stretches {
         info!(
-            "tunnels near the rider (km): {:?}",
+            "tunnels near the rider (km): {:?}; package tunnels drawn: {}",
             stretches
                 .iter()
                 .map(|(a, b)| format!("{:.3}-{:.3}", a / 1000.0, b / 1000.0))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            tunnels.structures.len()
         );
     }
     tunnels.stretches = stretches;
@@ -517,36 +774,30 @@ mod tests {
     #[test]
     fn the_tube_encloses_the_road() {
         let r = road();
-        let mesh = tube_mesh(&r, 800.0, 820.0);
-        let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) =
-            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-        else {
-            panic!("positions");
-        };
+        let m = tube_meshes(&r, 800.0, 820.0);
+        let pos = &m.tube.positions;
         let half = (3.0 + TUBE_SIDE_M) as f32;
         for p in pos {
             assert!((800.0..=820.0).contains(&p[0]), "{p:?}");
             assert!(p[2].abs() <= half + 1e-3, "{p:?}");
             assert!(
-                p[1] >= 99.9 && p[1] <= 100.0 + TUBE_CROWN_M as f32 + 1e-3,
+                p[1] >= 99.9 && p[1] <= 100.0 + TUBE_CROWN_M as f32 + 0.05,
                 "{p:?}"
             );
         }
         // The crown is reached (the arch closes over the road).
         assert!(pos.iter().any(|p| p[1] > 100.0 + TUBE_CROWN_M as f32 - 0.1));
         // Normals point into the tube: at the crown down, on the floor up.
-        let Some(bevy::mesh::VertexAttributeValues::Float32x3(nrm)) =
-            mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
-        else {
-            panic!("normals");
-        };
-        for (p, n) in pos.iter().zip(nrm) {
+        for (p, n) in pos.iter().zip(&m.tube.normals) {
             if p[1] > 100.0 + TUBE_CROWN_M as f32 - 0.2 {
                 assert!(n[1] < 0.0, "{p:?} {n:?}");
             }
-            if p[1] < 100.1 && n[1].abs() > 0.5 {
+            if p[1] < 100.05 && n[1].abs() > 0.5 {
                 assert!(n[1] > 0.0, "{p:?} {n:?}");
             }
         }
+        // UVs in metres for the texture, lamps and portals.
+        assert_eq!(m.tube.uvs.len(), pos.len());
+        assert!(!m.glow.indices.is_empty() && !m.lit.indices.is_empty());
     }
 }

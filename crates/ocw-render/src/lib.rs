@@ -74,6 +74,7 @@ pub mod touch_hud;
 pub mod traffic;
 pub mod tunnel;
 pub mod tunnel_cut;
+pub mod tunnel_mesh;
 pub mod ufo;
 pub mod unicorn;
 pub mod vegetation;

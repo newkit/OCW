@@ -166,6 +166,96 @@ pub fn cut_pieces(
     out.into_iter().map(|(_, p)| p).collect()
 }
 
+/// Pieces of a straight run are joined up to this length (m), so a long
+/// gallery fits into [`MAX_CUT_PIECES`].
+pub const MAX_PIECE_M: f64 = 24.0;
+
+/// The pieces to cut for the package's tunnels near the rider at `at`
+/// (each its axis samples and sections, [`ocw_world::tunnels`]): where a
+/// bored stretch's terrain beside or over the road is less than
+/// [`CUT_COVER_M`] above the crown (the portals) and along galleries;
+/// straight runs joined up to [`MAX_PIECE_M`], the nearest
+/// [`MAX_CUT_PIECES`] to the rider.
+pub fn structure_cut_pieces<'a>(
+    structures: impl Iterator<
+        Item = (
+            &'a [ocw_world::tunnels::AxisSample],
+            &'a [ocw_world::tunnels::Section],
+        ),
+    >,
+    ground: &dyn Fn(f64, f64) -> Option<f64>,
+    at: [f64; 2],
+) -> Vec<CutPiece> {
+    use ocw_world::tunnels::SectionKind;
+    let mut out: Vec<(f64, CutPiece)> = Vec::new();
+    for (samples, sections) in structures {
+        let kind = |s: f64| {
+            sections
+                .iter()
+                .find(|k| s >= k.from - 1e-6 && s <= k.to + 1e-6)
+                .map_or(SectionKind::Open, |k| k.kind)
+        };
+        let wanted: Vec<bool> = samples
+            .iter()
+            .map(|x| match kind(x.s) {
+                SectionKind::Gallery { .. } => true,
+                SectionKind::Open => false,
+                SectionKind::Bored => {
+                    let low = [-x.half, 0.0, x.half]
+                        .into_iter()
+                        .filter_map(|l| {
+                            let q = x.at(l);
+                            ground(q[0], q[1]).map(|h| h - x.road_y)
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    low < TUBE_CROWN_M + CUT_COVER_M
+                }
+            })
+            .collect();
+        let mut i = 0;
+        while i + 1 < samples.len() {
+            if !(wanted[i] || wanted[i + 1]) {
+                i += 1;
+                continue;
+            }
+            // Extend while straight and wanted.
+            let a = samples[i];
+            let mut j = i + 1;
+            while j + 1 < samples.len()
+                && (wanted[j] || wanted[j + 1])
+                && samples[j + 1].s - a.s <= MAX_PIECE_M
+                && a.dir[0] * samples[j + 1].dir[0] + a.dir[1] * samples[j + 1].dir[1] > 0.9998
+            {
+                j += 1;
+            }
+            let b = samples[j];
+            let len = (b.p[0] - a.p[0]).hypot(b.p[1] - a.p[1]).max(1e-6);
+            let dir = Vec2::new(
+                ((b.p[0] - a.p[0]) / len) as f32,
+                ((b.p[1] - a.p[1]) / len) as f32,
+            );
+            let centre = Vec3::new(
+                ((a.p[0] + b.p[0]) / 2.0) as f32,
+                ((a.road_y + b.road_y) / 2.0) as f32 + crate::ROAD_SURFACE_LIFT_M,
+                ((a.p[1] + b.p[1]) / 2.0) as f32,
+            );
+            let piece = CutPiece {
+                centre,
+                direction: dir,
+                half_length: (len / 2.0 + 0.1) as f32,
+                half_width: (a.half + CUT_MARGIN_M) as f32,
+                grade: ((b.road_y - a.road_y) / len) as f32,
+            };
+            let dist = (f64::from(centre.x) - at[0]).hypot(f64::from(centre.z) - at[1]);
+            out.push((dist, piece));
+            i = j;
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.truncate(MAX_CUT_PIECES);
+    out.into_iter().map(|(_, p)| p).collect()
+}
+
 pub struct TunnelCutPlugin;
 
 impl Plugin for TunnelCutPlugin {

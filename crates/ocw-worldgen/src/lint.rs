@@ -304,7 +304,43 @@ pub fn lint(pkg: &WorldPackage, water: Option<&WaterBodies>) -> LintReport {
     lint_landuse(pkg, &mut r);
     lint_obstacles(pkg, &mut r);
     lint_lamps(pkg, &mut r);
+    lint_tunnels(pkg, &mut r);
     r
+}
+
+/// Tunnels in the terrain (spec 4.3 *Tunnels and bridges in the
+/// terrain*): `tunnel.exposed` – a bored stretch whose tube sticks out of
+/// the terrain by more than [`ocw_world::tunnels::EXPOSED_TOL_M`] (must
+/// be 0; `world-builder tunnels` fails on it); `tunnel.bored`,
+/// `tunnel.gallery`, `tunnel.open` – the sections' lengths.
+fn lint_tunnels(pkg: &WorldPackage, r: &mut LintReport) {
+    use ocw_world::tunnels::SectionKind;
+    let Some(g) = &pkg.graph else {
+        return;
+    };
+    let none = crate::tunnels::TunnelTags::new();
+    for (way, a, b, w, at) in crate::tunnels::check(pkg, &none) {
+        r.add(
+            "tunnel.exposed",
+            b - a + ocw_world::tunnels::STEP_M,
+            case(at, w, way, format!("{a:.0}-{b:.0} m")),
+        );
+    }
+    for e in g.edges.iter().filter(|e| e.tunnel) {
+        let (_, secs) = crate::tunnels::edge_sections(pkg, e, None);
+        for s in secs {
+            let key = match s.kind {
+                SectionKind::Bored => "tunnel.bored",
+                SectionKind::Gallery { .. } => "tunnel.gallery",
+                SectionKind::Open => "tunnel.open",
+            };
+            r.add(
+                key,
+                s.to - s.from,
+                case(e.points[0], s.to - s.from, e.osm_way, String::new()),
+            );
+        }
+    }
 }
 
 /// Street lamps never stand in a road (the world look's *Street lamps*

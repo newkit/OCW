@@ -984,9 +984,9 @@ pub(crate) fn follow(
     tilt.rider = Some(rider.translation);
     // In a tunnel the camera follows close behind the rider inside the
     // tube; blended in before the portal and out after the exit.
-    let in_tunnel = tunnels
-        .as_deref()
-        .is_some_and(|t| crate::tunnel::tunnel_camera_wanted(&t.stretches, local.state.distance));
+    let in_tunnel = tunnels.as_deref().is_some_and(|t| {
+        crate::tunnel::tunnel_camera_wanted(&t.camera_stretches(), local.state.distance)
+    });
     let was_in_tunnel = tilt.tunnel > 0.0;
     tilt.tunnel = if jumped {
         if in_tunnel { 1.0 } else { 0.0 }

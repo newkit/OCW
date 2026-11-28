@@ -89,6 +89,10 @@ pub struct RegionLook {
     /// (section `WATR`, spec 4.6 *Water surfaces*, v6.58; optional). Not
     /// part of [`RegionLook::is_empty`].
     pub water_lines: Option<crate::water_lines::WaterLines>,
+    /// The tunnels' sections as the world builder decided them (section
+    /// `TUNL`, spec 4.3 *Shaped round the tunnels*, v7.09; optional,
+    /// package-wide). Not part of [`RegionLook::is_empty`].
+    pub tunnels: Option<crate::tunnels::TunnelSections>,
 }
 
 impl RegionLook {
@@ -858,6 +862,7 @@ pub(crate) mod tests {
             forest: None,
             vegetation: None,
             water_lines: None,
+            tunnels: None,
         }
     }
 

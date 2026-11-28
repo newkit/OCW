@@ -58,6 +58,7 @@ mod terrain;
 pub mod track;
 pub mod traffic;
 pub mod trees;
+pub mod tunnels;
 pub mod vegetation;
 pub mod water_lines;
 pub mod woods;
