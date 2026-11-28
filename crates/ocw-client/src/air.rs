@@ -164,6 +164,7 @@ impl AirClient {
             contrails: f.contrails,
             upper: &upper,
             ground_m: f.ground_m,
+            fields: &space.field_points(),
         };
         let lat = space.origin.0;
         let aircraft = ocw_sim::air::live::now(set, &proj, space.relief(), &frame, |id| {

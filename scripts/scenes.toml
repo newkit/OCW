@@ -6171,6 +6171,50 @@ video = 12
 max_video_mb = 30
 pick = false
 
+[[scene]]
+name = "air-gear-tenerife-takeoff-video"
+description = "Video, 1080p: an airliner's take-off at Tenerife from beside the runway – the run, the lift-off and the gear swinging up into its bays a few seconds later, the climb-out with clean belly (v7.08: gear by the flight's phase); the unicorn flies ahead of it on the camera's side, apart from the aircraft in the picture (air.follow pick airliner,departure)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 10:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body b --hair long --hair-colour #3B2A20 --skin 4 --glasses 2", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,departure --below 3 --in 8", "4=air.follow unicorn -25 14 32", "4=air.follow key 0 -60 6 40 0 1 0", "4=air.follow key 10 -55 8 35 0 1 0", "4=air.follow key 22 -50 10 30 0 1 0", "4=air.follow key 26 -48 12 20 0 1 0", "12=air.follow play"]
+warmup = 12
+video = 24
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-gear-tenerife-landing-video"
+description = "Video, 1080p: an airliner on final into Tenerife, about 9 km out and 500 m up – gear and doors still up, then the gear swinging down over five seconds (v7.08: down only on final, the last ~2 minutes before touchdown); the unicorn flies ahead of it on the camera's side, apart from the aircraft in the picture (air.follow pick airliner,arrival)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 17:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair short --hair-colour #8D5524 --skin 9", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,arrival --below 540 --in 6", "4=air.follow unicorn -18 12 30", "4=air.follow key 0 -45 -6 35 0 1 0", "4=air.follow key 10 -42 -8 30 0 1 0", "4=air.follow key 20 -40 -9 26 0 1 0", "12=air.follow play"]
+warmup = 12
+video = 22
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-rotor-tenerife-helicopter-medium-spool-video"
+description = "Video, 720p: the medium transport helicopter on its heliport pad spooling up (25 s from standing blades to flight rpm, ~215 rpm main, ~1,150 rpm tail) and lifting off – the blades turn solid while slow, then blur into a translucent disc as they reach speed (v7.08); the unicorn stands off to the side, apart from it in the picture (air.follow pick helicopter,medium,tour)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1280x720"]
+at = ["0.5=time 2026-07-15 13:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body c --hair afro --hair-colour #1A1A1A --skin 14", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,medium,tour --below 1 --in 30", "4=air.follow unicorn -10 9 18", "4=air.follow key 0 -24 13 22 0 3 0", "4=air.follow key 34 -22 15 20 0 3 0", "10=air.follow play"]
+warmup = 10
+video = 36
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-rotor-tenerife-helicopter-light-video"
+description = "Video, 720p: the light helicopter lifting off from a Tenerife pad – its three-blade rotor (~450 rpm) and tail rotor (~2,000 rpm) spooling up and blurring into discs (v7.08); the unicorn off to the side, apart from it in the picture (air.follow pick helicopter,light,tour)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1280x720"]
+at = ["0.5=time 2026-07-15 13:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair bun --hair-colour #B3482A --skin 2", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,light,tour --below 1 --in 20", "4=air.follow unicorn -6 6 12", "4=air.follow key 0 -14 9 13 0 1.5 0", "4=air.follow key 26 -13 10 12 0 1.5 0", "10=air.follow play"]
+warmup = 10
+video = 26
+max_video_mb = 30
+pick = false
+
 # --- UFOs (spec 14 Phase 18, 18C, 18E T9) -------------------------------------
 
 [[scene]]
