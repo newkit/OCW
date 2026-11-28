@@ -370,7 +370,10 @@ mod tests {
         let rider = shipped::rider_model();
         let head = rider.node(pose::nodes::HEAD).unwrap();
         let lips_model = rider::skull_centre() + glam::Vec3::from(rider::face::MOUTH);
-        let lips = rider.world(head).inverse().transform_point3(lips_model);
+        // The sign's file is modelled round the neck's joint (the head is
+        // drawn `HEAD_JOINT` above it, bug 2026-11-28).
+        let lips = rider.world(head).inverse().transform_point3(lips_model)
+            + glam::Vec3::from(rider::HEAD_JOINT);
         let x = shipped::model("wear/mark-mouth-cross");
         let pts: Vec<glam::Vec3> = (0..x.nodes.len())
             .flat_map(|i| {

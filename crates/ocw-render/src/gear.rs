@@ -898,6 +898,28 @@ mod tests {
         );
     }
 
+    /// The neck has the head's skin (bug 2026-11-28: a second shade at the
+    /// throat): for every skin tone the neck's skin is the head's material,
+    /// colour and kind.
+    #[test]
+    fn the_neck_has_the_heads_skin() {
+        for skin in 0..ocw_core::character::SKIN_TONES.len() as u8 {
+            let look = RiderLook {
+                character: ocw_core::Character {
+                    skin,
+                    ..Default::default()
+                },
+                ..RiderLook::default()
+            };
+            let c = colours(&look);
+            let head = surface("skin", ocw_assets::pose::nodes::HEAD, [1.0; 4], &c);
+            let neck = surface("skin", ocw_assets::pose::nodes::NECK, [1.0; 4], &c);
+            assert_eq!(head.key(false), neck.key(false), "skin {skin}");
+            assert_eq!(head.kind, neck.kind, "skin {skin}");
+            assert_eq!(head.base, neck.base, "skin {skin}");
+        }
+    }
+
     /// The default (and anonymous) look: plain kit, no number, model
     /// colours; the far jersey is the dominant colour of the pattern.
     /// Regression (spec §14 Phase 8 T6): spun rings were used on every

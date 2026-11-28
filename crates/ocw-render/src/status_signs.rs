@@ -185,21 +185,27 @@ pub fn spawn(
     colours: &AvatarColours,
 ) -> SignParts {
     let (far_head, chest) = far_head(bike);
+    // The worn signs' files are modelled round the neck's joint, the head
+    // node's origin before the head got its own joint under the skull
+    // (bug 2026-11-28): they sit that much lower in the head's frame.
+    let in_head = Transform::from_translation(-Vec3::from(ocw_assets::rider::HEAD_JOINT));
+    let far_head = far_head.mul_transform(in_head);
     let mut one = |parent: Entity, at: Transform, id: &str, far: bool| {
         spawn_one(commands, meshes, materials, parent, at, id, far, colours)
     };
     let headphones = [
-        one(head, Transform::IDENTITY, HEADPHONES, false),
+        one(head, in_head, HEADPHONES, false),
         one(sway, far_head, HEADPHONES, true),
     ];
     let headset = [
-        one(head, Transform::IDENTITY, HEADSET, false),
+        one(head, in_head, HEADSET, false),
         one(sway, far_head, HEADSET, true),
     ];
     // The X was modelled at the first face's mouth; the sculpted face's
     // lies lower and further forward (4N *Faces*).
-    let over_mouth =
-        Transform::from_translation(Vec3::from(ocw_assets::rider::face::MOUTH_SIGN_SHIFT));
+    let over_mouth = in_head.mul_transform(Transform::from_translation(Vec3::from(
+        ocw_assets::rider::face::MOUTH_SIGN_SHIFT,
+    )));
     let mouth = one(head, over_mouth, MOUTH, false);
     let phone = [
         one(sway, Transform::IDENTITY, PHONE, false),

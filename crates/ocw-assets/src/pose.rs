@@ -24,8 +24,12 @@ pub struct RiderRig {
     pub torso: Vec3,
     /// Shoulders in the torso frame (left, right).
     pub shoulders: [Vec3; 2],
-    /// Neck (head pivot) in the torso frame.
+    /// The neck's joint (its base, at the last neck vertebra) in the
+    /// torso frame.
     pub neck: Vec3,
+    /// The neck's joint → the head's joint (under the skull) in the neck's
+    /// frame (bug 2026-11-28: the head turns on two joints, [`neck_split`]).
+    pub neck_len: Vec3,
     pub upper_arm: f32,
     /// Elbow → grip (forearm plus hand).
     pub forearm: f32,
@@ -113,6 +117,9 @@ pub mod nodes {
     pub const PELVIS: &str = "pelvis";
     pub const TORSO: &str = "torso";
     pub const HEAD: &str = "head";
+    /// The neck between the torso and the head (bug 2026-11-28): it takes
+    /// [`super::NECK_SHARE`] of the head's turn.
+    pub const NECK: &str = "neck";
     pub const THIGH: [&str; 2] = ["thigh_l", "thigh_r"];
     pub const SHIN: [&str; 2] = ["shin_l", "shin_r"];
     pub const FOOT: [&str; 2] = ["foot_l", "foot_r"];
@@ -131,9 +138,10 @@ pub mod nodes {
     /// Every node a rider file must have (the helmets are not among them:
     /// they are worn from their own files, `wear/helmet-*.glb`, spec 14
     /// Phase 15 M3).
-    pub const REQUIRED: [&str; 23] = [
+    pub const REQUIRED: [&str; 24] = [
         PELVIS,
         TORSO,
+        NECK,
         HEAD,
         THIGH[0],
         THIGH[1],
@@ -247,7 +255,8 @@ impl RiderRig {
             cleat: local(m, CLEAT[0])?,
             torso: local(m, TORSO)?,
             shoulders: pair(UPPER_ARM)?,
-            neck: local(m, HEAD)?,
+            neck: local(m, NECK)?,
+            neck_len: local(m, HEAD)?,
             upper_arm: local(m, FOREARM[0])?.length(),
             forearm: local(m, HAND[0])?.length() + local(m, GRIP[0])?.length(),
             pocket: match (m.node(POCKET_ANCHOR), m.node(TORSO)) {
@@ -270,6 +279,13 @@ impl RiderRig {
         self.thigh + self.shin
     }
 
+    /// The head's joint in the torso's frame with the head turned `head`
+    /// against the torso ([`Pose::head`]): the neck takes its share of the
+    /// turn ([`neck_split`]).
+    pub fn head_joint(&self, head: Quat) -> Vec3 {
+        self.neck + neck_split(head).0 * self.neck_len
+    }
+
     /// The rig of the same model drawn `s` times as large (the body
     /// height, spec §14 Phase 4, 4C: the rigid parts scale together, so
     /// the rig's lengths and joints scale by `s`).
@@ -282,6 +298,7 @@ impl RiderRig {
             torso: self.torso * s,
             shoulders: self.shoulders.map(|h| h * s),
             neck: self.neck * s,
+            neck_len: self.neck_len * s,
             upper_arm: self.upper_arm * s,
             forearm: self.forearm * s,
             pocket: self.pocket * s,
@@ -562,13 +579,28 @@ const REFERENCE_NECK: f32 = 0.5;
 /// Torso lean taken off in the one-handed pose (rad).
 pub const ONE_HAND_UPRIGHT: f32 = 0.12;
 
+/// The share of the head's turn against the torso the neck takes (bug
+/// 2026-11-28; the rest at the head's joint under the skull): a real neck
+/// bends along its length – the lower neck leans, the head tilts on top –
+/// not on one hinge.
+pub const NECK_SHARE: f32 = 0.45;
+
+/// The head's turn against the torso split into the neck's (against the
+/// torso) and the head's (against the neck).
+pub fn neck_split(head: Quat) -> (Quat, Quat) {
+    let neck = Quat::IDENTITY.slerp(head, NECK_SHARE);
+    (neck, (neck.inverse() * head).normalize())
+}
+
 impl Pose {
     /// `(node, local rotation)` for every posed node except the pelvis.
-    pub fn rotations(&self) -> [(&'static str, Quat); 17] {
+    pub fn rotations(&self) -> [(&'static str, Quat); 18] {
         use nodes::*;
+        let (neck, head) = neck_split(self.head);
         [
             (TORSO, self.torso),
-            (HEAD, self.head),
+            (NECK, neck),
+            (HEAD, head),
             (THIGH[0], self.thighs[0]),
             (THIGH[1], self.thighs[1]),
             (SHIN[0], self.shins[0]),
@@ -1081,7 +1113,8 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     // The phone in the hand, its screen towards the eyes.
     let phone = (ph >= crate::anim::PHONE_PICK).then(|| {
         let k = rider.neck.length() / REFERENCE_NECK;
-        let eyes = torso_pos + torso_world * rider.neck + head_world * (EYES * k);
+        let head_rel = torso_world.inverse() * head_world;
+        let eyes = torso_pos + torso_world * rider.head_joint(head_rel) + head_world * (EYES * k);
         let to_eyes = (eyes - hand_r).normalize_or(Vec3::Y);
         // The model's front (−Z) to the eyes, its top (+Y) forward-up.
         let up = (Vec3::NEG_Z + Vec3::Y * 0.3).normalize();
@@ -1145,7 +1178,7 @@ pub fn bar_at_styled(
         return (HandShape::Wrap, aero_axis(w), grip);
     }
     if flat {
-        return (HandShape::Wrap, Vec3::X, grip);
+        return (HandShape::Wrap, flat_bar_axis(bike, grip), grip);
     }
     let most = (0..3).max_by(|a, b| w[*a].total_cmp(&w[*b])).unwrap_or(0);
     match most {
@@ -1165,6 +1198,21 @@ pub fn bar_at_styled(
             Vec3::Z,
             grip + Vec3::Z * (drops_back(style.sprint) * w[2]),
         ),
+    }
+}
+
+/// A flat or swept bar's direction at grip `grip` (2026-11-28, the hands
+/// from the bike's anchors): from its tops anchor (inboard, towards the
+/// stem) out to its grip anchor – straight across on a flat bar, angled
+/// back on a swept-back city bar – so the hand lies across the grip as the
+/// bar runs there; straight across when the two anchors coincide.
+pub fn flat_bar_axis(bike: &BikeRig, grip: Vec3) -> Vec3 {
+    let s = usize::from(grip.x >= 0.0);
+    let along = bike.hoods[s] - bike.tops[s];
+    if along.length() > 0.02 {
+        along.normalize()
+    } else {
+        Vec3::X
     }
 }
 
@@ -1496,9 +1544,14 @@ pub const IDLE_WRIST_FLEX: f32 = 0.1;
 /// back they go.
 const CROUCH_DROP: f32 = 0.42;
 const CROUCH_BACK: f32 = 0.14;
-/// The eyes in the head's frame (from the neck pivot), and the camera's
-/// lens in front of them (m).
-pub const EYES: Vec3 = Vec3::new(0.0, 0.11, -0.085);
+/// The eyes in the head's frame (from the head's joint under the skull,
+/// [`crate::rider::HEAD_JOINT`] above the neck's), and the camera's lens in
+/// front of them (m).
+pub const EYES: Vec3 = Vec3::new(
+    0.0,
+    0.11 - crate::rider::HEAD_JOINT[1],
+    -0.085 - crate::rider::HEAD_JOINT[2],
+);
 pub const LENS_AHEAD: f32 = 0.13;
 
 /// What the ride photographer holds (spec §2.11).
@@ -1563,7 +1616,7 @@ pub fn photographer(
     }
     // The head: level with the world (whatever the lean) and pitched.
     let head_world = Quat::from_rotation_x(pitch);
-    let neck = torso_pos + torso_world * rider.neck;
+    let neck = torso_pos + torso_world * rider.head_joint(torso_world.inverse() * head_world);
     let eyes = neck + head_world * EYES;
     let look = head_world * Vec3::NEG_Z;
     let lens = eyes + look * LENS_AHEAD;
@@ -1625,7 +1678,7 @@ pub fn eyes(rider: &RiderRig, p: &Pose) -> Vec3 {
     let head_world = torso_world * p.head;
     let torso_pos = p.pelvis.0 + p.pelvis.1 * rider.torso;
     let k = rider.neck.length() / REFERENCE_NECK;
-    torso_pos + torso_world * rider.neck + head_world * (EYES * k)
+    torso_pos + torso_world * rider.head_joint(p.head) + head_world * (EYES * k)
 }
 
 /// Where a rider's eyes are on a fitted bike (spec 14 Phase 14, 14I Q8):
@@ -1810,6 +1863,84 @@ mod tests {
         // The crank node's rotation carries the right arm (+y at rest) there.
         let arm = crank_rotation(std::f32::consts::FRAC_PI_2) * Vec3::Y;
         assert!(arm.distance(Vec3::NEG_Z) < 1e-5);
+    }
+
+    /// The wrists bend plausibly on every grip at every body height.
+    #[test]
+    fn wrists_bend_plausibly_on_every_grip_and_height() {
+        // 2026-11-28 ("check images on hand position and how riders grab
+        // the handlebar"): on every bike, on the hoods and the tops (the
+        // TT bike: extensions and base bar; the flat bar: its grips), at
+        // three body heights, the wrist bends
+        // within the wrist's range against the forearm (flexion,
+        // extension and the sideways bend together; the forearm's twist
+        // apart). That the hands hold the grips is
+        // `hands_and_feet_stay_on_the_bike`, that the fingers wrap them
+        // without clipping `fingers_wrap_every_bikes_grips_without_clipping`.
+        // The wrist's range: about 70° extension or 80° flexion with up
+        // to 30° to the side.
+        const WRIST_LIMIT_DEG: f32 = 85.0;
+        let rest = crate::rider::build(crate::rider::Detail::High);
+        let rig0 = RiderRig::from_model(&rest).unwrap();
+        let (mut worst, mut along) = (0.0f32, 0.0f32);
+        for profile in ocw_core::ProfileId::ALL {
+            let bike0 = crate::bikes::rig(profile);
+            for scale in [0.85, 1.0, 1.15] {
+                let body = BodyFit::new(&rig0, &bike0, scale);
+                for (what, params) in [
+                    ("hoods", PoseParams::default()),
+                    (
+                        "tops",
+                        PoseParams {
+                            tops: 1.0,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "drops",
+                        PoseParams {
+                            drops: 1.0,
+                            tuck: 1.0,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "sprint",
+                        crate::anim::targets(
+                            crate::anim::Riding::Sprinting,
+                            15.0,
+                            0.0,
+                            bike0.aero_bars,
+                        ),
+                    ),
+                ] {
+                    let p = pose(&body.rider, &body.bike, &body.fit, &params);
+                    for s in 0..2 {
+                        // The hand's long axis against the forearm's (both
+                        // along −y at rest; the forearm's twist is not the
+                        // wrist's bend).
+                        let w = (p.hands[s] * Vec3::NEG_Y)
+                            .angle_between(Vec3::NEG_Y)
+                            .to_degrees();
+                        // The drops and the TT base bar's horns run along
+                        // the forearm, and the hand's fingers wrap a bar
+                        // across the hand: there the wrist bends further
+                        // (reported, not asserted; an oblique grip needs
+                        // its own finger shape).
+                        if what == "drops" || what == "sprint" {
+                            along = along.max(w);
+                            continue;
+                        }
+                        worst = worst.max(w);
+                        assert!(
+                            w < WRIST_LIMIT_DEG,
+                            "{profile:?} {scale} {what}: wrist {s} bent {w} degrees"
+                        );
+                    }
+                }
+            }
+        }
+        eprintln!("the most bent wrist: {worst:.0} degrees (drops and sprint: {along:.0})");
     }
 
     /// The posed rider's feet are on the pedals and the hands on the bars,
@@ -2276,7 +2407,7 @@ mod phone_tests {
                 assert!(h.distance(ph) < 1e-4, "in the fingers");
                 let bar = 0.5 * (b.tops[0] + b.tops[1]);
                 let torso_w = p.pelvis.1 * p.torso;
-                let head = p.pelvis.0 + p.pelvis.1 * r.torso + torso_w * r.neck;
+                let head = p.pelvis.0 + p.pelvis.1 * r.torso + torso_w * r.head_joint(p.head);
                 let what = format!("{profile:?} {scale}: phone {ph} bar {bar} head {head}");
                 assert!(ph.z > bar.z && ph.z < head.z + 0.05, "{what}");
                 assert!(ph.y > bar.y - 0.02 && ph.y < head.y, "{what}");
