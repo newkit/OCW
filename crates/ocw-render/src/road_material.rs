@@ -314,6 +314,12 @@ pub struct RoadExtension {
     pub albedo: Option<Handle<Image>>,
     #[texture(103, dimension = "2d_array")]
     pub normal: Option<Handle<Image>>,
+    /// The mountains' shadow (`terrain_shadow`, bindings 120 – 122).
+    #[uniform(120)]
+    pub terrain_shadow: crate::terrain_shadow::TerrainShadowUniform,
+    #[texture(121)]
+    #[sampler(122)]
+    pub terrain_shadow_map: Option<Handle<Image>>,
 }
 
 impl RoadExtension {
@@ -326,6 +332,8 @@ impl RoadExtension {
                 look,
                 albedo: None,
                 normal: None,
+                terrain_shadow: Default::default(),
+                terrain_shadow_map: None,
             };
         };
         look.mode.x = 1.0;
@@ -336,6 +344,8 @@ impl RoadExtension {
             look,
             albedo: Some(lib.road_albedo.clone()),
             normal: Some(lib.road_normal.clone()),
+            terrain_shadow: Default::default(),
+            terrain_shadow_map: None,
         }
     }
 
@@ -553,3 +563,5 @@ mod tests {
         assert_eq!(de.zebra.x, 0.5);
     }
 }
+
+crate::terrain_shadowed!(RoadExtension);

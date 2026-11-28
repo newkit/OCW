@@ -68,6 +68,7 @@ pub mod status_signs;
 pub mod street_lamps;
 pub mod switches;
 pub mod terrain;
+pub mod terrain_shadow;
 pub mod thumbs;
 pub mod touch_hud;
 // Road vehicles: the view type, the models and the debug boxes (spec 18E
@@ -608,6 +609,8 @@ impl Plugin for OcwRenderPlugins {
             traffic::TrafficDebugPlugin,
             // The UFOs, their beams, the cow and the crop circles (T9).
             ufo::UfoPlugin,
+            // The mountains' shadows from the height field (spec 4.5).
+            terrain_shadow::TerrainShadowPlugin,
         ));
     }
 }

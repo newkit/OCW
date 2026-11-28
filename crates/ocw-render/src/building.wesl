@@ -18,6 +18,7 @@ import bevy_pbr::render::{
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
     mesh_view_bindings::view,
 };
+import ocw_render::terrain_shadow;
 
 struct BuildingLook {
     // x: textured; y, z: texture fade start, end (m); w: normal strength.
@@ -290,7 +291,7 @@ fn fragment(
     pbr_input.N = n;
 
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
+    out.color = terrain_shadow::lit(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

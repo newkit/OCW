@@ -33,6 +33,7 @@ import bevy_pbr::render::{
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     mesh_view_bindings::view,
 };
+import ocw_render::terrain_shadow;
 
 // The vertex colour's alpha is the half width over this (m; ocw-render
 // `package::ROAD_HALF_SCALE`).
@@ -1092,7 +1093,7 @@ fn fragment(
     pbr_input.N = N;
 
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
+    out.color = terrain_shadow::lit(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

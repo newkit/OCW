@@ -74,6 +74,12 @@ pub struct SeeThroughFade {
     /// x, y the climatological snow ramp over the altitude, z on.
     #[uniform(100)]
     pub season: Vec4,
+    /// The mountains' shadow (`terrain_shadow`, bindings 120 – 122).
+    #[uniform(120)]
+    pub terrain_shadow: crate::terrain_shadow::TerrainShadowUniform,
+    #[texture(121)]
+    #[sampler(122)]
+    pub terrain_shadow_map: Option<Handle<Image>>,
 }
 
 impl Default for SeeThroughFade {
@@ -89,6 +95,8 @@ impl Default for SeeThroughFade {
             wind: Vec4::new(1.0, 0.0, 0.0, 0.0),
             sway: Vec4::new(1.0, 0.0, 0.0, 0.0),
             season: Vec4::ZERO,
+            terrain_shadow: Default::default(),
+            terrain_shadow_map: None,
         }
     }
 }
@@ -296,3 +304,5 @@ mod tests {
         }
     }
 }
+
+crate::terrain_shadowed!(SeeThroughFade);

@@ -65,6 +65,12 @@ impl Default for WaterLook {
 pub struct WaterExtension {
     #[uniform(100)]
     pub look: WaterLook,
+    /// The mountains' shadow (`terrain_shadow`, bindings 120 – 122).
+    #[uniform(120)]
+    pub terrain_shadow: crate::terrain_shadow::TerrainShadowUniform,
+    #[texture(121)]
+    #[sampler(122)]
+    pub terrain_shadow_map: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for WaterExtension {
@@ -322,3 +328,5 @@ mod tests {
         assert!(s.z.sin() > 0.99, "{s:?}");
     }
 }
+
+crate::terrain_shadowed!(WaterExtension);

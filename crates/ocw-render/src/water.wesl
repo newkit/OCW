@@ -17,6 +17,7 @@ import bevy_pbr::render::{
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     mesh_view_bindings::{view, globals, fog},
 };
+import ocw_render::terrain_shadow;
 
 struct WaterLook {
     // x: ripple strength (0 flat), y: wind speed (m/s), z: wind direction
@@ -117,7 +118,7 @@ fn fragment(
     pbr_input.material.metallic = 0.0;
 
     var out: FragmentOutput;
-    var lit = apply_pbr_lighting(pbr_input);
+    var lit = terrain_shadow::lit(pbr_input);
 
     // The sky in the water: the horizon's haze towards a bluer zenith, by
     // Schlick's Fresnel term (2 % looking down, all of it at grazing view).

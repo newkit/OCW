@@ -526,8 +526,11 @@ fn see_own_head(
 ) {
     let want = world_layers();
     for (e, have) in &viewers {
-        if have != Some(&want) {
-            commands.entity(e).insert(want.clone());
+        // Added to what they see (the sun also sees the terrain shadow's
+        // proxy casters, `terrain_shadow::PROXY_LAYER`).
+        let have = have.cloned().unwrap_or_default();
+        if have.intersection(&want) != want {
+            commands.entity(e).insert(have.union(&want));
         }
     }
 }
