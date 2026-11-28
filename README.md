@@ -927,6 +927,35 @@ while the world's data was loaded, "scene rebuilt" or "riding …" means
 while the first tiles were drawn (the next thing to make smaller on
 iPhones).
 
+**The first tiles on the GPU (2026-11-28).** What was left after the
+base was the ride's start: the first 3 × 3 world tiles' meshes took 132
+MB of GPU buffers on Andorra (wasm + WebGL about 420 MB 20 s into the
+ride). The page log now says which meshes they are ("gpu meshes by kind:
+roads 50.7 MB …, plants far …, houses near …"): **roads** were the
+biggest part (51 MB on Andorra, 77 MB on Tenerife), then the trees' far
+models and the houses. **Now** on iPhones and iPads (and in the `saver`
+and `minimal` memory modes anywhere) the app meshes only the neighbour
+tiles within 300 m of the rider and those the road enters within 600 m
+ahead (200 / 400 m in `minimal`) – usually 1 to 4 of the nine – and the
+far terrain shows the rest; and every browser and the desktop upload the
+world's meshes in smaller vertex formats with the same picture (normals
+and colours in 16 bits, no colour on a terrain coloured by its map: a
+terrain vertex 28 bytes instead of 48, a road vertex 44 instead of 56).
+Andorra 20 s into the ride: 32 MB of meshes instead of 132, wasm + WebGL
+275 MB instead of 421; Tenerife 57 MB instead of 128 (387 MB instead of
+484 – its base keeps the wasm memory at 287 MB). The log says "world
+tiles: the neighbour tiles meshed within 300 m of the rider and on the
+road 600 m ahead …"; `reach=off` meshes all nine again, `reach=N` sets
+the distance (m).
+
+Tap these and send "rides" or "closed" (ride at least a minute; for the
+first that closed, the log of the reloaded page):
+
+34. <https://newkit.github.io/OCW/?world=europe/andorra&gpu=webgl2&quality=low&log=1> – Andorra with the new default (the near tiles only)
+35. <https://newkit.github.io/OCW/?world=europe/spain/tenerife&gpu=webgl2&quality=low&log=1> – Tenerife with the new default
+36. <https://newkit.github.io/OCW/?world=europe/andorra&gpu=webgl2&quality=low&log=1&reach=off> – Andorra with all nine tiles meshed (as before, but in the smaller formats)
+37. <https://newkit.github.io/OCW/?world=europe/spain/tenerife&gpu=webgl2&quality=low&log=1&memory=minimal> – Tenerife with the least memory (200 m around, 400 m ahead)
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:

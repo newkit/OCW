@@ -133,6 +133,11 @@ pub struct WorldOptions {
     /// The base sections left out ([`BROWSER_SKIPPED_SECTIONS`]; the
     /// bisect switch `?base=all` loads them all, 10G).
     pub skip_sections: Vec<[u8; 4]>,
+    /// `?reach=M` / `?reach=off`: how far from the rider the neighbour
+    /// tiles are meshed, instead of the memory mode's
+    /// (`memory::MemoryMode::near_reach_m`; `Some(None)`: the whole ring;
+    /// 10G *The first tiles' GPU memory*).
+    pub near_reach: Option<Option<f64>>,
 }
 
 impl WorldOptions {
@@ -151,6 +156,7 @@ impl WorldOptions {
             base: WORLDS_BASE.into(),
             course_rings: None,
             skip_sections: BROWSER_SKIPPED_SECTIONS.to_vec(),
+            near_reach: None,
         }
     }
 
@@ -776,6 +782,10 @@ pub fn stream_world(world: &mut World) {
     if stream.started && now - stream.last_log_s >= LOG_INTERVAL_S {
         stream.last_log_s = now;
         info!("{}", stream.status_line(crate::wasm_memory_bytes()));
+        info!(
+            "{}",
+            crate::gpu_memory::kinds_line(&crate::gpu_memory::kinds())
+        );
     }
     world.insert_resource(stream);
 }

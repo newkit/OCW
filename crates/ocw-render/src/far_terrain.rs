@@ -690,7 +690,11 @@ pub(crate) fn update_far_terrain(
                     let e = c
                         .spawn((
                             FarTile,
-                            Mesh3d(meshes.add(arrays.mesh())),
+                            Mesh3d(crate::mesh_kind::add(
+                                &mut meshes,
+                                arrays.mesh(),
+                                "far terrain",
+                            )),
                             MeshMaterial3d(mat.clone()),
                             NotShadowCaster,
                             Visibility::Visible,

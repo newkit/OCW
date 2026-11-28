@@ -7141,6 +7141,7 @@ dependencies = [
  "bevy_egui",
  "chrono",
  "clap",
+ "half",
  "image",
  "ocw-assets",
  "ocw-core",

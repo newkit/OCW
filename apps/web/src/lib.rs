@@ -279,6 +279,12 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
                 _ => bad(),
             },
             ("cache", Some(w)) => w.use_cache = value != "0",
+            // The neighbour tiles meshed near the rider only (10G).
+            ("reach", Some(w)) => match (value.as_str(), value.parse::<f64>()) {
+                ("off", _) => w.near_reach = Some(None),
+                (_, Ok(m)) if (0.0..=5000.0).contains(&m) => w.near_reach = Some(Some(m)),
+                _ => bad(),
+            },
             // Bisecting (10G): `base=all` loads the base sections the
             // browser leaves out (the road traffic's `TRFC`).
             ("base", Some(w)) => match value.as_str() {
@@ -583,6 +589,15 @@ pub fn app_with_settings(
     // Phones keep fewer world tiles (the iPhone's restarts, 2026-11-22).
     let memory = apply_memory_mode(&mut config, &device_info());
     app.insert_resource(ocw_render::package::StreamRadiusCap(memory.ring_cap()));
+    let near_reach = near_reach(&config, memory);
+    if let Some(r) = near_reach {
+        app.add_systems(Startup, move || {
+            info!(
+                "world tiles: the neighbour tiles meshed within {r:.0} m of the rider and on the road {:.0} m ahead, the far terrain beyond (reach=off: all 3 × 3)",
+                r * ocw_render::package::REACH_AHEAD
+            )
+        });
+    }
     if memory != memory::MemoryMode::Normal {
         // Once the log is set up (it was lost before the plugins; v6.77).
         app.add_systems(Startup, move || {
@@ -689,6 +704,8 @@ pub fn app_with_settings(
     .insert_resource(ocw_render::quality::ShadowMapCap(shadow_cap))
     .insert_resource(memory.tile_pace())
     .insert_resource(ocw_render::package::PlantThinning(memory.plant_thinning()))
+    // Saver / minimal: only the neighbour tiles near the rider meshed (10G).
+    .insert_resource(ocw_render::package::NearTileReach(near_reach))
     // Near the phone's budget the world steps down (`memory::MemoryGuard`).
     .add_systems(Update, memory::guard_memory)
     // The GPU memory for the status line and the browser test (B2).
@@ -767,6 +784,16 @@ pub fn apply_memory_mode(
         w.course_rings = memory.course_rings(w.residency);
     }
     memory
+}
+
+/// How far from the rider the neighbour tiles are meshed: the page's
+/// `reach=`, else the memory mode's (10G *The first tiles' GPU memory*).
+pub fn near_reach(config: &SessionConfig, memory: memory::MemoryMode) -> Option<f64> {
+    config
+        .world
+        .as_ref()
+        .and_then(|w| w.near_reach)
+        .unwrap_or(memory.near_reach_m())
 }
 
 /// The window's size at the start: the page's (CSS pixels), never more
@@ -1225,6 +1252,7 @@ pub fn page_heap() -> String {
         "cpu_images": g.cpu_image_bytes,
         "cpu_meshes": g.cpu_mesh_bytes,
         "cpu_images_top": gpu_memory::cpu_images_top(),
+        "gpu_kinds": gpu_memory::kinds(),
         "trace": heap::trace_marks(),
     })
     .to_string()
@@ -1541,6 +1569,30 @@ mod tests {
             memory::MemoryMode::Normal
         );
         assert_eq!(config.world.expect("a world").course_rings, None);
+    }
+
+    /// The reach of the neighbour tiles (10G *The first tiles' GPU
+    /// memory*): the memory mode's, `reach=M` or `reach=off` instead.
+    #[test]
+    fn the_near_reach_comes_from_the_mode_or_the_page() {
+        use memory::MemoryMode as M;
+        let reach = |q: &str, mode| {
+            let (config, w) = parse_query(q, true);
+            (near_reach(&config, mode), w)
+        };
+        assert_eq!(reach("world=andorra", M::Saver), (Some(300.0), vec![]));
+        assert_eq!(reach("world=andorra", M::Minimal), (Some(200.0), vec![]));
+        assert_eq!(reach("world=andorra", M::Phone), (None, vec![]));
+        assert_eq!(reach("world=andorra", M::Normal), (None, vec![]));
+        assert_eq!(reach("world=andorra&reach=off", M::Saver), (None, vec![]));
+        assert_eq!(
+            reach("world=andorra&reach=250", M::Normal),
+            (Some(250.0), vec![])
+        );
+        assert_eq!(
+            reach("world=andorra&reach=far", M::Saver),
+            (Some(300.0), vec!["reach=far: ignored".to_string()])
+        );
     }
 
     #[test]

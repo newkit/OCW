@@ -6,7 +6,8 @@
 // (kind 0 carriageway, 1 wall, 2 shoulder, 3 kerb, 4 sidewalk, 5 crossing
 // overlay; extra: cycle lanes, track); uv_b.y = the lines code
 // (ocw_world::road_dress::MarkCode) or, on an overlay, its crossing kind +
-// 4 * half; colour = far colour (rgb) and the road's half width (alpha).
+// 4 * half; colour = far colour (rgb) and the road's half width over
+// ROAD_HALF_SCALE (alpha; packed in 16 bits, spec 14 Phase 10, 10G).
 //
 // The markings are coverage integrated over each pixel's footprint in road
 // metres (box filter, Rust twins in ocw_world::road_dress): crisp near, the
@@ -32,6 +33,10 @@ import bevy_pbr::render::{
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     mesh_view_bindings::view,
 };
+
+// The vertex colour's alpha is the half width over this (m; ocw-render
+// `package::ROAD_HALF_SCALE`).
+const ROAD_HALF_SCALE: f32 = 64.0;
 
 struct RoadLook {
     // x: textured; y, z: fade start, end (m); w: normal strength.
@@ -795,7 +800,8 @@ fn fragment(
     let kind = (code >> 3u) & 7u;
     let extra = code >> 6u;
     let lines = u32(round(in.uv_b.y));
-    let half = in.color.a;
+    // The half width comes packed (ocw-render `package::ROAD_HALF_SCALE`).
+    let half = in.color.a * ROAD_HALF_SCALE;
     let u = in.uv.x;
     let v = in.uv.y;
 

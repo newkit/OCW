@@ -25,6 +25,8 @@ ocw-xr.workspace = true
 # The plants' model files (spec §14 Phase 15, M1): extras.
 serde_json.workspace = true
 bevy.workspace = true
+# The packed vertex codes in 16-bit floats (spec 14 Phase 10, 10G).
+half.workspace = true
 bevy_egui.workspace = true
 avian3d.workspace = true
 clap.workspace = true
