@@ -100,7 +100,10 @@ pub mod layout {
     pub const COLLAR: f32 = 0.50;
     pub const COLLAR_X: f32 = 0.1;
     /// The chest's wordmark: x-height, baseline, white outline.
-    pub const CHEST_XH: f32 = 0.059;
+    pub const CHEST_XH: f32 = 0.052;
+    /// The chest's letters condensed to this share of their width, so
+    /// "newk" fits the right half of the chest and ".it" the left one.
+    pub const CHEST_SQUEEZE: f32 = 0.72;
     pub const CHEST_BASE: f32 = 0.322;
     pub const OUTLINE: f32 = 0.006;
     /// The back's pink "newk" (reading downwards, the letters' tops to
@@ -142,6 +145,10 @@ pub mod layout {
     pub const SHORTS_NAME: [f32; 4] = [0.0, -0.092, 0.02, 0.2];
     /// The shorts' back from this z.
     pub const SHORTS_BACK_Z: f32 = 0.04;
+    /// The socks' pink band: centre (y) and half height, under the cuff
+    /// of the standard socks (their top at -0.75 m).
+    pub const SOCK_BAND: f32 = -0.77;
+    pub const SOCK_BAND_HALF: f32 = 0.006;
 }
 
 use layout::*;
@@ -331,8 +338,13 @@ pub fn jersey(three: bool, region: BodyRegion, p: [f32; 3]) -> [f32; 4] {
                 one(0)
             };
             if z < AXIS_Z {
-                let d = word_sd(DOT_CENTRE - u / CHEST_XH, (y - CHEST_BASE) / CHEST_XH, 0, 6)
-                    * CHEST_XH;
+                let (gx, gy) = chest_glyph(u, y);
+                // Behind the wordmark the panels' fills only: no outline or
+                // gap runs through the letters.
+                if (-0.2..END + 0.2).contains(&gx) && (-0.2..1.65).contains(&gy) {
+                    w = one(if white { 2 } else { 0 });
+                }
+                let d = word_sd(gx, gy, 0, 6) * CHEST_XH * CHEST_SQUEEZE;
                 if d < 0.0 {
                     w = one(0);
                 } else if d < OUTLINE {
@@ -365,6 +377,35 @@ pub fn jersey(three: bool, region: BodyRegion, p: [f32; 3]) -> [f32; 4] {
             }
         }
         _ => one(0),
+    }
+}
+
+/// The chest's wordmark coordinates (x-heights) at round-the-torso `u`
+/// and height `y`: condensed by [`layout::CHEST_SQUEEZE`], read from the
+/// front (to the reader's right is the rider's left), the dot on the zip.
+pub fn chest_glyph(u: f32, y: f32) -> (f32, f32) {
+    (
+        DOT_CENTRE - u / (CHEST_XH * CHEST_SQUEEZE),
+        (y - CHEST_BASE) / CHEST_XH,
+    )
+}
+
+/// Round-the-torso extent of the chest's wordmark with its outline (m):
+/// to the rider's right ("newk") and left (".it").
+pub fn chest_extent() -> (f32, f32) {
+    (
+        DOT_CENTRE * CHEST_XH * CHEST_SQUEEZE + OUTLINE,
+        (END - DOT_CENTRE) * CHEST_XH * CHEST_SQUEEZE + OUTLINE,
+    )
+}
+
+/// Weights of the socks at `p`: white with a thin pink band under the
+/// cuff (the feet plain).
+pub fn socks(three: bool, region: BodyRegion, p: [f32; 3]) -> [f32; 4] {
+    if region == BodyRegion::Leg && (p[1] - SOCK_BAND).abs() < SOCK_BAND_HALF {
+        one(if three { 3 } else { 2 })
+    } else {
+        one(0)
     }
 }
 
@@ -640,8 +681,8 @@ mod tests {
     /// The chest's wordmark inside the front panels (|u| below the front's
     /// edge), its top under the name, its feet on the white panels.
     const LAYOUT_FITS: () = {
-        assert!(DOT_CENTRE * CHEST_XH + OUTLINE < COLS[0]);
-        assert!((END - DOT_CENTRE) * CHEST_XH < COLS[0]);
+        assert!(DOT_CENTRE * CHEST_XH * CHEST_SQUEEZE + OUTLINE < 0.13);
+        assert!((END - DOT_CENTRE) * CHEST_XH * CHEST_SQUEEZE + OUTLINE < 0.13);
         assert!(CHEST_BASE + 1.42 * CHEST_XH + OUTLINE < CHEST_NAME[1] - 0.011);
         assert!(CHEST_BASE + 0.1 * CHEST_XH < ROWS[2]);
     };
@@ -743,7 +784,8 @@ mod tests {
         let y_dot = CHEST_BASE + 0.13 * CHEST_XH;
         assert_eq!(at(0.0, y_dot), B, "the dot on the zip");
         // The n's left stem on the rider's right.
-        let u_n = (DOT_CENTRE - 0.1) * CHEST_XH;
+        let k = CHEST_XH * CHEST_SQUEEZE;
+        let u_n = (DOT_CENTRE - 0.1) * k;
         assert_eq!(at(u_n, CHEST_BASE + 0.2 * CHEST_XH), B);
         // Within the front: |x| < 0.15 (the side panels' mesh), |u| < the
         // front's edge.
@@ -753,7 +795,7 @@ mod tests {
         let mid = CHEST_BASE + 0.1 * CHEST_XH;
         assert_eq!(at(u_n, mid), B);
         // Just left of the k's ascender, on the black upper panel.
-        let beside = (DOT_CENTRE - STARTS[3] + 0.5 * OUTLINE / CHEST_XH) * CHEST_XH;
+        let beside = (DOT_CENTRE - STARTS[3]) * k + 0.5 * OUTLINE;
         assert_eq!(at(beside, CHEST_BASE + 1.2 * CHEST_XH), W, "white outline");
         assert_eq!(
             at(beside - OUTLINE, CHEST_BASE + 1.2 * CHEST_XH),
@@ -867,6 +909,62 @@ mod tests {
         assert_eq!(shorts(true, BodyRegion::Torso, [0.0, -0.05, -0.1]), B);
         assert!(name_spot(Garment::Shorts, BodyRegion::Torso, [0.0, -0.07, 0.09]).is_some());
         assert!(name_spot(Garment::Shorts, BodyRegion::Torso, [0.0, -0.07, -0.09]).is_none());
+    }
+
+    /// The whole chest wordmark lies on the front: within 0.13 m of the
+    /// zip round the torso (≈ 55° of the section), no panel outline
+    /// through it.
+    #[test]
+    fn the_chest_wordmark_reads_in_full_from_the_front() {
+        let (right, left) = chest_extent();
+        let front = 0.13 / ROUND;
+        assert!(
+            right / ROUND < front && left / ROUND < front,
+            "{right} {left}"
+        );
+        // The n's first stem and the t's crossbar are both on the front
+        // half, on either side of the zip.
+        let at = |u: f32, y: f32| jersey(true, BodyRegion::Torso, torso_at(u, y));
+        let k = CHEST_XH * CHEST_SQUEEZE;
+        assert_eq!(at((DOT_CENTRE - 0.1) * k, CHEST_BASE + 0.3 * CHEST_XH), B);
+        let t = (DOT_CENTRE - STARTS[6] - 0.3) * k;
+        assert!(t < 0.0);
+        assert_eq!(at(t, CHEST_BASE + 0.9 * CHEST_XH), B);
+        // No panel outline through the wordmark: just before the n, on
+        // the upper panel's outline (0.367 - 0.378 m), the panel's black
+        // shows (further than the letters' own outline from the n).
+        let before = (DOT_CENTRE + 0.19) * k;
+        assert!(0.19 * k > OUTLINE);
+        assert_eq!(at(before, 0.372), B, "no outline through the letters");
+        assert_eq!(at(0.16, 0.372), W, "the outline beside the wordmark");
+    }
+
+    #[test]
+    fn socks_have_a_pink_band() {
+        assert_eq!(socks(true, BodyRegion::Leg, [0.09, SOCK_BAND, 0.0]), P);
+        assert_eq!(socks(true, BodyRegion::Leg, [0.09, -0.82, 0.0]), B);
+        assert_eq!(socks(true, BodyRegion::Foot, [0.09, SOCK_BAND, 0.0]), B);
+        assert_eq!(
+            pattern_weights(
+                KitPattern::Newkit,
+                true,
+                Garment::Socks,
+                BodyRegion::Leg,
+                [0.09, SOCK_BAND, 0.0]
+            ),
+            P
+        );
+        assert_eq!(
+            pattern_weights(
+                KitPattern::Band,
+                true,
+                Garment::Socks,
+                BodyRegion::Leg,
+                [0.09, SOCK_BAND, 0.0]
+            ),
+            B,
+            "other kits: plain socks"
+        );
     }
 
     #[test]

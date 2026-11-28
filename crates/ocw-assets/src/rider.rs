@@ -2828,6 +2828,40 @@ mod tests {
     use super::*;
     use crate::pose::RiderRig;
 
+    /// The newk.it kit's chest wordmark (spec 14 Phase 8, 8E) faces the
+    /// front for every build: the pattern sits in the rest coordinates
+    /// and the build scales the torso by its girth, so at the wordmark's
+    /// ends the surface turns less than 50° from straight ahead.
+    #[test]
+    fn the_newkit_chest_wordmark_faces_the_front_for_every_build() {
+        use ocw_core::kit::newkit::{chest_extent, layout::*};
+        use ocw_core::{Age, BaseBody, BodyShape, Character};
+        let (right, left) = chest_extent();
+        let facing = |u: f32, g: Vec3| {
+            let a = u / ROUND;
+            (a.sin() / (SEMI[0] * g.x))
+                .atan2(a.cos() / (SEMI[1] * g.z))
+                .to_degrees()
+        };
+        for shape in BodyShape::ALL {
+            for base in BaseBody::ALL {
+                for age in Age::ALL {
+                    let c = Character {
+                        shape,
+                        base,
+                        age,
+                        ..Default::default()
+                    };
+                    let g = girth_of(TORSO, &c);
+                    for u in [right, left] {
+                        let f = facing(u, g);
+                        assert!(f < 50.0, "{shape:?} {base:?} {age:?}: {f}°");
+                    }
+                }
+            }
+        }
+    }
+
     /// The model's nodes with only the base look's optional nodes.
     fn base_only(m: &Model) -> Vec<usize> {
         let shown = base_visible();

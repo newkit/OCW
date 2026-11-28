@@ -6425,3 +6425,75 @@ at = ["0.3=time 2026-06-20 10:30", "0.3=weather clear", "1=character --body a --
 warmup = 3
 video = 7
 pick = false
+
+[[scene]]
+name = "newkit-front-straight-skinny"
+description = "The newk.it kit from straight ahead on a skinny rider (Lio Brandt) in the workshop: the whole \"newk.it\" across the chest – \"newk\" on the rider's right, \".it\" on the left, the dot on the zip – no panel outline through the letters, the name in pink on the left chest, the pink band of the socks"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Lio Brandt"
+
+[[rider]]
+name = "Lio Brandt"
+weight_kg = 58.0
+ftp_w = 230
+bike = "gravel"
+frame_color = "#2E7D32"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --shape skinny --body c --hair 3 --skin 2", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 180"]
+shot = 9
+
+[[scene]]
+name = "newkit-front-right-skinny"
+description = "The newk.it kit from the front right on a skinny rider (Lio Brandt) in the workshop: the whole \"newk.it\" across the chest – \"newk\" on the rider's right, \".it\" on the left, the dot on the zip – no panel outline through the letters, the name in pink on the left chest, the pink band of the socks"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Lio Brandt"
+
+[[rider]]
+name = "Lio Brandt"
+weight_kg = 58.0
+ftp_w = 230
+bike = "gravel"
+frame_color = "#2E7D32"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --shape skinny --body c --hair 3 --skin 2", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 215"]
+shot = 9
+
+[[scene]]
+name = "newkit-front-straight-fat"
+description = "The newk.it kit from straight ahead on a heavier rider (Ona Rauch) in the workshop: the whole \"newk.it\" across the chest – \"newk\" on the rider's right, \".it\" on the left, the dot on the zip – no panel outline through the letters, the name in pink on the left chest, the pink band of the socks"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Ona Rauch"
+
+[[rider]]
+name = "Ona Rauch"
+weight_kg = 92.0
+ftp_w = 230
+bike = "gravel"
+frame_color = "#2E7D32"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --shape fat --body b --hair 5 --skin 9", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 180"]
+shot = 9
+
+[[scene]]
+name = "newkit-front-right-fat"
+description = "The newk.it kit from the front right on a heavier rider (Ona Rauch) in the workshop: the whole \"newk.it\" across the chest – \"newk\" on the rider's right, \".it\" on the left, the dot on the zip – no panel outline through the letters, the name in pink on the left chest, the pink band of the socks"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Ona Rauch"
+
+[[rider]]
+name = "Ona Rauch"
+weight_kg = 92.0
+ftp_w = 230
+bike = "gravel"
+frame_color = "#2E7D32"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --shape fat --body b --hair 5 --skin 9", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 215"]
+shot = 9

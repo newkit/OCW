@@ -155,6 +155,7 @@ pub fn garment_of(slot: &str) -> Option<Garment> {
         "jersey" => Some(Garment::Jersey),
         "shorts" => Some(Garment::Shorts),
         "helmet" => Some(Garment::Helmet),
+        "sock" | "sock_aero" => Some(Garment::Socks),
         _ => None,
     }
 }
@@ -363,7 +364,12 @@ pub fn surface(
         }
         GearKind::Plain => {}
     }
-    let garment = garment_of(slot);
+    // Socks carry a design only in the newk.it kit (its pink band); in
+    // the others they stay one shared material.
+    let garment = match garment_of(slot) {
+        Some(Garment::Socks) if kit.pattern != KitPattern::Newkit => None,
+        g => g,
+    };
     let jersey = colours.jersey;
     let mut pattern = KitPattern::Plain;
     let mut number = 0;
@@ -385,6 +391,7 @@ pub fn surface(
                 first = base;
             }
         }
+        Some(Garment::Socks) => pattern = kit.pattern,
         None => {}
     }
     // The newk.it kit prints the rider's name (jersey and shorts only).
@@ -915,6 +922,16 @@ mod tests {
         let s = surface("shorts", "pelvis", [0.01, 0.01, 0.01, 1.0], &bea);
         assert_eq!(s.look.name.w, 11);
         assert_eq!(s.look.third, lin(Color::srgb_u8(0xCE, 0x0F, 0x69)), "pink");
+        // The socks: the pink band, no name.
+        let sock = surface("sock", "shin_l", [1.0; 4], &ada);
+        assert_eq!(sock.garment, Some(Garment::Socks));
+        assert_eq!(sock.look.mode.y, 4.0);
+        assert_eq!(sock.look.name, UVec4::ZERO);
+        assert_eq!(
+            surface("sock", "shin_l", [1.0; 4], &colours(&RiderLook::default())).garment,
+            None,
+            "plain socks in other kits"
+        );
         for (slot, node) in [
             ("sock", "shin_l"),
             ("helmet", "helmet_road"),
@@ -971,6 +988,9 @@ mod tests {
             ("NK_SQUARE_RADIUS", nl::SQUARE_RADIUS),
             ("NK_SQUARE_STROKE", nl::SQUARE_STROKE),
             ("NK_SHORTS_BACK_Z", nl::SHORTS_BACK_Z),
+            ("NK_CHEST_SQUEEZE", nl::CHEST_SQUEEZE),
+            ("NK_SOCK_BAND", nl::SOCK_BAND),
+            ("NK_SOCK_BAND_HALF", nl::SOCK_BAND_HALF),
         ] {
             assert!(
                 src.contains(&format!("const {name}: f32 = {v};")),

@@ -334,7 +334,8 @@ const NK_CELL_STROKE: f32 = 0.011;
 const NK_CELL_RADIUS: f32 = 0.035;
 const NK_COLLAR: f32 = 0.5;
 const NK_COLLAR_X: f32 = 0.1;
-const NK_CHEST_XH: f32 = 0.059;
+const NK_CHEST_XH: f32 = 0.052;
+const NK_CHEST_SQUEEZE: f32 = 0.72;
 const NK_CHEST_BASE: f32 = 0.322;
 const NK_OUTLINE: f32 = 0.006;
 const NK_BACK_XH: f32 = 0.13;
@@ -361,6 +362,8 @@ const NK_CHEST_NAME: vec4<f32> = vec4<f32>(-0.085, 0.44, 0.022, 0.11);
 const NK_SLEEVE_NAME: vec4<f32> = vec4<f32>(0.0, 0.27, 0.02, 0.1);
 const NK_SHORTS_NAME: vec4<f32> = vec4<f32>(0.0, -0.092, 0.02, 0.2);
 const NK_SHORTS_BACK_Z: f32 = 0.04;
+const NK_SOCK_BAND: f32 = -0.77;
+const NK_SOCK_BAND_HALF: f32 = 0.006;
 const NK_NAME_MAX: u32 = 12u;
 const NK_H: f32 = 0.1;
 
@@ -522,7 +525,13 @@ fn newkit_jersey(p: vec3<f32>, region: u32, three: bool, aa: f32) -> vec4<f32> {
         let core = over(-pn.y, NK_CELL_STROKE, aa);
         var w = mix(black, white, select(inside - core, inside, pn.x > 0.5));
         if p.z < NK_AXIS_Z {
-            let d = nk_word(vec2<f32>(NK_DOT_CENTRE - u / NK_CHEST_XH, (p.y - NK_CHEST_BASE) / NK_CHEST_XH), 0u, 6u) * NK_CHEST_XH;
+            let g = vec2<f32>(NK_DOT_CENTRE - u / (NK_CHEST_XH * NK_CHEST_SQUEEZE), (p.y - NK_CHEST_BASE) / NK_CHEST_XH);
+            // Behind the wordmark the panels' fills only (no outline or gap
+            // through the letters).
+            if g.x >= -0.2 && g.x < NK_END + 0.2 && g.y >= -0.2 && g.y < 1.65 {
+                w = select(black, white, pn.x > 0.5);
+            }
+            let d = nk_word(g, 0u, 6u) * NK_CHEST_XH * NK_CHEST_SQUEEZE;
             w = mix(w, white, over(-d, -NK_OUTLINE, aa));
             w = mix(w, black, over(-d, 0.0, aa));
         } else {
@@ -543,6 +552,15 @@ fn newkit_jersey(p: vec3<f32>, region: u32, three: bool, aa: f32) -> vec4<f32> {
         return mix(w, black, 1.0 - over(p.y, NK_CUFF, aa));
     }
     return black;
+}
+
+// The socks: a thin pink band under the cuff.
+fn newkit_socks(p: vec3<f32>, region: u32, three: bool, aa: f32) -> vec4<f32> {
+    let pink = select(vec4<f32>(0.0, 0.0, 1.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0), three);
+    if region != 2u {
+        return vec4<f32>(1.0, 0.0, 0.0, 0.0);
+    }
+    return mix(vec4<f32>(1.0, 0.0, 0.0, 0.0), pink, within(p.y - NK_SOCK_BAND, NK_SOCK_BAND_HALF, aa));
 }
 
 // Round the thigh from its outside (m): + to the back on the left leg,
@@ -870,6 +888,9 @@ fn fragment(
             w = jersey_weights(p, region, pattern, three, aa);
         } else if garment == 2u {
             w = shorts_weights(p, region, pattern, three, aa);
+        } else if garment == 4u {
+            // Socks: the newk.it kit's band (other kits never get here).
+            w = newkit_socks(p, region, three, aa);
         } else {
             w = helmet_weights(p, pattern, three, aa);
         }

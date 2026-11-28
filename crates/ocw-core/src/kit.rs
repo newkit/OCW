@@ -181,6 +181,8 @@ pub enum Garment {
     Shorts,
     /// The helmet shell: a centre stripe when the pattern is on it.
     Helmet,
+    /// Socks: the newk.it kit's pink band (other kits: plain).
+    Socks,
 }
 
 impl Garment {
@@ -275,6 +277,8 @@ pub fn pattern_weights(
     match (pattern, garment) {
         (KitPattern::Newkit, Garment::Jersey) => return newkit::jersey(three, region, p),
         (KitPattern::Newkit, Garment::Shorts) => return newkit::shorts(three, region, p),
+        (KitPattern::Newkit, Garment::Socks) => return newkit::socks(three, region, p),
+        (_, Garment::Socks) => return one(0),
         _ => {}
     }
     match garment {
@@ -334,6 +338,8 @@ pub fn pattern_weights(
                 one(0)
             }
         }
+        // Handled above (the newk.it kit's band, plain otherwise).
+        Garment::Socks => one(0),
         Garment::Helmet => match pattern {
             KitPattern::Plain => one(0),
             KitPattern::Gradient => {
