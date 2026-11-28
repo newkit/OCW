@@ -657,3 +657,140 @@ fn the_aircraft_variants_are_picked_by_seed() {
     // Out of range: the default.
     assert_eq!(AirKind::Glider.model_of(3), "vehicles/glider-sailplane");
 }
+
+/// The airliners' gear over whole flights (v7.08, the user 2026-11-28):
+/// a departure has it down while lined up and on the take-off run, up
+/// within ten seconds of lift-off and for the rest of the flight; an
+/// arrival has it up from its entry over the airway to final and down only
+/// in the last ~2 minutes before touchdown (low on final), on the roll-out
+/// too; overflights never lower it.
+#[test]
+fn airliner_gear_follows_the_flight_phase() {
+    let space = space();
+    let w = summer();
+    let all = day_flights(&space, &w, 7, DAY0);
+    let (mut deps, mut arrs, mut cruise) = (0, 0, 0);
+    for f in all.values().filter(|f| f.kind == AirKind::Airliner) {
+        let end = f.path.duration_s();
+        let td = f.path.time_of_touchdown();
+        let mut t = 0.0;
+        let mut seen_up = false;
+        while t <= end {
+            let s = f.path.at(t);
+            let down = gear_down(f.kind, f.mission, &f.path, t, s.ground);
+            if s.ground {
+                assert!(down, "{:?} on the ground at {t:.0} s", f.mission);
+            }
+            match f.mission {
+                Mission::Departure => {
+                    let l = f.path.time_of_liftoff().expect("takes off");
+                    if t > l + 10.0 {
+                        assert!(!down, "up after the climb-out ({t:.0} s, lift-off {l:.0})");
+                    }
+                }
+                Mission::Arrival => {
+                    if t < td - 160.0 {
+                        assert!(!down, "up until final ({t:.0} s, touchdown {td:.0})");
+                    }
+                    if down && !s.ground {
+                        let thr = f.runway.expect("a runway");
+                        let above = s.pos[1] - thr.elevation_m;
+                        assert!(above < 650.0, "down only low on final: {above:.0} m");
+                    }
+                    if t >= td - 120.0 {
+                        assert!(down, "down on short final ({t:.0} s)");
+                    }
+                }
+                _ => assert!(!down || s.ground, "cruise: up"),
+            }
+            seen_up |= !down;
+            t += 2.0;
+        }
+        assert!(seen_up, "{:?}: up somewhere", f.mission);
+        match f.mission {
+            Mission::Departure => deps += 1,
+            Mission::Arrival => arrs += 1,
+            _ => cruise += 1,
+        }
+    }
+    assert!(deps > 3 && arrs > 3 && cruise > 3, "{deps} {arrs} {cruise}");
+}
+
+/// A low pass over a ridge long before final keeps the gear up: the rule
+/// is the flight's phase and its time to touchdown, not the height over
+/// the terrain; fixed gear is always down.
+#[test]
+fn a_low_pass_keeps_the_gear_up() {
+    let mut b = path::PathBuilder::new(3000.0);
+    b.to(path::Waypoint::air([-60_000.0, 3000.0, 0.0], 150.0))
+        .to(path::Waypoint::fixed([-40_000.0, 160.0, 0.0], 120.0))
+        .to(path::Waypoint::fixed([-20_000.0, 1000.0, 0.0], 85.0))
+        .to(path::Waypoint::fixed([0.0, 15.0, 0.0], 72.0))
+        .to(path::Waypoint::ground([400.0, 0.0, 0.0], 68.0))
+        .to(path::Waypoint::ground([1500.0, 0.0, 0.0], 14.0));
+    let p = b.build(None, 0.0, 1.0);
+    let td = p.time_of_touchdown();
+    // The lowest point more than 200 s before touchdown: the pass.
+    let low = (0..(td as i32 - 200))
+        .map(f64::from)
+        .min_by(|a, c| p.at(*a).pos[1].total_cmp(&p.at(*c).pos[1]))
+        .expect("a pass");
+    assert!(
+        p.at(low).pos[1] < 300.0,
+        "the pass is low: {}",
+        p.at(low).pos[1]
+    );
+    assert!(!gear_down(
+        AirKind::Airliner,
+        Mission::Arrival,
+        &p,
+        low,
+        false
+    ));
+    assert!(gear_down(
+        AirKind::Airliner,
+        Mission::Arrival,
+        &p,
+        td - 60.0,
+        false
+    ));
+    for k in [AirKind::SmallPlane, AirKind::Helicopter, AirKind::Glider] {
+        assert!(gear_down(k, Mission::Cruise, &p, low, false), "{k:?}");
+    }
+}
+
+/// A helicopter's rotor spools up over [`ROTOR_SPOOL_S`] before it lifts
+/// off and runs down after it lands; at the flight's start it stands.
+#[test]
+fn helicopter_rotors_spool_up_and_down_on_the_pad() {
+    assert_eq!(rotor_spool(0.0, 100.0, true), 0.0);
+    assert!((rotor_spool(80.0, 12.5, true) - 0.5).abs() < 1e-9);
+    assert_eq!(rotor_spool(100.0, 0.0, true), 1.0);
+    assert_eq!(rotor_spool(0.0, 600.0, false), 1.0, "just landed");
+    assert!((rotor_spool(12.5, 600.0, false) - 0.5).abs() < 1e-9);
+    assert_eq!(rotor_spool(300.0, 300.0, false), 0.0, "shut down");
+    // Over a day: in 0..=1, turning at a hold's end, still in the middle
+    // of a long one.
+    let space = space();
+    let w = summer();
+    let all = day_flights(&space, &w, 7, DAY0);
+    let mut held = 0;
+    for f in all.values().filter(|f| f.kind == AirKind::Helicopter) {
+        let mut t = 0.0;
+        while t < f.path.duration_s() {
+            if let Some((since, until, first)) = f.path.hold_at(t) {
+                let r = rotor_spool(since, until, first);
+                assert!((0.0..=1.0).contains(&r));
+                if until < 1.0 {
+                    assert!(r > 0.95);
+                }
+                if since > ROTOR_SPOOL_S && until > ROTOR_SPOOL_S {
+                    assert_eq!(r, 0.0);
+                    held += 1;
+                }
+            }
+            t += 5.0;
+        }
+    }
+    assert!(held > 0, "some long holds");
+}

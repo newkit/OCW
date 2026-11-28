@@ -137,6 +137,11 @@ TOO_OLD = ("This browser is too old for Open Cycling World – please update "
 # v7.00): Liechtenstein measured 156 MB in WebKit at 430 × 932 (164 MB before;
 # most of it is the renderer's start, the base adds ~10 MB).
 WORLD_BUDGET_MB = 180.0
+# The world case's bound on the GPU's mesh buffers 20 s into the ride (MB,
+# 10G *The first tiles' GPU memory*, v7.02): the near tiles within the saver
+# mode's reach in packed vertex formats – Liechtenstein measured 54.8 MB
+# (roads 25.2 MB), about 134 MB with all 3 x 3 tiles before.
+WORLD_GPU_BUDGET_MB = 70.0
 STAGE_RE = re.compile(r"world load: (.*?) – wasm (\d+) MB, heap (\d+) MB \(peak (\d+) MB\)")
 
 PHONES = {
@@ -216,6 +221,8 @@ def main():
     p.add_argument("--world", default="liechtenstein", help="the world case's world (target/web/worlds; '' skips it)")
     p.add_argument("--world-budget-mb", type=float, default=WORLD_BUDGET_MB,
                    help="the most wasm memory the world case's load may reach before the ride starts")
+    p.add_argument("--world-gpu-budget-mb", type=float, default=WORLD_GPU_BUDGET_MB,
+                   help="the most GPU memory the world case's mesh buffers may take 20 s into the ride")
     p.add_argument("--python", default=None, help="a Python with Playwright (default: the venv of make deps-webkit)")
     a = p.parse_args()
     if not in_venv():
@@ -582,8 +589,11 @@ def main():
                                  " && window.ocwFrames > 20", timeout=300000)
         except Exception as e:  # noqa: BLE001
             lines.append(f"[world] wait: {e}")
-        pg.wait_for_timeout(5000)
+        pg.wait_for_timeout(20000)
         st = json.loads(pg.evaluate(state_js))
+        heap = json.loads(pg.evaluate("window.ocw && window.ocw.heap ? window.ocw.heap() : '{}'"))
+        gpu_mb = round(max(heap.get("gpu_buffers") or 0, heap.get("gpu_meshes") or 0) / 1048576, 1)
+        kinds = {k["kind"]: round((k["vertex_bytes"] + k["index_bytes"]) / 1e6, 1) for k in heap.get("gpu_kinds") or []}
         shot = f"{base}-world-{os.path.basename(a.world)}.png"
         pg.screenshot(path=shot)
         drawn, how = image_drawn(shot)
@@ -592,8 +602,11 @@ def main():
         names = [x[0] for x in stages]
         start = next((i for i, n in enumerate(names) if n.startswith("scene rebuilt")), len(names) - 1)
         load_wasm = max((x[1] for x in stages[:start + 1]), default=0)
-        summary["world"] = {"world": a.world, "stages": stages, "load_wasm_mb": load_wasm, "state": st}
-        print(f"world {a.world}: wasm up to the ride's start {load_wasm} MB (bound {a.world_budget_mb:g} MB)", flush=True)
+        summary["world"] = {"world": a.world, "stages": stages, "load_wasm_mb": load_wasm, "state": st,
+                            "gpu_meshes_mb": gpu_mb, "gpu_kinds_mb": kinds, "wasm_mb": round((heap.get("wasm") or 0) / 1048576, 1)}
+        print(f"world {a.world}: wasm up to the ride's start {load_wasm} MB (bound {a.world_budget_mb:g} MB); "
+              f"20 s into the ride the meshes take {gpu_mb} MB of GPU buffers (bound {a.world_gpu_budget_mb:g} MB): {kinds}",
+              flush=True)
         check("world: the load logs its stages with the memory (sections, decoded, ride, first tiles, scene)",
               any(n.startswith("base: section ") for n in names) and "base decoded" in names
               and any(n.startswith("ride prepared") for n in names)
@@ -604,6 +617,12 @@ def main():
               [n for n in names if "TRFC" in n or "left out" in n])
         check(f"world: the load stays under {a.world_budget_mb:g} MB of wasm memory up to the ride's start",
               0 < load_wasm <= a.world_budget_mb, f"{load_wasm} MB")
+        check(f"world: the meshes take at most {a.world_gpu_budget_mb:g} MB of GPU buffers 20 s into the ride",
+              0 < gpu_mb <= a.world_gpu_budget_mb, f"{gpu_mb} MB: {kinds}")
+        terrain = next((k for k in heap.get("gpu_kinds") or [] if k["kind"] == "terrain"), None)
+        stride = terrain["vertex_bytes"] // max(terrain["vertices"], 1) if terrain else 0
+        check("world: the terrain's vertices are packed (28 bytes: no vertex colours, 16-bit normals; 48 before)",
+              0 < stride <= 28, f"{stride} B a vertex")
         check("world: rides and draws", st.get("frames", 0) > 20 and not st.get("status") and drawn,
               f"{how}; frames {st.get('frames')}; status {st.get('status')!r}")
         check("world: no page errors", not errors, errors[:5])

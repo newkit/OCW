@@ -2,7 +2,7 @@
 # Tests pieces of scripts/remote.sh that run on the build machines, locally
 # (no machine needed): the first-come-first-served rule of the build slots
 # (`ocw_older` against fake task markers), remote-gc.sh's choice of the
-# checkouts to clean, the tree copy (snapshot at invocation, content-based
+# checkouts to clean (the shared cleanup rules), the tree copy (snapshot at invocation, content-based
 # sync without source mtimes, the slot/sync handshake, the Windows manifest
 # diff) and the build log's cargo numbers (scripts/build_profile.py, also its own unit tests).
 set -euo pipefail
@@ -39,27 +39,17 @@ if [ "$live" -lt $$ ]; then want=yes; else want=no; fi
 marker "$live" waiting 1000
 check "$(older)" $want "same second: the lower PID goes first"
 
-# remote-gc.sh: which agent checkouts lose their target/ (a scratch repo).
-vfn=$(awk '/^verdict\(\) \{/ { f = 1 } f { print } f && /^}/ { exit }' scripts/remote-gc.sh)
-g=$(mktemp -d)
-(
-  cd "$g"
-  gq() { git -c user.name=t -c user.email=t@t "$@"; }
-  gq init -q -b main repo && cd repo && gq commit -q --allow-empty -m one
-  gq branch worktree-agent-merged
-  gq branch worktree-agent-live && gq worktree add -q ../live worktree-agent-live
-  gq checkout -q -b worktree-agent-open && gq commit -q --allow-empty -m two
-  gq checkout -q main
-  worktrees=$(git worktree list --porcelain)
-  eval "$vfn"
-  check "$(verdict worktree-agent-merged)" "merged into main, worktree removed" "gc: merged branch without worktree"
-  check "$(verdict worktree-agent-live)" "" "gc: a live worktree is kept (new branches look merged)"
-  check "$(verdict worktree-agent-open)" "" "gc: unmerged branch kept"
-  check "$(verdict worktree-agent-gone)" "branch gone" "gc: deleted branch"
-  check "$(verdict bisect-123)" "" "gc: other checkouts kept"
-  [ "$fail" = 0 ]
-) || fail=1
-rm -rf "$g"
+# remote-gc.sh: which checkouts lose their target/ – the rule set shared with
+# the dashboard's janitor (tools/build-dashboard/cleanup_rules.py): the rules
+# over made-up listings, the git facts of a scratch repo, the POSIX snippets
+# against a scratch directory, the PowerShell snippets as text.
+if PYTHONDONTWRITEBYTECODE=1 python3 tools/build-dashboard/test_cleanup_rules.py >"$ocw_d/gc.log" 2>&1; then
+  echo "ok   gc: cleanup rules ($(sed -n 's/^Ran \([0-9]*\) tests.*/\1/p' "$ocw_d/gc.log") tests)"
+else
+  cat "$ocw_d/gc.log"; echo "FAIL gc: cleanup rules"; fail=1
+fi
+rm -f "$ocw_d/gc.log"
+check "$(scripts/remote-gc.sh --help | grep -c 'OCW_GC_[A-Z_]*')" 8 "gc: --help lists the thresholds"
 
 # remote.sh's tree copy (v2.63): the snapshot taken at invocation, the
 # content-based rsync without source mtimes, the slot/sync handshake and the

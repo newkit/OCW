@@ -90,6 +90,82 @@ impl StreamRadius {
     }
 }
 
+/// How far from a riding rider the near tiles beyond the rider's own may
+/// lie (m; `None`: the whole ring of [`StreamRadius`]): a phone in the
+/// saver or minimal memory mode meshes only the neighbour tiles whose
+/// ground comes within this distance of the rider, or that the rider's
+/// road enters within [`REACH_AHEAD`] times it ahead (the route
+/// corridor) – 1 to 3 of the 3 × 3 tiles instead of 9 – and the far
+/// terrain shows the rest (spec 14 Phase 10, 10G *The first tiles' GPU
+/// memory*). The rider's own tile is always meshed; a meshed tile is
+/// dropped [`REACH_DROP_MARGIN_M`] beyond both.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
+pub struct NearTileReach(pub Option<f64>);
+
+/// The route corridor of [`NearTileReach`]: the road ahead this many
+/// times the reach.
+pub const REACH_AHEAD: f64 = 2.0;
+
+/// The road ahead is sampled every this many metres.
+pub const REACH_AHEAD_STEP_M: f64 = 25.0;
+
+/// The points (home metres, x z) of the local rider's road from its
+/// position to `ahead_m` ahead, every [`REACH_AHEAD_STEP_M`].
+pub fn road_ahead(view: &RideView, ahead_m: f64) -> Vec<[f64; 2]> {
+    let Some(l) = view.local() else {
+        return Vec::new();
+    };
+    let track = view.track(l.id);
+    let n = (ahead_m / REACH_AHEAD_STEP_M).ceil().max(0.0) as usize;
+    (0..=n)
+        .map(|i| {
+            let p = track
+                .sample(l.state.distance + (i as f64 * REACH_AHEAD_STEP_M).min(ahead_m))
+                .position;
+            [p[0], p[2]]
+        })
+        .collect()
+}
+
+/// A tile meshed for [`NearTileReach`] stays until the rider is this much
+/// farther from it (m), so riding along a tile's edge does not rebuild it.
+pub const REACH_DROP_MARGIN_M: f64 = 150.0;
+
+/// The distance (m, in the package's metres) from `p` (home metres) to
+/// the ground of tile `id` (0 on it).
+pub fn tile_distance(set: &WorldSet, id: TileId, p: [f64; 2]) -> f64 {
+    let m = &set.members()[id.0];
+    let Some(pkg) = m.package() else {
+        return f64::INFINITY;
+    };
+    let size = f64::from(pkg.tile_size_m);
+    let q = m.frame.invert(p);
+    let o = id.1.origin(size);
+    let dx = (o[0] - q[0]).max(q[0] - (o[0] + size)).max(0.0);
+    let dz = (o[1] - q[1]).max(q[1] - (o[1] + size)).max(0.0);
+    dx.hypot(dz)
+}
+
+/// Whether tile `id` is within `reach` of `p` or holds one of the points
+/// of the road `ahead`.
+pub fn in_reach(set: &WorldSet, id: TileId, p: [f64; 2], ahead: &[[f64; 2]], reach: f64) -> bool {
+    tile_distance(set, id, p) <= reach || ahead.iter().any(|&q| tile_distance(set, id, q) == 0.0)
+}
+
+/// The rings to mesh within `reach` of `p` or on the road `ahead` (the
+/// rider's own tiles always; [`NearTileReach`]).
+pub fn within_reach(
+    set: &WorldSet,
+    rings: &mut Vec<(i32, TileId)>,
+    p: [f64; 2],
+    ahead: &[[f64; 2]],
+    reach: Option<f64>,
+) {
+    if let Some(r) = reach {
+        rings.retain(|&(ring, id)| ring == 0 || in_reach(set, id, p, ahead, r));
+    }
+}
+
 /// The rider moving farther than this between two frames is a jump
 /// (teleport, start of a ride): the near tiles are then built and uploaded
 /// at once ([`urgent_tiles`]).
@@ -253,6 +329,25 @@ impl MeshArrays {
             + self.indices.len() * 4
     }
 
+    /// [`Self::mesh`] of a road strip or overlay mesh: the colour's alpha
+    /// (the road's half width in metres, `road.wesl`) divided by
+    /// [`ROAD_HALF_SCALE`] so the colours pack into 16 bits (10G).
+    pub(crate) fn road_mesh(mut self) -> Mesh {
+        for c in &mut self.colors {
+            c[3] = (c[3] / ROAD_HALF_SCALE).clamp(0.0, 1.0);
+        }
+        self.mesh()
+    }
+
+    /// Drops the colours when every one is white: a land-use terrain's
+    /// (its colour map colours it), 8 – 16 bytes a vertex less on the GPU
+    /// and the same picture (10G).
+    pub fn drop_white(&mut self) {
+        if self.colors.iter().all(|c| *c == [1.0; 4]) {
+            self.colors = Vec::new();
+        }
+    }
+
     /// Frees the arrays' spare capacity (meshes kept until uploaded).
     pub fn shrink_to_fit(&mut self) {
         self.positions.shrink_to_fit();
@@ -263,23 +358,109 @@ impl MeshArrays {
         self.indices.shrink_to_fit();
     }
 
+    /// The mesh for the GPU only (`RenderAssetUsages::RENDER_WORLD`: no
+    /// copy stays in the main world) in compact vertex formats (spec 14
+    /// Phase 10, 10G *The first tiles' GPU memory*): the normals in 16-bit
+    /// signed normalised components ([`ATTRIBUTE_NORMAL_PACKED`], 8 bytes
+    /// instead of 12), colours within 0 – 1 in 16-bit unsigned normalised
+    /// ones ([`ATTRIBUTE_COLOR_PACKED`], 8 instead of 16; others, such as
+    /// the houses' material codes in the alpha, stay 32-bit floats), no
+    /// colour at all when there is none ([`Self::drop_white`]). The shaders
+    /// read them as the same `vec3<f32>` / `vec4<f32>`.
     pub(crate) fn mesh(self) -> Mesh {
         let mut m = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::RENDER_WORLD,
         );
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
-        m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
-        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
+        m.insert_attribute(ATTRIBUTE_NORMAL_PACKED, pack_normals(&self.normals));
+        if !self.colors.is_empty() {
+            match pack_colors(&self.colors) {
+                Some(c) => m.insert_attribute(ATTRIBUTE_COLOR_PACKED, c),
+                None => m.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors),
+            }
+        }
         if !self.uvs.is_empty() {
             m.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
         }
         if !self.uvs_b.is_empty() {
-            m.insert_attribute(Mesh::ATTRIBUTE_UV_1, self.uvs_b);
+            match pack_codes(&self.uvs_b) {
+                Some(b) => m.insert_attribute(ATTRIBUTE_UV_1_CODES, b),
+                None => m.insert_attribute(Mesh::ATTRIBUTE_UV_1, self.uvs_b),
+            }
         }
         m.insert_indices(indices(self.indices, m.count_vertices()));
         m
     }
+}
+
+/// The vertex normal in 16-bit signed normalised components (the fourth
+/// is 0; the shaders read the first three as their `vec3<f32>`): 8 bytes
+/// a vertex instead of 12, an angle error under 0.01° (10G).
+pub const ATTRIBUTE_NORMAL_PACKED: bevy::mesh::MeshVertexAttribute =
+    bevy::mesh::MeshVertexAttribute::new(
+        "Vertex_Normal",
+        1,
+        bevy::render::render_resource::VertexFormat::Snorm16x4,
+    );
+
+/// The vertex colour in 16-bit unsigned normalised components: 8 bytes a
+/// vertex instead of 16, steps of 1 / 65,535 (10G).
+pub const ATTRIBUTE_COLOR_PACKED: bevy::mesh::MeshVertexAttribute =
+    bevy::mesh::MeshVertexAttribute::new(
+        "Vertex_Color",
+        5,
+        bevy::render::render_resource::VertexFormat::Unorm16x4,
+    );
+
+/// The second texture coordinates as 16-bit floats when they are whole
+/// codes (roads: layer, kind, lines; houses: materials and windows): 4
+/// bytes a vertex instead of 8, the same numbers (10G).
+pub const ATTRIBUTE_UV_1_CODES: bevy::mesh::MeshVertexAttribute =
+    bevy::mesh::MeshVertexAttribute::new(
+        "Vertex_Uv_1",
+        3,
+        bevy::render::render_resource::VertexFormat::Float16x2,
+    );
+
+/// A road mesh's colour alpha is its half width over this (m; `road.wesl`
+/// multiplies it back): up to 64 m in steps of 1 mm.
+pub const ROAD_HALF_SCALE: f32 = 64.0;
+
+/// The codes as [`ATTRIBUTE_UV_1_CODES`] takes them (`None`: one is not a
+/// whole number up to ±2048, which 16-bit floats hold exactly; they stay
+/// 32-bit floats).
+pub fn pack_codes(b: &[[f32; 2]]) -> Option<bevy::mesh::VertexAttributeValues> {
+    if !b
+        .iter()
+        .flatten()
+        .all(|v| v.fract() == 0.0 && v.abs() <= 2048.0)
+    {
+        return None;
+    }
+    Some(bevy::mesh::VertexAttributeValues::Float16x2(
+        b.iter().map(|v| v.map(half::f16::from_f32)).collect(),
+    ))
+}
+
+/// The normals as [`ATTRIBUTE_NORMAL_PACKED`] takes them.
+pub fn pack_normals(n: &[[f32; 3]]) -> bevy::mesh::VertexAttributeValues {
+    let q = |v: f32| (v.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+    bevy::mesh::VertexAttributeValues::Snorm16x4(
+        n.iter().map(|v| [q(v[0]), q(v[1]), q(v[2]), 0]).collect(),
+    )
+}
+
+/// The colours as [`ATTRIBUTE_COLOR_PACKED`] takes them (`None`: one is
+/// outside 0 – 1 – a code, not a colour – and they stay floats).
+pub fn pack_colors(c: &[[f32; 4]]) -> Option<bevy::mesh::VertexAttributeValues> {
+    if !c.iter().flatten().all(|v| (0.0..=1.0).contains(v)) {
+        return None;
+    }
+    let q = |v: f32| (v * 65535.0).round() as u16;
+    Some(bevy::mesh::VertexAttributeValues::Unorm16x4(
+        c.iter().map(|v| v.map(q)).collect(),
+    ))
 }
 
 /// 16-bit indices where the vertices allow (spec §14 Phase 10 B2: half
@@ -1920,7 +2101,7 @@ fn stream_tiles(
     mut seasons: Option<ResMut<crate::season::SeasonCache>>,
     radius: Option<Res<StreamRadius>>,
     pace: Option<Res<TileBuildPace>>,
-    thinning: Option<Res<PlantThinning>>,
+    (thinning, reach): (Option<Res<PlantThinning>>, Option<Res<NearTileReach>>),
 ) {
     let pace = pace.as_deref().copied().unwrap_or_default();
     let thinning = thinning.as_deref().copied().unwrap_or_default().0;
@@ -1929,12 +2110,19 @@ fn stream_tiles(
         return;
     };
     // The render distance's ring (10G): a short distance meshes fewer tiles.
+    let riding = view.flight.is_none() && view.guided_camera.is_none();
     if let Some(r) = radius.as_deref() {
-        r.cap(
-            &mut focus,
-            view.flight.is_none() && view.guided_camera.is_none(),
-        );
+        r.cap(&mut focus, riding);
     }
+    // A phone's reach (10G): only the neighbour tiles near the rider.
+    let reach = reach.and_then(|r| r.0).filter(|_| riding);
+    // The road ahead, a margin farther for the tiles already meshed.
+    let ahead = reach.map_or_else(Vec::new, |r| {
+        road_ahead(&view, r * REACH_AHEAD + REACH_DROP_MARGIN_M)
+    });
+    let ahead_n = reach.map_or(0, |r| {
+        ((r * REACH_AHEAD / REACH_AHEAD_STEP_M).ceil() as usize + 1).min(ahead.len())
+    });
     let p = focus.centre;
     // The world date (the sky's local date at the rider, spec §14 Phase 9),
     // in buckets of a few days: the seasonal look changes with it.
@@ -1998,7 +2186,8 @@ fn stream_tiles(
     }
     let jumped = is_jump(streamer.last_position, p);
     streamer.last_position = Some(p);
-    let rings = wanted_tile_rings(set, &focus);
+    let mut rings = wanted_tile_rings(set, &focus);
+    within_reach(set, &mut rings, p, &ahead[..ahead_n], reach);
     let wanted: Vec<TileId> = rings.iter().map(|&(_, id)| id).collect();
     if jumped {
         // Work for the old place is dropped (its tiles go below); loaded
@@ -2040,7 +2229,7 @@ fn stream_tiles(
         // tile over half a second (spec §4.5).
         let urgent: Vec<TileId> = urgent_tiles_within(set, p, pace.urgent_ring)
             .into_iter()
-            .filter(|id| !streamer.loaded.contains_key(id))
+            .filter(|id| !streamer.loaded.contains_key(id) && wanted.contains(id))
             .collect();
         let mut done = Vec::new();
         for id in urgent {
@@ -2068,7 +2257,13 @@ fn stream_tiles(
             }
         }
     }
-    let far = far_tiles_for(set, &focus, streamer.loaded.keys(), pace.keep_margin);
+    let mut far = far_tiles_for(set, &focus, streamer.loaded.keys(), pace.keep_margin);
+    if let Some(r) = reach {
+        let beyond: Vec<TileId> = beyond_reach(set, streamer.loaded.keys(), p, &ahead, r)
+            .filter(|id| !far.contains(id))
+            .collect();
+        far.extend(beyond);
+    }
     for id in far {
         streamer.terrain.remove(&id);
         if let Some(e) = streamer.loaded.remove(&id) {
@@ -2082,6 +2277,22 @@ fn stream_tiles(
         streamer.ready.retain(|(r, _)| *r != id);
         streamer.stale.remove(&id);
     }
+}
+
+/// The `loaded` tiles beyond `reach` + [`REACH_DROP_MARGIN_M`] of `p`
+/// and off the road `ahead` (sampled that margin farther; the rider's own
+/// tile is at 0: never; [`NearTileReach`]).
+pub fn beyond_reach<'a>(
+    set: &'a WorldSet,
+    loaded: impl IntoIterator<Item = &'a TileId> + 'a,
+    p: [f64; 2],
+    ahead: &'a [[f64; 2]],
+    reach: f64,
+) -> impl Iterator<Item = TileId> + 'a {
+    loaded
+        .into_iter()
+        .copied()
+        .filter(move |&id| !in_reach(set, id, p, ahead, reach + REACH_DROP_MARGIN_M))
 }
 
 /// Tile builds running or waiting for their upload at a time, beyond the
@@ -2328,14 +2539,21 @@ fn upload_tile(
         ))
         .with_children(|c| {
             c.spawn((
-                Mesh3d(meshes.add(t.terrain.mesh())),
+                Mesh3d(crate::mesh_kind::add(
+                    meshes,
+                    {
+                        t.terrain.drop_white();
+                        std::mem::take(&mut t.terrain).mesh()
+                    },
+                    "terrain",
+                )),
                 MeshMaterial3d(terrain_mat),
                 NotShadowCaster,
                 CameraInteraction::Solid,
             ));
             if !t.water.indices.is_empty() {
                 c.spawn((
-                    Mesh3d(meshes.add(t.water.mesh())),
+                    Mesh3d(crate::mesh_kind::add(meshes, t.water.mesh(), "water")),
                     MeshMaterial3d(materials.water.clone()),
                     NotShadowCaster,
                 ));
@@ -2353,7 +2571,8 @@ fn upload_tile(
                 .chain(houses.far.map(|p| (p, 2, false)));
             for (part, lod, shadows) in parts {
                 let range = ranges[usize::from(lod)].clone();
-                let mesh = Mesh3d(meshes.add(part.mesh.mesh()));
+                let kind = ["houses near", "houses mid", "houses far"][usize::from(lod)];
+                let mesh = Mesh3d(crate::mesh_kind::add(meshes, part.mesh.mesh(), kind));
                 let at = Transform::from_translation(Vec3::from(part.origin));
                 let mut e = match house {
                     Some(h) => c.spawn((mesh, MeshMaterial3d(h.clone()))),
@@ -2372,13 +2591,17 @@ fn upload_tile(
             }
             if !t.bridges.indices.is_empty() {
                 c.spawn((
-                    Mesh3d(meshes.add(t.bridges.mesh())),
+                    Mesh3d(crate::mesh_kind::add(meshes, t.bridges.mesh(), "bridges")),
                     MeshMaterial3d(mat.clone()),
                     CameraInteraction::Solid,
                 ));
             }
             if !t.roads.indices.is_empty() {
-                let mesh = Mesh3d(meshes.add(t.roads.mesh()));
+                let mesh = Mesh3d(crate::mesh_kind::add(
+                    meshes,
+                    std::mem::take(&mut t.roads).road_mesh(),
+                    "roads",
+                ));
                 // Roads and their markings lie on the terrain: no shadows of
                 // their own (spec §4.5).
                 match roads {
@@ -2399,7 +2622,11 @@ fn upload_tile(
             // Crossings, stop and give-way lines: blended over the road.
             if let (Some(road), false) = (roads, t.overlays.indices.is_empty()) {
                 c.spawn((
-                    Mesh3d(meshes.add(std::mem::take(&mut t.overlays).mesh())),
+                    Mesh3d(crate::mesh_kind::add(
+                        meshes,
+                        std::mem::take(&mut t.overlays).road_mesh(),
+                        "road overlays",
+                    )),
                     MeshMaterial3d(road.overlays.clone()),
                     crate::world::FlatOverlay,
                 ));
@@ -2433,7 +2660,11 @@ fn upload_tile(
                 }
                 if !chunk.far.indices.is_empty() {
                     c.spawn((
-                        Mesh3d(meshes.add(chunk.far.mesh())),
+                        Mesh3d(crate::mesh_kind::add(
+                            meshes,
+                            chunk.far.mesh(),
+                            "plants far",
+                        )),
                         MeshMaterial3d(materials.trees.clone()),
                         at,
                         CameraInteraction::SeeThrough,
@@ -2447,14 +2678,14 @@ fn upload_tile(
             // colours, the heads glowing at night.
             if !lamps.poles.indices.is_empty() {
                 c.spawn((
-                    Mesh3d(meshes.add(lamps.poles.mesh())),
+                    Mesh3d(crate::mesh_kind::add(meshes, lamps.poles.mesh(), "lamps")),
                     MeshMaterial3d(materials.vertex_coloured.clone()),
                     TileDetail,
                 ));
             }
             if let (Some(heads), false) = (lamp_heads, lamps.heads.indices.is_empty()) {
                 c.spawn((
-                    Mesh3d(meshes.add(lamps.heads.mesh())),
+                    Mesh3d(crate::mesh_kind::add(meshes, lamps.heads.mesh(), "lamps")),
                     MeshMaterial3d(heads.clone()),
                     NotShadowCaster,
                     TileDetail,
@@ -2469,7 +2700,7 @@ fn upload_tile(
                 for (range, [poles, heads]) in [(near, cell.near), (far, cell.far)] {
                     if !poles.indices.is_empty() {
                         c.spawn((
-                            Mesh3d(meshes.add(poles.mesh())),
+                            Mesh3d(crate::mesh_kind::add(meshes, poles.mesh(), "lamps")),
                             MeshMaterial3d(materials.vertex_coloured.clone()),
                             at,
                             range.clone(),
@@ -2478,7 +2709,7 @@ fn upload_tile(
                     }
                     if let (Some(h), false) = (lamp_heads, heads.indices.is_empty()) {
                         c.spawn((
-                            Mesh3d(meshes.add(heads.mesh())),
+                            Mesh3d(crate::mesh_kind::add(meshes, heads.mesh(), "lamps")),
                             MeshMaterial3d(h.clone()),
                             at,
                             range,
@@ -2500,7 +2731,11 @@ fn upload_tile(
             for chunk in obstacles.chunks {
                 let range = chunk.range();
                 let mut e = c.spawn((
-                    Mesh3d(meshes.add(chunk.mesh.mesh())),
+                    Mesh3d(crate::mesh_kind::add(
+                        meshes,
+                        chunk.mesh.mesh(),
+                        "obstacles",
+                    )),
                     MeshMaterial3d(materials.vertex_coloured.clone()),
                     Transform::from_translation(Vec3::from(chunk.origin)),
                     range,
@@ -2568,6 +2803,140 @@ mod tests {
     /// The memory per resident tile (spec §14 Phase 10 B2): meshes up to
     /// 65,536 vertices get 16-bit indices with the same values, larger
     /// ones keep 32 bits.
+    /// The packed vertex formats (10G *The first tiles' GPU memory*): a
+    /// terrain vertex of a land-use tile takes 28 bytes instead of 48, a
+    /// house's 48 instead of 56 (its colours carry codes), a road's 44.
+    #[test]
+    fn tile_meshes_upload_in_packed_vertex_formats() {
+        use bevy::mesh::VertexAttributeValues as V;
+        let stride = |m: &Mesh| m.get_mesh_vertex_buffer_layout(&mut Default::default());
+        let arrays = |colour: [f32; 4], uv_sets: usize| MeshArrays {
+            positions: vec![[0.0; 3]; 3],
+            normals: vec![[0.0, 1.0, 0.0], [0.6, 0.8, 0.0], [-1.0, 0.0, 0.0]],
+            colors: vec![colour; 3],
+            uvs: if uv_sets > 0 {
+                vec![[0.5; 2]; 3]
+            } else {
+                Vec::new()
+            },
+            uvs_b: if uv_sets > 1 {
+                vec![[3.0; 2]; 3]
+            } else {
+                Vec::new()
+            },
+            indices: vec![0, 1, 2],
+        };
+        // A land-use terrain: white vertices, the colour map colours it.
+        let mut terrain = arrays([1.0; 4], 1);
+        terrain.drop_white();
+        assert!(terrain.colors.is_empty());
+        let m = terrain.mesh();
+        assert!(m.attribute(Mesh::ATTRIBUTE_COLOR).is_none());
+        assert_eq!(stride(&m).0.layout().array_stride, 28);
+        // Normals in 16 bits, nearly unchanged.
+        let Some(V::Snorm16x4(n)) = m.attribute(ATTRIBUTE_NORMAL_PACKED) else {
+            panic!("packed normals");
+        };
+        assert_eq!(n[0], [0, 32767, 0, 0]);
+        assert_eq!(n[1], [19660, 26214, 0, 0]);
+        assert_eq!(n[2], [-32767, 0, 0, 0]);
+        // Colours within 0 – 1 in 16 bits; a tinted terrain keeps them.
+        let mut tinted = arrays([0.2, 0.5, 0.1, 1.0], 1);
+        tinted.drop_white();
+        let m = tinted.mesh();
+        let Some(V::Unorm16x4(c)) = m.attribute(ATTRIBUTE_COLOR_PACKED) else {
+            panic!("packed colours");
+        };
+        assert_eq!(c[0], [13107, 32768, 6554, 65535]);
+        assert_eq!(stride(&m).0.layout().array_stride, 36);
+        // A house's colours carry codes (alpha 3): floats, as before.
+        let m = arrays([0.2, 0.5, 0.1, 3.0], 2).mesh();
+        assert!(matches!(
+            m.attribute(Mesh::ATTRIBUTE_COLOR),
+            Some(V::Float32x4(_))
+        ));
+        // 12 + 8 + 16 + 8 + 4 (its codes in 16-bit floats).
+        assert_eq!(stride(&m).0.layout().array_stride, 48);
+        // A road: the half width over ROAD_HALF_SCALE, colours in 16 bits
+        // (44 bytes instead of 56); the shader multiplies it back.
+        let m = arrays([0.2, 0.5, 0.1, 3.75], 2).road_mesh();
+        let Some(V::Unorm16x4(c)) = m.attribute(ATTRIBUTE_COLOR_PACKED) else {
+            panic!("packed road colours");
+        };
+        assert!((f32::from(c[0][3]) / 65535.0 * ROAD_HALF_SCALE - 3.75).abs() < 0.001);
+        assert!(
+            include_str!("road.wesl").contains(&format!(
+                "const ROAD_HALF_SCALE: f32 = {ROAD_HALF_SCALE:.1};"
+            )),
+            "road.wesl's scale"
+        );
+        // Whole codes up to 2048 in 16-bit floats (uv_b = 3.0 here): 40.
+        assert!(matches!(
+            m.attribute(ATTRIBUTE_UV_1_CODES),
+            Some(V::Float16x2(b)) if b[0][0].to_f32() == 3.0
+        ));
+        assert_eq!(stride(&m).0.layout().array_stride, 40);
+        // Codes beyond (a road's seed bits) or fractions stay floats.
+        assert!(pack_codes(&[[2049.0, 0.0]]).is_none());
+        assert!(pack_codes(&[[0.5, 0.0]]).is_none());
+        assert!(pack_codes(&[[2048.0, -7.0]]).is_some());
+        // The same attribute ids: the shaders' locations stay.
+        assert_eq!(ATTRIBUTE_NORMAL_PACKED.id, Mesh::ATTRIBUTE_NORMAL.id);
+        assert_eq!(ATTRIBUTE_COLOR_PACKED.id, Mesh::ATTRIBUTE_COLOR.id);
+    }
+
+    /// A phone's reach (10G): of the 3 × 3 tiles around the rider only
+    /// those whose ground is within the reach are meshed; a meshed tile
+    /// goes again only beyond the reach and a margin.
+    #[test]
+    fn a_phones_reach_meshes_only_the_near_neighbour_tiles() {
+        let mut p = package();
+        let t = p.tiles[&TileKey { x: 0, z: 0 }].clone();
+        p.tiles = (-1..=1)
+            .flat_map(|z| (-1..=1).map(move |x| TileKey { x, z }))
+            .map(|key| (key, Tile { key, ..t.clone() }))
+            .collect();
+        let set = WorldSet::new("r", Arc::new(p));
+        let at = [20.0, 50.0];
+        let focus = riding_focus(at);
+        let mut rings = wanted_tile_rings(&set, &focus);
+        assert_eq!(rings.len(), 9);
+        let id = |x, z| (0, TileKey { x, z });
+        assert_eq!(tile_distance(&set, id(0, 0), at), 0.0);
+        assert_eq!(tile_distance(&set, id(-1, 0), at), 20.0);
+        assert!((tile_distance(&set, id(-1, -1), at) - 50f64.hypot(20.0)).abs() < 1e-9);
+        let mut near = rings.clone();
+        within_reach(&set, &mut near, at, &[], Some(30.0));
+        let sorted = |r: &[(i32, TileId)]| {
+            let mut k: Vec<TileId> = r.iter().map(|r| r.1).collect();
+            k.sort();
+            k
+        };
+        assert_eq!(sorted(&near), vec![id(-1, 0), id(0, 0)]);
+        // The road ahead runs north into tile (0, 1): it is meshed too.
+        let ahead = [[20.0, 60.0], [20.0, 90.0], [20.0, 110.0]];
+        within_reach(&set, &mut rings, at, &ahead, Some(30.0));
+        assert_eq!(sorted(&rings), vec![id(-1, 0), id(0, 0), id(0, 1)]);
+        // Without a reach: all nine.
+        let mut all = wanted_tile_rings(&set, &focus);
+        within_reach(&set, &mut all, at, &[], None);
+        assert_eq!(all.len(), 9);
+        // Dropped beyond reach + margin and off the road only; the own tile
+        // never.
+        let loaded = [id(0, 0), id(-1, 0), id(1, 0), id(0, 1)];
+        assert!(
+            beyond_reach(&set, &loaded, at, &ahead, 30.0)
+                .next()
+                .is_none()
+        );
+        let gone: Vec<TileId> =
+            beyond_reach(&set, &loaded, at, &ahead, -REACH_DROP_MARGIN_M + 10.0).collect();
+        assert_eq!(gone, vec![id(-1, 0), id(1, 0)]);
+        let gone: Vec<TileId> =
+            beyond_reach(&set, &loaded, at, &[], -REACH_DROP_MARGIN_M + 10.0).collect();
+        assert_eq!(gone, vec![id(-1, 0), id(1, 0), id(0, 1)]);
+    }
+
     #[test]
     fn small_meshes_get_16_bit_indices() {
         let small = indices(vec![0, 1, 65_535], 65_536);

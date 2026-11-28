@@ -94,6 +94,12 @@ impl MemoryGuard {
 /// How often the guard looks (s).
 const GUARD_INTERVAL_S: f64 = 2.0;
 
+/// [`MemoryMode::near_reach_m`] of the saver mode (m; the road ahead twice
+/// as far, `ocw_render::package::REACH_AHEAD`).
+pub const SAVER_REACH_M: f64 = 300.0;
+/// … of the minimal mode and after the guard's last step (m).
+pub const MINIMAL_REACH_M: f64 = 200.0;
+
 /// The guard's system: every [`GUARD_INTERVAL_S`] the wasm memory and the
 /// GPU sums against the budget.
 pub fn guard_memory(world: &mut World) {
@@ -120,8 +126,13 @@ pub fn guard_memory(world: &mut World) {
     }
     world.insert_resource(ocw_render::quality::ShadowMapCap(Some(512)));
     if step == GuardStep::Least {
-        // New tiles with a third of the trees.
+        // New tiles with a third of the trees, only the nearest meshed.
         world.insert_resource(ocw_render::package::PlantThinning(3));
+        let reach = world
+            .get_resource::<ocw_render::package::NearTileReach>()
+            .and_then(|r| r.0)
+            .map_or(MINIMAL_REACH_M, |r| r.min(MINIMAL_REACH_M));
+        world.insert_resource(ocw_render::package::NearTileReach(Some(reach)));
     }
     let line = format!(
         "memory guard: {:.0} of {:.0} MB used – {}",
@@ -212,6 +223,21 @@ impl MemoryMode {
             Self::Normal => 0,
             Self::Phone | Self::Saver => 2,
             Self::Minimal => 3,
+        }
+    }
+
+    /// How far from the rider the neighbour tiles are meshed (m; `None`:
+    /// the whole 3 × 3 ring): the saver mode (iOS' default) meshes those
+    /// within 300 m and those the road enters within 600 m ahead, the
+    /// minimal one within 200 / 400 m – the first tiles' GPU
+    /// buffers were 120 – 134 MB on Andorra in WebKit with all nine (spec
+    /// 14 Phase 10, 10G *The first tiles' GPU memory*). Desktops and the
+    /// phone mode (Android) keep the ring.
+    pub fn near_reach_m(self) -> Option<f64> {
+        match self {
+            Self::Normal | Self::Phone => None,
+            Self::Saver => Some(SAVER_REACH_M),
+            Self::Minimal => Some(MINIMAL_REACH_M),
         }
     }
 
@@ -362,6 +388,12 @@ mod tests {
         assert_eq!(MemoryMode::Normal.course_rings(page), None);
         assert_eq!(MemoryMode::Phone.course_rings(phone), Some(4));
         assert_eq!(MemoryMode::Minimal.course_rings(minimal), Some(2));
+        // The neighbour tiles meshed near the rider only in the saver and
+        // minimal modes (10G).
+        assert_eq!(MemoryMode::Normal.near_reach_m(), None);
+        assert_eq!(MemoryMode::Phone.near_reach_m(), None);
+        assert_eq!(MemoryMode::Saver.near_reach_m(), Some(300.0));
+        assert_eq!(MemoryMode::Minimal.near_reach_m(), Some(200.0));
         // Every second tree on phones, all on desktops.
         assert_eq!(MemoryMode::Normal.plant_thinning(), 0);
         assert_eq!(MemoryMode::Phone.plant_thinning(), 2);

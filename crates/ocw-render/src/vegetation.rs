@@ -325,7 +325,7 @@ pub fn lazy_plants(
                 commands.entity(e).try_remove::<LazyBuild>().late_insert(
                     "plants",
                     (
-                        Mesh3d(meshes.add(m.mesh())),
+                        Mesh3d(crate::mesh_kind::add(&mut meshes, m.mesh(), "plants near")),
                         MeshMaterial3d(lazy.material.clone()),
                     ),
                 );
@@ -364,7 +364,10 @@ pub fn lazy_plants(
     for ((e, _, material), m) in now.into_iter().zip(built) {
         commands.entity(e).late_insert(
             "plants",
-            (Mesh3d(meshes.add(m.mesh())), MeshMaterial3d(material)),
+            (
+                Mesh3d(crate::mesh_kind::add(&mut meshes, m.mesh(), "plants near")),
+                MeshMaterial3d(material),
+            ),
         );
     }
     ahead.sort_by(|a, b| a.0.total_cmp(&b.0));

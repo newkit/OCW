@@ -28,6 +28,13 @@
 //!   older script) replaces its section, the file before it kept as
 //!   `ocw.toml.bak`.
 //!
+//! - **Commented examples** ([`examples`], spec 3.2.4): a new file ends
+//!   with every known section and key commented out, one line each with
+//!   what it is, its default and its values; at the start the app adds
+//!   the examples an existing file lacks ([`fill_examples`]: appended
+//!   once, never a value changed, comments kept). A test fails when a key
+//!   has no example.
+//!
 //! The workshop's garage and hearts ledger (`<data dir>/ocw/workshop.toml`,
 //! `hearts-ledger.jsonl`) are game data, not settings, and stay in the data
 //! folder; so do the trusted world keys (`trusted-keys.json`, managed by
@@ -39,6 +46,8 @@ use std::sync::Mutex;
 
 use bevy::prelude::Resource;
 use toml_edit::{DocumentMut, Item, Table};
+
+pub mod examples;
 
 /// The config file's name.
 pub const CONFIG_FILE: &str = "ocw.toml";
@@ -64,11 +73,34 @@ pub const SECTIONS: &[&str] = &[
     "settings", "riders", "devices", "servers", "start", "strava",
 ];
 
+/// The sections of `secrets.toml` (each needs its examples, checked by
+/// `examples`' tests).
+#[cfg(test)]
+pub const SECRET_SECTIONS: &[&str] = &["strava", "strava_token", "account", "ant"];
+
 /// The first lines of a new `ocw.toml`.
-const CONFIG_HEADER: &str = "# Open Cycling World: the local settings of this computer (spec 3.2.4).\n# Edit by hand while the app is closed; secrets are in secrets.toml.\n";
+const CONFIG_HEADER: &str = "\
+# Open Cycling World: the local settings of this computer (spec 3.2.4).
+#   Linux    ~/.config/ocw/ocw.toml
+#   Windows  %APPDATA%\\ocw\\ocw.toml
+#   macOS    ~/Library/Application Support/ocw/ocw.toml
+# (OCW_CONFIG_DIR names another folder, --settings-file another file.)
+# The app edits this file itself: a section it saves replaces only that
+# section, your comments and the other sections stay. Edit it by hand while
+# the app is closed. Secrets (Strava, sign-in, the ANT+ key) are in
+# secrets.toml next to it. At the end: every key as a commented-out example.
+";
 /// The first lines of a new `secrets.toml`.
-const SECRETS_HEADER: &str =
-    "# Open Cycling World: secrets (readable only by you). Do not share this file.\n";
+const SECRETS_HEADER: &str = "\
+# Open Cycling World: secrets (spec 3.2.4). Readable only by you (mode 0600);
+# never share this file or put it in a repository.
+#   Linux    ~/.config/ocw/secrets.toml
+#   Windows  %APPDATA%\\ocw\\secrets.toml
+#   macOS    ~/Library/Application Support/ocw/secrets.toml
+# The app edits this file itself (Strava, sign-in, Devices -> ANT+) and keeps
+# your comments. At the end: every key as a commented-out example with a
+# made-up placeholder value.
+";
 
 /// One read-modify-write of a file at a time (the Strava thread saves its
 /// tokens while the game saves settings).
@@ -187,6 +219,7 @@ impl Slot {
             Self::Section { file, key, private } => {
                 let _lock = WRITE.lock().unwrap_or_else(|e| e.into_inner());
                 let mut doc = read_doc(file)?.unwrap_or_else(|| new_doc(*private));
+                settle_trailing(&mut doc);
                 set_section(&mut doc, key, text)?;
                 write_file(file, &doc.to_string(), *private)
             }
@@ -390,7 +423,77 @@ fn new_doc(private: bool) -> DocumentMut {
     } else {
         CONFIG_HEADER
     });
+    doc.set_trailing(examples::block(if private {
+        examples::File::Secrets
+    } else {
+        examples::File::Config
+    }));
     doc
+}
+
+/// A file of only comments (made by [`fill_examples`]) parses into the
+/// document's trailing text: its header goes back before the tables, so a
+/// section written next lands between the header and the examples.
+fn settle_trailing(doc: &mut DocumentMut) {
+    if !doc.as_table().is_empty() {
+        return;
+    }
+    let Some(t) = doc.trailing().as_str().map(str::to_owned) else {
+        return;
+    };
+    let Some(i) = t.find(examples::BLOCK_MARK) else {
+        return;
+    };
+    let (head, rest) = t.split_at(i);
+    if head.trim().is_empty() {
+        return;
+    }
+    let prefix = doc
+        .decor()
+        .prefix()
+        .and_then(|p| p.as_str())
+        .unwrap_or("")
+        .to_owned();
+    doc.decor_mut()
+        .set_prefix(format!("{prefix}{}\n", head.trim_end()));
+    doc.set_trailing(format!("\n{rest}"));
+}
+
+/// Gives `ocw.toml` and `secrets.toml` their commented-out examples
+/// (spec 3.2.4): a missing file is made (only its header and the
+/// examples; `secrets.toml` private), an existing one gets the examples
+/// it lacks appended – its text before stays byte for byte; a file that
+/// does not parse is left alone. Idempotent. Returns a line per file
+/// changed (for the log) and the problems.
+pub fn fill_examples(files: &ConfigFiles) -> (Vec<String>, Vec<String>) {
+    let mut notes = Vec::new();
+    let mut problems = Vec::new();
+    for (path, private) in [(&files.config, false), (&files.secrets, true)] {
+        let file = if private {
+            examples::File::Secrets
+        } else {
+            examples::File::Config
+        };
+        let _lock = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        let result = match read_text(path) {
+            Ok(None) => write_file(path, &new_doc(private).to_string(), private)
+                .map(|()| Some("made with the examples")),
+            Ok(Some(text)) => match examples::fill(file, &text) {
+                Ok(Some(new)) => {
+                    write_file(path, &new, private).map(|()| Some("examples of new keys added"))
+                }
+                Ok(None) => Ok(None),
+                Err(e) => Err(format!("{e}; no examples added")),
+            },
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok(Some(what)) => notes.push(format!("{}: {what}", home_relative(path))),
+            Ok(None) => {}
+            Err(e) => problems.push(format!("{}: {e}", home_relative(path))),
+        }
+    }
+    (notes, problems)
 }
 
 /// Writes through a temporary file (a crash never leaves half a file);
@@ -819,6 +922,13 @@ mod tests {
         dir
     }
 
+    /// The lines of a file that are not comments (the examples are).
+    pub fn values(text: &str) -> Vec<&str> {
+        text.lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect()
+    }
+
     fn listing(dir: &Path) -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_dir(dir)
             .unwrap()
@@ -867,7 +977,14 @@ mod tests {
         assert!(!settings.contains("auto_upload"), "{settings}");
         assert!(settings.contains("bots = 3"), "{settings}");
         let whole = std::fs::read_to_string(&files.config).unwrap();
-        assert_eq!(whole.matches("auto_upload").count(), 1, "{whole}");
+        assert_eq!(
+            values(&whole)
+                .iter()
+                .filter(|l| l.contains("auto_upload"))
+                .count(),
+            1,
+            "{whole}"
+        );
         // Nothing in [strava]: the settings text as it is.
         let other = ConfigFiles::in_dir(&temp_dir("auto-upload-none"));
         other.section("settings").write(SETTINGS).unwrap();
@@ -1034,8 +1151,8 @@ mod tests {
             SETTINGS
         );
         let text = std::fs::read_to_string(&f).unwrap();
-        assert!(text.contains("[settings.audio]"), "{text}");
-        assert!(text.contains("[[riders.rider]]"), "{text}");
+        assert!(values(&text).contains(&"[settings.audio]"), "{text}");
+        assert!(values(&text).contains(&"[[riders.rider]]"), "{text}");
         // A new-format file is left alone.
         let (notes, _) = migrate(&files);
         assert!(notes.is_empty(), "{notes:?}");
@@ -1225,8 +1342,138 @@ mod tests {
         let again = ocw_client::join::RecentJoins::parse(&s.load().unwrap().unwrap());
         assert_eq!(again.entries, recent.entries);
         let text = std::fs::read_to_string(&files.config).unwrap();
-        assert!(text.contains("[[servers.recent]]"), "{text}");
-        assert!(text.contains("world = \"Black Forest north\""), "{text}");
+        assert!(values(&text).contains(&"[[servers.recent]]"), "{text}");
+        assert!(
+            values(&text).contains(&"world = \"Black Forest north\""),
+            "{text}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A fresh config folder (spec 3.2.4): both files are made with their
+    /// header and every example, commented out (no value), `secrets.toml`
+    /// private; values the app saves afterwards go between the header and
+    /// the examples, and the rider's comments and the examples stay across
+    /// saves; filling again changes nothing.
+    #[test]
+    fn fresh_files_carry_every_example_and_keep_them_across_saves() {
+        use ocw_ui::settings::TextStore;
+        let dir = temp_dir("examples-fresh");
+        let files = ConfigFiles::in_dir(&dir);
+        let (notes, problems) = fill_examples(&files);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        for (path, file) in [
+            (&files.config, examples::File::Config),
+            (&files.secrets, examples::File::Secrets),
+        ] {
+            let text = std::fs::read_to_string(path).unwrap();
+            assert!(text.starts_with("# Open Cycling World"), "{text}");
+            let t: toml::Table = toml::from_str(&text).unwrap();
+            assert!(t.is_empty(), "only comments: {t:?}");
+            assert!(examples::missing(file, &text).unwrap().is_empty());
+        }
+        let secrets = std::fs::read_to_string(&files.secrets).unwrap();
+        assert!(
+            secrets.contains("%APPDATA%\\ocw\\secrets.toml"),
+            "{secrets}"
+        );
+        assert!(
+            secrets.contains("# [ant]\n# network_key = \"0A1B2C3D4E5F6071\"   # "),
+            "{secrets}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&files.secrets)
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // Idempotent.
+        assert_eq!(fill_examples(&files), (vec![], vec![]));
+        // The app saves values; a comment of the rider's next to one.
+        let mut store = SettingsStore {
+            files: files.clone(),
+        };
+        store.save("[audio]\nmaster = 40\n").unwrap();
+        save_start_choice(&files, ocw_client::menu::start::Choice::Server).unwrap();
+        files
+            .secret("ant")
+            .write("network_key = \"0A1B2C3D4E5F6071\"\n")
+            .unwrap();
+        let text = std::fs::read_to_string(&files.config).unwrap();
+        let with_note = text.replace("master = 40", "# my own note\nmaster = 40");
+        std::fs::write(&files.config, &with_note).unwrap();
+        store.save("[audio]\nmaster = 55\n").unwrap();
+        let text = std::fs::read_to_string(&files.config).unwrap();
+        assert!(text.starts_with("# Open Cycling World"), "{text}");
+        assert!(text.contains("# my own note\nmaster = 55"), "{text}");
+        let (head, block) = text.split_at(text.find(examples::BLOCK_MARK).unwrap());
+        assert!(
+            head.contains("\n[settings.audio]") && head.contains("\n[start]"),
+            "{text}"
+        );
+        assert_eq!(text.matches(examples::BLOCK_MARK).count(), 1);
+        assert!(
+            examples::missing(examples::File::Config, &text)
+                .unwrap()
+                .is_empty()
+        );
+        let t: toml::Table = toml::from_str(&text).unwrap();
+        assert_eq!(t["settings"]["audio"]["master"].as_integer(), Some(55));
+        assert_eq!(t["start"]["choice"].as_str(), Some("server"));
+        assert!(toml::from_str::<toml::Table>(block).unwrap().is_empty());
+        let secrets = std::fs::read_to_string(&files.secrets).unwrap();
+        let s: toml::Table = toml::from_str(&secrets).unwrap();
+        assert_eq!(s["ant"]["network_key"].as_str(), Some("0A1B2C3D4E5F6071"));
+        assert!(
+            secrets.find("\n[ant]").unwrap() < secrets.find(examples::BLOCK_MARK).unwrap(),
+            "{secrets}"
+        );
+        // Filling again: nothing (the values and the examples are there).
+        assert_eq!(fill_examples(&files), (vec![], vec![]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An existing file of an older version gets the missing examples
+    /// once: its values and comments stay byte for byte; a broken file is
+    /// left alone.
+    #[test]
+    fn an_old_file_gets_the_missing_examples_once() {
+        let dir = temp_dir("examples-old");
+        let files = ConfigFiles::in_dir(&dir);
+        let old = "# my notes\n[settings.audio]\n# quieter at night\nmaster = 30\n\n[start]\nchoice = \"local\"\n";
+        std::fs::write(&files.config, old).unwrap();
+        std::fs::write(&files.secrets, "[strava]\nclient_id = \"12345\"\n").unwrap();
+        let (notes, problems) = fill_examples(&files);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        let text = std::fs::read_to_string(&files.config).unwrap();
+        assert!(text.starts_with(old), "{text}");
+        assert!(
+            !text.contains("# master = ") && !text.contains("# choice = "),
+            "{text}"
+        );
+        let secrets = std::fs::read_to_string(&files.secrets).unwrap();
+        assert!(
+            !secrets.contains("# client_id = ") && secrets.contains("# client_secret = "),
+            "{secrets}"
+        );
+        assert_eq!(fill_examples(&files), (vec![], vec![]));
+        assert_eq!(std::fs::read_to_string(&files.config).unwrap(), text);
+        // Broken: untouched, a problem.
+        std::fs::write(&files.config, "[[settings\n").unwrap();
+        let (notes, problems) = fill_examples(&files);
+        assert!(
+            notes.is_empty() && problems.len() == 1,
+            "{notes:?} {problems:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&files.config).unwrap(),
+            "[[settings\n"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

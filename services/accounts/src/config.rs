@@ -398,6 +398,82 @@ impl Config {
 mod tests {
     use super::*;
 
+    /// The field names a serde struct reads (its derive's list).
+    fn fields<T: serde::de::DeserializeOwned>() -> &'static [&'static str] {
+        use serde::de::{Error, Visitor};
+        struct Probe<'a>(&'a mut &'static [&'static str]);
+        impl<'de> serde::Deserializer<'de> for Probe<'_> {
+            type Error = serde::de::value::Error;
+            fn deserialize_any<V: Visitor<'de>>(self, _: V) -> Result<V::Value, Self::Error> {
+                Err(Error::custom("probe"))
+            }
+            fn deserialize_struct<V: Visitor<'de>>(
+                self,
+                _: &'static str,
+                fields: &'static [&'static str],
+                _: V,
+            ) -> Result<V::Value, Self::Error> {
+                *self.0 = fields;
+                Err(Error::custom("probe"))
+            }
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+                bytes byte_buf option unit unit_struct newtype_struct seq tuple
+                tuple_struct map enum identifier ignored_any
+            }
+        }
+        let mut f: &'static [&'static str] = &[];
+        let _ = T::deserialize(Probe(&mut f));
+        assert!(!f.is_empty(), "{}", std::any::type_name::<T>());
+        f
+    }
+
+    /// The rule (CLAUDE.md, spec 3.2.4): every key of the config has an
+    /// example in `accounts.example.toml`, set or commented out, in its
+    /// section – a new field fails here until it is documented there.
+    #[test]
+    fn every_config_key_is_in_the_example() {
+        let text = include_str!("../accounts.example.toml");
+        // (section, key) of every `key = ` line, set or commented out.
+        let mut found: Vec<(String, String)> = Vec::new();
+        let mut section = String::new();
+        for line in text.lines() {
+            let l = line.trim_start().trim_start_matches('#').trim_start();
+            if let Some(h) = l.strip_prefix('[') {
+                section = h.trim_matches(|c| c == '[' || c == ']').to_string();
+            } else if let Some((k, _)) = l.split_once(" = ")
+                && !k.is_empty()
+                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                found.push((section.clone(), k.to_string()));
+            }
+        }
+        let mut lacking = Vec::new();
+        let sections: [(&str, &[&str]); 9] = [
+            ("", fields::<Config>()),
+            ("tokens", fields::<Lifetimes>()),
+            ("keys", fields::<KeyConfig>()),
+            ("storage", fields::<StorageConfig>()),
+            ("clients", fields::<ClientConfig>()),
+            ("google", fields::<GoogleConfig>()),
+            ("strava", fields::<StravaConfig>()),
+            ("rate_limit", fields::<RateLimit>()),
+            ("hearts", fields::<HeartsConfig>()),
+        ];
+        for (s, keys) in sections {
+            for k in keys {
+                let is_section = s.is_empty() && sections.iter().any(|(n, _)| n == k);
+                if !is_section && !found.iter().any(|(fs, fk)| fs == s && fk == k) {
+                    lacking.push(format!("[{s}] {k}"));
+                }
+            }
+        }
+        assert!(
+            lacking.is_empty(),
+            "not in accounts.example.toml: {lacking:?}"
+        );
+    }
+
     #[test]
     fn example_config_parses() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("accounts.example.toml");

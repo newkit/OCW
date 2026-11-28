@@ -39,6 +39,7 @@ button, or `systemctl --user restart ocw-build-dashboard.service`).
 
 | Version | Date | Change | Unit changed |
 |---|---|---|---|
+| 1.10.0 | 2026-11-28 | **Routine cleanup**: the janitor applies the cleanup rules shared with `scripts/remote-gc.sh` (`cleanup_rules.py`: every checkout class – agent, merge, release, other –, whole checkouts idle for 30 days, leftovers of failed deletions, the web tests' browser profiles, old release output) once a day on every enabled, reachable machine and at once above 75 % or below 40 GB free; the last pass per machine (when, why, freed) on the cards and in the Janitor panel, kept across restarts (`build-log/janitor-state.json`); kill switch `OCW_JANITOR=off\|dry-run`; long-path safe deletion on Windows; `remote_gc.py` is `remote-gc.sh`'s program | no |
 | 1.9.2 | 2026-11-19 | Appendix C lists each open question with its full text (what it is about, the options, the proposal), not just its title | no |
 | 1.9.1 | 2026-11-19 | Question ids without the paragraph sign ("2.8.1 Q6"), as the spec no longer uses it | no |
 | 1.9.0 | 2026-11-19 | **Open questions overview**: `spec_questions.py overview SPEC [--write]` prints or writes Appendix C of the spec (all open questions grouped by phase / section, with their proposals, between generated markers); "superseded" counts as closed like decided / postponed | no |
@@ -93,9 +94,10 @@ directory, never in the repository).
   drive and C:. Use is df's (used / (used + free)); the bars turn amber
   above 75 % and red above 85 %, and a red banner over the page names every
   disk above 92 %.
-- **Janitor:** its mode, the last pass per machine (what it deleted or, in
-  dry-run mode, would delete, and why) and the recent log entries; the size
-  of `test-output/` on this machine (never deleted).
+- **Janitor:** its mode and schedule, the last pass per machine (when,
+  routine or full disk, what it deleted or, in dry-run mode, would delete,
+  how much it freed, and why) and the recent log entries; the size of
+  `test-output/` on this machine (never deleted).
 - **Art project:** the last run of the hourly art collector
   (`collect.sh` of the art project's own repository
   [OCW-ART](https://github.com/newkit/OCW-ART), its `ART-PROJECT.md` §5.1;
@@ -444,8 +446,9 @@ browser); without it they ask for it, and a POST without it gets 403.
   afterwards; a running run keeps its slot, also one above a lowered count
   (it finishes normally; the dashboard shows that slot until it ends).
 - **Probes stay:** the dashboard's poll and the janitor still read
-  disabled machines (read-only probes, and the janitor's cleanup of
-  `target/` when their disk fills up); only builds are refused.
+  disabled machines (read-only probes, and the janitor's cleanup when
+  their disk fills up – its daily routine pass runs on enabled machines
+  only); only builds are refused.
 - **CLI:** `python3 tools/build-dashboard/build_machines.py list`, `set
   MACHINE [--enable|--disable] [--slots N] [--reason R] [--note N]
   [--battery-guard STOP:START|off] [--by WHO]` (logged with source `cli`). `--no-machine-settings` turns the page's
@@ -454,26 +457,64 @@ browser); without it they ask for it, and a POST without it gets 403.
 ## Janitor (disk cleanup)
 
 A thread of the dashboard; one machine per pass, at most one pass every
-10 minutes, on the machine whose checkouts' disk is fullest above 75 %:
+10 minutes. It applies the cleanup rules of `cleanup_rules.py` – the rule
+set `scripts/remote-gc.sh` uses too (`remote_gc.py`; no second copy):
 
-| Disk use | What goes |
+| Class (by the checkout's name) | Its `target/` goes when |
 |---|---|
-| > 75 % | `target/` of agent checkouts (`<repo>-worktree-agent-…`) whose branch is merged into main (worktree removed) or gone, unused for 2 h; in the main checkout's `target/`, build units unused for 3 days that a newer unit of the same crate and kind replaced, and incremental session directories unused for 3 days |
-| > 85 % | also `target/` of the least recently used agent checkouts idle > 24 h, oldest first, until the disk is estimated below 85 % |
+| main checkout, `<repo>-HEAD` (release / deploy builds), a directory with its own `.git` | never |
+| any checkout a live task marker names (running or waiting) | never |
+| any checkout synced within the last 24 h (`OCW_GC_RECENT_H`) | never – except an agent checkout whose branch is gone |
+| agent (`worktree-agent-*`) | branch gone → at once; merged into main and the local worktree removed; merged into main **with commits of its own** and not synced for 2 days (`OCW_GC_AGENT_DAYS`), even while the worktree exists; a branch without commits of its own (a new agent: it also looks merged) only after 14 days without a sync |
+| merge (`merge-*`, branch `merge/…`) | branch gone or merged into main; or not synced for 3 days (`OCW_GC_MERGE_DAYS`) |
+| release (`release-X.Y.Z`) | older than the newest release (highest version among the tags, Cargo.toml and the checkouts there; 0.2.10 > 0.2.9) and not synced for 7 days (`OCW_GC_RELEASE_DAYS`) |
+| other (`fix-*`, `strava-*`, `agent-*`, …) | merged into main with commits of its own; no branch of that name (gone, or a name given by hand) or a branch without commits of its own: not synced for 14 days (`OCW_GC_OTHER_DAYS`); an open branch stays |
+
+**The whole checkout directory** goes when its `target/` may go for a reason
+that cannot end (branch gone or merged, no branch, an older release), it was
+not synced for 30 days (`OCW_GC_CHECKOUT_DAYS`), no local worktree uses the
+branch and it holds **no file under `test-output/` or `data/`** – output that
+may never have been fetched keeps the checkout, and the plan says so. Also
+removed: `target.ocw-gc.*` / `target.ocw-janitor.*` and `<checkout>.ocw-gc.*`
+left by a failed deletion (older than 1 h, `OCW_GC_STRAY_H`); the browser
+profiles our web tests leave in the temp directory (`ocw-chromium-*`, older
+than 24 h, `OCW_GC_TEMP_H`, not named by a running process); release output
+folders `~/ocw-release-X.Y.Z` older than the newest release and unchanged for
+7 days, unless they hold world packages (a `world*` entry). Never: the
+sources of a kept checkout, world data, the sccache cache (capped by
+`sccache_size`, default 30G), task markers (`remote.sh` sweeps those of dead
+processes on every run). "Last synced" is read on the machine: the newest of
+the checkout's `.ocw-sync/` (rewritten by every sync), `.ocw-last-run`
+(touched by every run) and cargo's directories in `target/`, else the
+directory's own time; ages use the machine's clock.
+
+When it runs:
+
+| When | What goes |
+|---|---|
+| once a day per enabled, reachable machine (`OCW_JANITOR_ROUTINE_H`, default 24, 0 = never) | everything the rules allow |
+| checkouts' disk > 75 % or < 40 GB free (`OCW_JANITOR_FREE_GB`): at once, at most once an hour per machine, the fullest first, also on machines disabled for building | the rules, and in the main checkout's `target/` the build units unused for 3 days that a newer unit of the same crate and kind replaced, and incremental session directories unused for 3 days |
+| > 85 % | also `target/` of the least recently used agent, merge and other checkouts idle > 24 h, oldest first, until the disk is estimated below 85 % |
 | > 92 % | red banner and a log line |
 
-"Unused" is the newest of `.ocw-last-run` (touched by every `remote.sh
-run`), `target/`, `target/*/deps`, `.fingerprint` and `incremental`. Branch
-states come from this checkout's git (like `scripts/remote-gc.sh`). Kept
-always: the sources of every checkout, checkouts with a running or waiting
-task (also checked on the machine right before each deletion; `target/` is
-renamed first), the sccache cache, `data/`, `test-output/`, other
-checkouts (`OCW-bisect-…`). Every deletion is logged as a JSON line in
+Branch states come from this checkout's git (`cleanup_rules.git_facts`: a
+branch is "merged with commits of its own" when its tip is merged into main
+but not on main's first-parent line). Kept always: the main checkout's
+sources, `<repo>-HEAD`, checkouts with a running or waiting task (also
+checked on the machine right before each deletion; a `target/` or checkout
+is renamed first), the sccache cache, world data, a checkout's
+`test-output/` and `data/`. Every deletion is logged as a JSON line in
 `test-output/build-log/DAY/janitor.jsonl` (time, machine, path relative to
-the checkouts' directory, bytes, reason, threshold, mode); dry-run logs
-each plan once as `would-delete`. `--janitor off|dry-run|on` (default on).
-`scripts/remote-gc.sh --branch <branch>` and `remote.sh`'s dev-profile
-cleanup write to the same log.
+the checkouts' directory, bytes, kind, class, reason, threshold, mode);
+dry-run logs each plan once as `would-delete`. The last pass per machine is
+kept in `test-output/build-log/janitor-state.json`, so a restart does not
+start the daily passes over. Mode: `--janitor off|dry-run|on`, default from
+the environment's `OCW_JANITOR` (the kill switch), else on.
+`scripts/remote-gc.sh` and `remote.sh`'s dev-profile cleanup write to the
+same log. Windows: free space comes from `[System.IO.DriveInfo]`
+(`Win32_LogicalDisk` is denied over ssh), and what `Remove-Item` leaves of
+paths over 260 characters is removed with `rd` on the `\\?\` path;
+`scripts/remote-gc.sh --selftest MACHINE` checks that on a machine.
 
 The slot count of a machine is found like `scripts/remote.sh` does: its
 `slots` in `build-machines.toml` (set on the page, above), else its `slots` key
@@ -604,9 +645,10 @@ performance counters are denied to a non-admin build user over SSH:
   are always HTML-escaped. The poll snippets change nothing on
   the machines (no kills, no files written; stale task markers are cleaned
   up by `remote.sh`, not by the dashboard). The only changes it makes are
-  the janitor's deletions of build artefacts (`<checkout>/target` and old
-  units in the main checkout's `target/`), off with `--janitor off`, only
-  logged with `--janitor dry-run`.
+  the janitor's deletions (below: stale checkouts' `target/`, stale
+  checkouts, leftovers, temp folders, old release output, old units in the
+  main checkout's `target/`), off with `--janitor off` or `OCW_JANITOR=off`,
+  only logged with `--janitor dry-run`.
 - The coordinator card reads only process names, parents and RSS
   (`/proc/PID/stat`), never command lines or environments; the Claude
   tasks only the task files' mtime and size, never their content. Neither
