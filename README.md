@@ -2,7 +2,8 @@
 
 **Try it in your browser: <https://newkit.github.io/OCW/>** – ride solo on the
 test routes or in the worlds, or **ride together with everyone on the public
-server** (Liechtenstein, with voice chat), with virtual power or a smart
+server** on Fly.io (Liechtenstein, with voice chat and 10 bots; who is riding:
+<https://ocw-server.fly.dev/>), with virtual power or a smart
 trainer over Bluetooth in Chrome or Edge. It is a development build (spec 14
 Phase 10 B8a, 11.5 *Join info*); sign-in comes with the hosted version.
 
