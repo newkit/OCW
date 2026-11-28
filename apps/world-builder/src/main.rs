@@ -23,6 +23,7 @@
 mod dist;
 mod patch_cmd;
 mod recipe_cmd;
+mod traffic_counts_cmd;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -370,6 +371,41 @@ enum Cmd {
         /// Write the package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
+    /// Open traffic counts into the road traffic's demand (spec 14 Phase
+    /// 18, 18E T11): the counting stations of counts files (written by
+    /// `tools/traffic-counts/fetch_counts.py` from the open sources of
+    /// 18D) matched to the road edges by position, road number and name,
+    /// their annual average daily traffic against the class default as
+    /// each edge's `flow` in TRFC, spread along the same road; the
+    /// sources' attribution into the manifest. Only TRFC and the manifest
+    /// change. Needs a package with TRFC (`world-builder traffic`).
+    TrafficCounts {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from (the roads' `ref`).
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// Counts files (`*.counts.csv`), one per source.
+        #[arg(long, required = true)]
+        counts: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Stations farther than this from every motor road stay
+        /// unmatched (m).
+        #[arg(long, default_value_t = 40.0)]
+        tolerance: f64,
+        /// Draw the flow factors on the road map (SVG).
+        #[arg(long)]
+        svg: Option<PathBuf>,
+        /// Write every station's match (TSV).
+        #[arg(long)]
+        report: Option<PathBuf>,
         /// Sign the renewed manifest with this signing key.
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
@@ -4030,6 +4066,33 @@ fn main() {
             });
             traffic(&world, &pbf, out, key.as_ref());
             print_stage_profile(None);
+        }
+        Cmd::TrafficCounts {
+            world,
+            pbf,
+            counts,
+            out,
+            tolerance,
+            svg,
+            report,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            traffic_counts_cmd::run(&traffic_counts_cmd::Args {
+                world: &world,
+                pbf: &pbf,
+                counts: &counts,
+                out,
+                key: key.as_ref(),
+                tolerance_m: tolerance,
+                svg,
+                report,
+            });
         }
         Cmd::Places {
             world,

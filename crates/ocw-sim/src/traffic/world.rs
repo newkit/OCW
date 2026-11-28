@@ -132,6 +132,16 @@ fn access_of(r: &wt::EdgeRules, class: RoadClass) -> Access {
     a
 }
 
+/// The daily traffic (average weekday, vehicles a day in the directions
+/// the edge carries) an edge gets with `flow` 1: the class's typical
+/// value, a fifth of it where only access is allowed. T11's counts are
+/// divided by this (and [`super::demand::annual_day_factor`]) to give the
+/// edge's `flow`.
+pub fn unit_aadt(r: &wt::EdgeRules, class: RoadClass) -> f64 {
+    let dest = if r.destination_only { 0.2 } else { 1.0 };
+    class_defaults(class).aadt * dest
+}
+
 /// The core's rule of one edge from T2's.
 pub fn edge_rule(r: &wt::EdgeRules, class: RoadClass) -> EdgeRule {
     let d = class_defaults(class);
@@ -154,13 +164,12 @@ pub fn edge_rule(r: &wt::EdgeRules, class: RoadClass) -> EdgeRule {
     };
     let main = lanes[0] > 0 || lanes[1] == 0;
     let kmh = f64::from(r.target_kmh(class, main)).max(5.0);
-    let dest = if r.destination_only { 0.2 } else { 1.0 };
     EdgeRule {
         oneway: r.oneway,
         lanes,
         speed: kmh / 3.6,
         access,
-        aadt: d.aadt * f64::from(r.flow.max(0.0)) * dest,
+        aadt: unit_aadt(r, class) * f64::from(r.flow.max(0.0)),
         roundabout: r.roundabout,
         rank: d.rank,
     }

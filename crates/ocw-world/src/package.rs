@@ -1662,32 +1662,79 @@ impl WorldPackage {
 /// Tags and payload sizes of the tagged sections of an encoded package
 /// (empty for version 1 or unreadable bytes), for reports.
 pub fn section_sizes(bytes: &[u8]) -> Vec<([u8; 4], u64)> {
-    fn walk(bytes: &[u8]) -> Result<Vec<([u8; 4], u64)>, String> {
-        let mut r = Bytes::new(bytes);
-        if r.take(8)? != MAGIC_V2 {
-            return Ok(Vec::new());
-        }
-        let name_len = r.u32()? as usize;
-        r.take(name_len + 16 + 4)?;
-        let samples = r.u32()? as usize;
-        for _ in 0..r.u32()? {
-            r.take(8 + samples * samples * 4)?;
-            for _ in 0..r.u32()? {
-                r.take(5)?;
-                let pts = r.u32()? as usize;
-                r.take(pts * 12)?;
-            }
-        }
-        let mut out = Vec::new();
-        for _ in 0..r.u32()? {
-            let tag: [u8; 4] = r.arr()?;
-            let len = r.u64()?;
-            r.take(usize::try_from(len).map_err(|_| "section too large")?)?;
-            out.push((tag, len));
-        }
-        Ok(out)
+    section_spans(bytes)
+        .map(|(_, s)| s.into_iter().map(|(t, r)| (t, r.len() as u64)).collect())
+        .unwrap_or_default()
+}
+
+/// Where the sections of an encoded package start (the offset of the
+/// section count) and each section's tag and payload range; `Ok((len,
+/// []))` for version 1.
+/// A section's tag and payload range in the encoded package.
+type SectionSpan = ([u8; 4], std::ops::Range<usize>);
+
+fn section_spans(bytes: &[u8]) -> Result<(usize, Vec<SectionSpan>), String> {
+    let mut r = Bytes::new(bytes);
+    if r.take(8)? != MAGIC_V2 {
+        return Ok((bytes.len(), Vec::new()));
     }
-    walk(bytes).unwrap_or_default()
+    let name_len = r.u32()? as usize;
+    r.take(name_len + 16 + 4)?;
+    let samples = r.u32()? as usize;
+    for _ in 0..r.u32()? {
+        r.take(8 + samples * samples * 4)?;
+        for _ in 0..r.u32()? {
+            r.take(5)?;
+            let pts = r.u32()? as usize;
+            r.take(pts * 12)?;
+        }
+    }
+    let start = r.pos;
+    let mut out = Vec::new();
+    for _ in 0..r.u32()? {
+        let tag: [u8; 4] = r.arr()?;
+        let len = usize::try_from(r.u64()?).map_err(|_| "section too large")?;
+        let at = r.pos;
+        r.take(len)?;
+        out.push((tag, at..at + len));
+    }
+    if r.pos != bytes.len() {
+        return Err("trailing bytes after the last section".into());
+    }
+    Ok((start, out))
+}
+
+/// The encoded package with one section's payload replaced (or the
+/// section appended when it has none), every other byte as it was: a
+/// later build step that changes only its own section (spec 18E T11:
+/// `world-builder traffic-counts` rewrites `TRFC`). Version 1 packages
+/// have no sections and are refused.
+pub fn replace_section(bytes: &[u8], tag: &[u8; 4], payload: &[u8]) -> Result<Vec<u8>, String> {
+    if bytes.len() < 8 || &bytes[..8] != MAGIC_V2 {
+        return Err("not an OCWPKG02 package (no sections)".into());
+    }
+    let (start, spans) = section_spans(bytes)?;
+    let mut out = Vec::with_capacity(bytes.len() + payload.len());
+    let found = spans.iter().position(|(t, _)| t == tag);
+    match found {
+        Some(i) => {
+            let range = spans[i].1.clone();
+            // The length field sits right before the payload.
+            out.extend_from_slice(&bytes[..range.start - 8]);
+            out.extend((payload.len() as u64).to_le_bytes());
+            out.extend_from_slice(payload);
+            out.extend_from_slice(&bytes[range.end..]);
+        }
+        None => {
+            out.extend_from_slice(&bytes[..start]);
+            out.extend((spans.len() as u32 + 1).to_le_bytes());
+            out.extend_from_slice(&bytes[start + 4..]);
+            out.extend_from_slice(tag);
+            out.extend((payload.len() as u64).to_le_bytes());
+            out.extend_from_slice(payload);
+        }
+    }
+    Ok(out)
 }
 
 /// Layout version inside the routes section.
@@ -2489,6 +2536,51 @@ mod tests {
         let n = bad.len();
         bad[n - 1] = 9;
         assert!(WorldPackage::from_bytes(&bad).is_err());
+    }
+
+    /// Spec 18E T11: one section's payload is swapped (or appended) and
+    /// every other byte stays as it was.
+    #[test]
+    fn replace_section_keeps_every_other_byte() {
+        use crate::traffic::{EdgeRules, TrafficData};
+        let mut p = package();
+        p.time_zone = Some("Europe/Vaduz".into());
+        let mut t = TrafficData::default();
+        t.edges.insert(
+            EdgeId(7),
+            EdgeRules::implied(RoadClass::Secondary, crate::traffic::Country::Li, false),
+        );
+        p.traffic = Some(Arc::new(t.clone()));
+        let b = p.to_bytes();
+        t.edges.get_mut(&EdgeId(7)).unwrap().flow = 2.5;
+        let mut payload = Vec::new();
+        write_traffic(&t, &mut payload);
+        let swapped = replace_section(&b, TRAFFIC_TAG, &payload).unwrap();
+        let mut q = p.clone();
+        q.traffic = Some(Arc::new(t.clone()));
+        assert_eq!(swapped, q.to_bytes(), "the same as a full write");
+        assert_eq!(
+            WorldPackage::from_bytes(&swapped)
+                .unwrap()
+                .traffic
+                .as_deref(),
+            Some(&t)
+        );
+        // Only the flow bytes differ.
+        let diff: Vec<usize> = (0..b.len()).filter(|&i| b[i] != swapped[i]).collect();
+        assert!(!diff.is_empty() && diff.len() <= 2, "{diff:?}");
+        // A package without the section gets it at the end.
+        let mut plain = package();
+        plain.time_zone = Some("Europe/Vaduz".into());
+        let pb = plain.to_bytes();
+        let added = replace_section(&pb, TRAFFIC_TAG, &payload).unwrap();
+        let back = WorldPackage::from_bytes(&added).unwrap();
+        assert_eq!(back.traffic.as_deref(), Some(&t));
+        assert_eq!(section_sizes(&added).len(), section_sizes(&pb).len() + 1);
+        // Version 1 has no sections to replace.
+        let v1b = package().to_bytes();
+        assert_eq!(&v1b[..8], MAGIC);
+        assert!(replace_section(&v1b, TRAFFIC_TAG, &payload).is_err());
     }
 
     /// Spec §14 Phase 9 S2: the roads' `lit` state (section `LITR`) is

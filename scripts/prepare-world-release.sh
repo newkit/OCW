@@ -126,6 +126,12 @@ lines += ["",
             if s.get("patches") else []),
           "- **Elevation models:** the terrain and road heights were derived from the models",
           "  above (averaged, smoothed along the roads and adapted to them), i.e. modified.",
+          *(["- **Traffic counts:** the road traffic's demand per road (section `TRFC`, its",
+             "  flow factor) was derived from the counting stations credited above as",
+             "  \"Traffic counts: …\" (matched to the roads and spread along them, i.e. modified;",
+             "  `world-builder traffic-counts`, spec 18E T11)."]
+            if any(a["source"].startswith("Traffic counts: ") for a in s.get("attribution", []))
+            else []),
           "",
           "The Open Cycling World code that reads this package is dual MIT / Apache-2.0;",
           "those licences do not apply to this data.", ""]

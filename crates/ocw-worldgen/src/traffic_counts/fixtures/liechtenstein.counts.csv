@@ -1,0 +1,12 @@
+# ocw-traffic-counts 1
+# fixture: an excerpt of our download of 2026-11-28 (tools/traffic-counts/fetch_counts.py liechtenstein), opendata.swiss terms_by
+# source: li-miv
+# title: Liechtenstein – Verkehrsdaten 2025, permanente Messstellen MIV
+# licence: opendata.swiss terms_by (open use, source must be named)
+# notice: Quelle: Amt für Tiefbau und Geoinformation und Amt für Hochbau und Raumplanung, Fürstentum Liechtenstein – Verkehrsdaten Fahrrad und MIV (Zählstellen, opendata.swiss) und Verkehrsdaten 2025, permanente Messstellen MIV (llv.li).
+# url: https://opendata.swiss/de/dataset/verkehrsdaten-fahrrad-und-miv
+# year: 2025
+id,name,lat,lon,ref,aadt,aadt_dir1,aadt_dir2,dir1_bearing_deg
+94870101,Bendern - Ruggell,47.2320028,9.5164625,,3599,1895,1704,
+94900601,Vaduz Zollstrasse,47.1327435,9.5173253,,10229,5721,4509,
+94900401-3,Vaduz Zollstrasse Rheinbrücke,47.1315217,9.5131215,,12228,6574,5653,

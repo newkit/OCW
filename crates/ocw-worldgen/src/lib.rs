@@ -68,5 +68,6 @@ pub mod stages;
 pub mod svg;
 pub mod terrain_smooth;
 pub mod traffic;
+pub mod traffic_counts;
 pub mod vegetation;
 pub mod water;

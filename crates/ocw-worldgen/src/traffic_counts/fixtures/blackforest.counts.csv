@@ -1,0 +1,11 @@
+# ocw-traffic-counts 1
+# fixture: an excerpt of our download of 2026-11-28 (tools/traffic-counts/fetch_counts.py blackforest), DL-DE-BY-2.0
+# source: bw-svz
+# title: Baden-Württemberg – Straßenverkehrszählung (SVZ), DTV 2024
+# licence: DL-DE-BY-2.0
+# notice: Datenquelle: Verkehrsministerium Baden-Württemberg / MobiData BW® – Karte der Straßenverkehrszählung in Baden-Württemberg (SVZ-Zählstellen, DTV 2024), Datenlizenz Deutschland – Namensnennung – Version 2.0 (https://www.govdata.de/dl-de/by-2-0).
+# url: https://mobidata-bw.de/dataset/karte_strassenverkehrszaehlung
+# year: 2024
+id,name,lat,lon,ref,aadt,aadt_dir1,aadt_dir2,dir1_bearing_deg
+71141102,B500/K3758 beim Rhein / B500/Rhein Iffezheim,48.8325340000109,8.113885999999765,B 500,9054,,,
+72151103,"B3/B500 Baden-Baden / AS Baden-Baden A5/B500 (51)",48.78491000001087,8.17062099999979,B 500,24933,,,

@@ -1,0 +1,13 @@
+# ocw-traffic-counts 1
+# fixture: an excerpt of our download of 2026-11-28 (tools/traffic-counts/fetch_counts.py tenerife), CC BY
+# source: cabildo-tenerife-imd
+# title: Cabildo de Tenerife – Intensidad Media Diaria (IMD) 2025
+# licence: CC-BY
+# notice: Fuente: Cabildo de Tenerife, Servicio Técnico de Carreteras y Movilidad – «Intensidad Media Diaria (IMD) de tráfico de Tenerife» 2025 y «Estaciones de aforo por tramos de la red de carreteras de Tenerife» (datos.tenerife.es), Creative Commons Attribution (CC BY).
+# url: https://datos.tenerife.es/ckan/dataset/intensidad-media-diaria-imd-de-trafico-de-tenerife
+# year: 2025
+id,name,lat,lon,ref,aadt,aadt_dir1,aadt_dir2,dir1_bearing_deg
+11,AÑAZA,28.42537364235904,-16.304452862666476,TF-1,96707,50003,46704,229.4
+27,GÜÍMAR,28.309668110610108,-16.383126102009694,TF-1,63647,30806,32841,198.2
+511,CRUZ CHICA P.CARRET,28.49067421734468,-16.361339320679022,TF-235,9788,5106,4682,269.1
+83,SOMOSIERRA,28.452864766795788,-16.27401059174587,TF-5,86482,44356,42126,246.2

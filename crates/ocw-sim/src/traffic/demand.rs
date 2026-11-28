@@ -338,6 +338,32 @@ pub fn day_factor(t: &DemandTime) -> f64 {
     season * day
 }
 
+/// The mean of [`day_factor`] over a year (2025, with `region`'s public
+/// holidays): an edge's `aadt` is the volume of an average weekday, a
+/// count's annual average daily traffic (DTV, IMD, AADT) is this much of
+/// it. The world builder divides counts by it (spec 18E T11), so a
+/// simulated year carries the counted traffic.
+pub fn annual_day_factor(region: Region) -> f64 {
+    const YEAR: i32 = 2025;
+    const DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut sum = 0.0;
+    let mut n = 0u32;
+    for (m, &days) in (1..=12u32).zip(DAYS.iter()) {
+        for d in 1..=days {
+            let t = DemandTime {
+                // 1970-01-01 was a Thursday (3 with Monday 0).
+                weekday: (day_number(YEAR, m, d) + 3).rem_euclid(7) as u8,
+                seconds: 12 * 3600,
+                month: m as u8,
+                holiday: is_holiday(region, YEAR, m, d),
+            };
+            sum += day_factor(&t);
+            n += 1;
+        }
+    }
+    sum / f64::from(n)
+}
+
 /// Vehicles per hour in one direction of an edge with `aadt` (both
 /// directions), `two_way` or one-way, at `t` and `level`.
 pub fn flow_per_hour(aadt: f64, two_way: bool, t: &DemandTime, level: TrafficLevel) -> f64 {

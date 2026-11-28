@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 ocw-world.workspace = true
+ocw-sim.workspace = true
 # The time zone of a package (spec §14 Phase 9).
 ocw-sky.workspace = true
 ocw-worldgen.workspace = true

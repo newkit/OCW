@@ -433,6 +433,10 @@ struct Entry {
     origin: bool,
     /// Vehicles per second now.
     rate: f64,
+    /// A vehicle arrived but found no room at the rim: it enters as soon
+    /// as there is (arrivals are delayed, never lost, so an edge carries
+    /// its demand – spec 18E T11's counted daily totals).
+    pending: bool,
 }
 
 /// The road traffic of a session.
@@ -1776,6 +1780,7 @@ impl TrafficSim {
                         s: s.min((len - 1.0).max(0.0)),
                         origin: !outside,
                         rate: 0.0,
+                        pending: false,
                     });
                 }
             }
@@ -1830,19 +1835,20 @@ impl TrafficSim {
                 u64::from(en.edge),
                 u64::from(en.forward),
             ));
-            if u >= p {
+            if !en.pending && u >= p {
                 continue;
             }
-            // Room at the start of the kerb lane.
+            // Room at the start of the kerb lane (else the arrival waits).
             let want = lane_key(en.edge, en.forward, 0);
             let lo = self.slots.partition_point(|s| s.key < want);
             let hi = self.slots.partition_point(|s| s.key <= want);
-            if self.slots[lo..hi].iter().any(|s| (s.s - en.s).abs() < 25.0) {
+            if self.slots[lo..hi].iter().any(|s| (s.s - en.s).abs() < 25.0)
+                || self.user_near(net, en.edge as usize, en.forward, en.s, 40.0)
+            {
+                self.entries[k].pending = true;
                 continue;
             }
-            if self.user_near(net, en.edge as usize, en.forward, en.s, 40.0) {
-                continue;
-            }
+            self.entries[k].pending = false;
             let road = net.edge(en.edge as usize).class;
             let u2 = unit_f(key(self.cfg.seed, self.tick, u64::from(en.edge), 0xC1A55));
             self.spawn_walker(
