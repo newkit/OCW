@@ -319,6 +319,8 @@ fn buy_bike(
     let item = new_item(g, &f.id, f.hearts, date, None);
     g.bikes.push(Bike {
         parts: BTreeMap::from([(Slot::Frame.id().to_string(), item)]),
+        // The "newk it" frameset comes in its livery (spec 14 Phase 4, 4B).
+        paint: ocw_assets::livery::default_paint(&f.model).map(|c| c.to_string()),
         ..probe
     });
     let mut out = Applied {

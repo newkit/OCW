@@ -65,7 +65,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 109] = [
+pub const ALL: [Slot; 120] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -212,6 +212,24 @@ pub const ALL: [Slot; 109] = [
     slot("hide_patch", Tint::Fixed, 0x7A4A2A, 0.0, 0.8),
     slot("hoof", Tint::Fixed, 0x2A2420, 0.0, 0.6),
     slot("horn_cow", Tint::Fixed, 0xD8CCB2, 0.0, 0.5),
+    // The "newk it" livery (spec 14 Phase 15, *The "newk it" bike*; the
+    // user's own design, used with permission): the black frame with a
+    // holographic flake that fades to deep magenta at the rear (the
+    // renderer's `flake` material), its decals – hot pink letters with a
+    // light outline, the unicorn's white, rainbow and ink, the rims'
+    // yellow blocks –, green anodised axle ends and lock rings, pink bar
+    // tape and black bottles.
+    slot("flake", Tint::Fixed, 0x0B0A12, 0.3, 0.3),
+    slot("livery_pink", Tint::Fixed, 0xFF2A93, 0.0, 0.35),
+    slot("livery_light", Tint::Fixed, 0xFFB8DC, 0.0, 0.35),
+    slot("livery_yellow", Tint::Fixed, 0xFFD60A, 0.0, 0.35),
+    slot("livery_blue", Tint::Fixed, 0x3A8FE0, 0.0, 0.35),
+    slot("livery_green", Tint::Fixed, 0x4CC24A, 0.0, 0.35),
+    slot("livery_white", Tint::Fixed, 0xF4F2F6, 0.0, 0.35),
+    slot("livery_ink", Tint::Fixed, 0x241426, 0.0, 0.4),
+    slot("anodised_green", Tint::Fixed, 0x16C45A, 0.8, 0.3),
+    slot("bar_tape_pink", Tint::Fixed, 0xFF3D8E, 0.0, 0.8),
+    slot("bottle_black", Tint::Fixed, 0x1A1A1D, 0.0, 0.45),
 ];
 
 /// The vehicle slots that are lamps (18B): every `light_*` node of a

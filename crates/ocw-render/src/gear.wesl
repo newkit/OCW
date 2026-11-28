@@ -89,7 +89,8 @@ const KIND_KNIT: u32 = 7u;
 const KIND_LYCRA: u32 = 8u;
 const KIND_PLASTIC: u32 = 9u;
 const KIND_PAD: u32 = 10u;
-const KIND_HAIR: u32 = 11u;
+const KIND_FLAKE: u32 = 11u;
+const KIND_HAIR: u32 = 12u;
 
 // Bare carbon's share of the ambient light (Rust: gear::CARBON_AMBIENT):
 // the warm ambient's specular on the dark base made it read grey-brown.
@@ -647,6 +648,28 @@ fn fragment(
         } else {
             pbr_input.anisotropy_strength = 0.0;
         }
+    } else if kind == KIND_FLAKE {
+        // The "newk it" livery (Rust: gear::FLAKE_FADE, FLAKE_SIZE_M):
+        // black fading to the magenta (first) towards the rear, and a
+        // holographic flake – one per cell of `size`, a share of them
+        // (second.w) glinting in a rainbow colour when their own tilt
+        // faces the eye; they melt into a faint sheen as the pixel grows.
+        let fz = p.z + look.second.z * (p.y - 0.7);
+        albedo = mix(albedo, look.first.rgb, smoothstep(look.second.x, look.second.y, fz));
+        let ffade = 1.0 - smoothstep(size * 0.4, size * 1.6, px);
+        let cell = floor(p / size);
+        let h0 = hash1(cell);
+        let h1 = hash1(cell + vec3<f32>(17.0, 3.0, 11.0));
+        let h2 = hash1(cell + vec3<f32>(5.0, 29.0, 7.0));
+        let tilt = vec3<f32>(h1 - 0.5, h2 - 0.5, h0 - 0.5) * 1.4;
+        let facing = max(dot(normalize(n + tilt), pbr_input.V), 0.0);
+        let present = select(0.0, 1.0, h0 > 1.0 - look.second.w);
+        let g = clamp(present * pow(facing, 36.0) * 1.6, 0.0, 1.0) * ffade;
+        let hue = fract(h1 * 3.0 + dot(tilt, pbr_input.V));
+        let rainbow = clamp(abs(fract(vec3<f32>(hue) + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        albedo = mix(albedo, rainbow * 0.85 + 0.15, g) + vec3<f32>(0.01) * look.second.w * (1.0 - ffade);
+        pbr_input.material.metallic = mix(pbr_input.material.metallic, 1.0, g);
+        rough = mix(rough, 0.12, g);
     } else if kind != KIND_PLAIN && kind != KIND_PAINT && kind != KIND_PLASTIC && fade > 0.0 {
         let h0 = detail_height(kind, p, size, strength);
         dhx = (detail_height(kind, p + f.l1, size, strength) - h0) * fade;
