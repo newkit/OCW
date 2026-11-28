@@ -55,6 +55,7 @@ pub mod route_fit;
 pub mod summary;
 pub mod surface;
 mod terrain;
+pub mod terrain_shadow;
 pub mod track;
 pub mod traffic;
 pub mod trees;

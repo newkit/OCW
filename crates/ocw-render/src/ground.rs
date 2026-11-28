@@ -423,6 +423,12 @@ pub struct GroundExtension {
     #[texture(108)]
     #[sampler(109)]
     pub ortho: Option<Handle<Image>>,
+    /// The mountains' shadow (`terrain_shadow`, bindings 120 – 122).
+    #[uniform(120)]
+    pub terrain_shadow: crate::terrain_shadow::TerrainShadowUniform,
+    #[texture(121)]
+    #[sampler(122)]
+    pub terrain_shadow_map: Option<Handle<Image>>,
 }
 
 impl GroundExtension {
@@ -437,6 +443,8 @@ impl GroundExtension {
             albedo: None,
             normal: None,
             ortho: None,
+            terrain_shadow: Default::default(),
+            terrain_shadow_map: None,
         }
     }
 
@@ -674,3 +682,5 @@ mod tests {
         assert_eq!(l.size(5), 1.5);
     }
 }
+
+crate::terrain_shadowed!(GroundExtension);

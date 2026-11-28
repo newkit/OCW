@@ -14,6 +14,7 @@ import bevy_pbr::render::{
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     mesh_view_bindings::view,
 };
+import ocw_render::terrain_shadow;
 
 struct FarLook {
     // x: crown contrast, y: stand contrast, z: stone contrast, w: the
@@ -83,7 +84,7 @@ fn fragment(
     pbr_input.material.base_color = vec4<f32>(c, pbr_input.material.base_color.a);
 
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
+    out.color = terrain_shadow::lit(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

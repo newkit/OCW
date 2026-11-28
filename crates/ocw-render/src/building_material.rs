@@ -160,6 +160,12 @@ pub struct BuildingExtension {
     pub albedo: Option<Handle<Image>>,
     #[texture(103, dimension = "2d_array")]
     pub normal: Option<Handle<Image>>,
+    /// The mountains' shadow (`terrain_shadow`, bindings 120 – 122).
+    #[uniform(120)]
+    pub terrain_shadow: crate::terrain_shadow::TerrainShadowUniform,
+    #[texture(121)]
+    #[sampler(122)]
+    pub terrain_shadow_map: Option<Handle<Image>>,
 }
 
 impl BuildingExtension {
@@ -170,11 +176,15 @@ impl BuildingExtension {
                 look: look.with_library(l),
                 albedo: Some(b.albedo.clone()),
                 normal: Some(b.normal.clone()),
+                terrain_shadow: Default::default(),
+                terrain_shadow_map: None,
             },
             None => Self {
                 look,
                 albedo: None,
                 normal: None,
+                terrain_shadow: Default::default(),
+                terrain_shadow_map: None,
             },
         }
     }
@@ -348,3 +358,5 @@ mod tests {
         assert_eq!(night_factor(-40.0), 1.0);
     }
 }
+
+crate::terrain_shadowed!(BuildingExtension);

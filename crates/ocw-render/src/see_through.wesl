@@ -11,6 +11,7 @@ import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
 };
+import ocw_render::terrain_shadow;
 
 struct SeeThroughFade {
     // xyz: the rider's head; w: gap before it where the sight fade ends
@@ -149,7 +150,7 @@ fn fragment(
         pbr_input.material.base_color = vec4<f32>(c, pbr_input.material.base_color.a);
     }
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
+    out.color = terrain_shadow::lit(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

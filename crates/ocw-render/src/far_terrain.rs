@@ -142,6 +142,12 @@ fn sync_far_light(
 pub struct FarExtension {
     #[uniform(100)]
     pub look: FarLook,
+    /// The mountains' shadow (`terrain_shadow`, bindings 120 – 122).
+    #[uniform(120)]
+    pub terrain_shadow: crate::terrain_shadow::TerrainShadowUniform,
+    #[texture(121)]
+    #[sampler(122)]
+    pub terrain_shadow_map: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for FarExtension {
@@ -1451,3 +1457,5 @@ mod tests {
         assert!(w.query::<&SeaPlane>().iter(w).next().is_none());
     }
 }
+
+crate::terrain_shadowed!(FarExtension);
