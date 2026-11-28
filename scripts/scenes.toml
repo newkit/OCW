@@ -7096,3 +7096,42 @@ riders = "active = \"Theo Brook\"\n[[rider]]\nname = \"Theo Brook\"\nweight_kg =
 at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-03-21 11:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #5A3825 --skin 10 --beard 2", "0.7=kit.design --pattern stripes --jersey #FDD835 --second #1E1E22 --shorts #1E1E22", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2.5=camera.orbit 100 16 16"]
 shot = 7
 pick = false
+
+# Faces v3 (4N, 2026-11-28: the jaw sloped into the throat, the straps
+# refitted): each helmet on one made-up rider from the side.
+
+[[scene]]
+name = "face-v3-helmet-road"
+description = "Faces v3 (4N): Lou Rouleur from the side in the vented road helmet (the default) - the straps along the sloped jaw to the buckle under the chin; base body A, 50s, brown skin, full beard and classic moustache"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Lou Rouleur\"\n[[rider]]\nname = \"Lou Rouleur\"\nweight_kg = 76.0\nheight_cm = 180.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape normal --age 50s --hair short-textured --hair-colour #3B2A20 --skin 10 --beard full --moustache classic --glasses 1", "1.6=kit.design --pattern stripes --jersey #3949AB --second #F2F2EE --helmet #E53935", "4=camera.closeup face 90 0 0.42"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-v3-helmet-light"
+description = "Faces v3 (4N): Lou Rouleur from the side in the lightweight road helmet - the straps along the sloped jaw to the buckle under the chin; base body A, 50s, brown skin, full beard and classic moustache"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Lou Rouleur\"\n[[rider]]\nname = \"Lou Rouleur\"\nweight_kg = 76.0\nheight_cm = 180.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.8=workshop.buy helmet.light.top", "1.5=character --body a --shape normal --age 50s --hair short-textured --hair-colour #3B2A20 --skin 10 --beard full --moustache classic --glasses 1", "1.6=kit.design --pattern stripes --jersey #3949AB --second #F2F2EE --helmet #E53935", "4=camera.closeup face 90 0 0.42"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-v3-helmet-aero"
+description = "Faces v3 (4N): Lou Rouleur from the side in the aero road helmet - the straps along the sloped jaw to the buckle under the chin; base body A, 50s, brown skin, full beard and classic moustache"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Lou Rouleur\"\n[[rider]]\nname = \"Lou Rouleur\"\nweight_kg = 76.0\nheight_cm = 180.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.8=workshop.buy helmet.aero-road.top", "1.5=character --body a --shape normal --age 50s --hair short-textured --hair-colour #3B2A20 --skin 10 --beard full --moustache classic --glasses 1", "1.6=kit.design --pattern stripes --jersey #3949AB --second #F2F2EE --helmet #E53935", "4=camera.closeup face 90 0 0.42"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-v3-helmet-tt"
+description = "Faces v3 (4N): Lou Rouleur from the side in the time-trial helmet - the straps along the sloped jaw to the buckle under the chin; base body A, 50s, brown skin, full beard and classic moustache"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Lou Rouleur\"\n[[rider]]\nname = \"Lou Rouleur\"\nweight_kg = 76.0\nheight_cm = 180.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.8=workshop.buy helmet.tt.top", "1.5=character --body a --shape normal --age 50s --hair short-textured --hair-colour #3B2A20 --skin 10 --beard full --moustache classic --glasses 1", "1.6=kit.design --pattern stripes --jersey #3949AB --second #F2F2EE --helmet #E53935", "4=camera.closeup face 90 0 0.42"]
+shot = 9
+pick = false
