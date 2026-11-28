@@ -141,7 +141,8 @@ impl LocalServer {
         let (server_tx, from_server) = mpsc::channel::<Vec<u8>>();
         let mut server = GameServer::new(course, config)
             .with_weather_fetcher(Box::new(crate::realweather::http::HttpFetcher::default()))
-            .with_air_fetcher(Box::new(crate::live_air::http::HttpAirFetcher::default()));
+            .with_air_fetcher(Box::new(crate::live_air::http::HttpAirFetcher::default()))
+            .with_road_fetcher(crate::live_road::http::default_fetcher());
         let thread = thread::Builder::new()
             .name("ocw-local-server".into())
             .spawn(move || {
@@ -220,7 +221,8 @@ impl LocalServer {
         let shared = counts.clone();
         let mut server = GameServer::new(course, config)
             .with_weather_fetcher(Box::new(crate::realweather::http::HttpFetcher::default()))
-            .with_air_fetcher(Box::new(crate::live_air::http::HttpAirFetcher::default()));
+            .with_air_fetcher(Box::new(crate::live_air::http::HttpAirFetcher::default()))
+            .with_road_fetcher(crate::live_road::http::default_fetcher());
         let mut net = net;
         let thread = thread::Builder::new()
             .name("ocw-host-server".into())
@@ -313,6 +315,9 @@ impl SteppedServer {
         // Live aircraft (spec 18E T10): the desktop's single player.
         #[cfg(not(target_arch = "wasm32"))]
         server.set_air_fetcher(Box::new(crate::live_air::http::HttpAirFetcher::default()));
+        // Live road events (spec 18E T13).
+        #[cfg(not(target_arch = "wasm32"))]
+        server.set_road_fetcher(crate::live_road::http::default_fetcher());
         let conn = server.connect();
         Self {
             server,

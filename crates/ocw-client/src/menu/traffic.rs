@@ -5,13 +5,16 @@
 //! rider's), aircraft and UFOs (the rider's own view), and a second page
 //! with the sounds and the live rows: *Aircraft: live* (T10: on / off,
 //! with whether the live aircraft are drawn now or why the simulated sky
-//! is) and *Live traffic data* (present, dimmed with why until a world
-//! has a source, Q5). Road traffic is in the desktop app only (Q9 (b)): its rows are left
-//! out on [`Platform::Browser`] (the browser, phones, the Quest).
+//! is) and *Live traffic data* (T13: switchable where the world has a
+//! live road source – Tenerife: the DGT's closures, roadworks and reported
+//! jams, with the source's credit –, dimmed with why elsewhere, Q5). Road
+//! traffic is in the desktop app only (Q9 (b)): its rows are left out on
+//! [`Platform::Browser`] (the browser, phones, the Quest).
 
 use ocw_protocol::traffic::TrafficInfo;
 
 use crate::live_air::LiveState;
+use crate::live_road::LiveRoadRow;
 
 use super::model::Platform;
 use super::pages::{Activate, Page, Row, open_row, setting_row};
@@ -27,9 +30,11 @@ pub const AIR_LIVE_SOURCE: &str = "adsb.lol (ODbL)";
 /// The *Live traffic data* row's value (Q5: greyed until a world has a
 /// source that suits us).
 pub const LIVE_ROAD_NONE: &str = "no live data for this world yet";
+/// … while the road traffic is off (18D: it only matters with it on).
+pub const LIVE_ROAD_ROAD_OFF: &str = "turn on road traffic first";
 
 /// What the page needs besides the settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TrafficMenuInfo {
     pub platform: Platform,
     /// The session's road traffic as the server sent it (`None`: no ride,
@@ -42,6 +47,8 @@ pub struct TrafficMenuInfo {
     pub decided_by: &'static str,
     /// With *Aircraft: live*: drawn now, or why not (`None`: not chosen).
     pub live_air: Option<LiveState>,
+    /// The world's live road data as the server told (T13).
+    pub live_road: LiveRoadRow,
 }
 
 impl TrafficMenuInfo {
@@ -53,6 +60,7 @@ impl TrafficMenuInfo {
             may_change: true,
             decided_by: "you",
             live_air: None,
+            live_road: LiveRoadRow::Unknown,
         }
     }
 }
@@ -117,12 +125,57 @@ pub fn rows(page: Page, settings: &Settings, info: &TrafficMenuInfo) -> Vec<Row>
                 live_row(settings, info.live_air),
             ];
             if desktop {
-                // Q5: greyed until a world has a source (18D).
-                out.push(disabled("Live traffic data", LIVE_ROAD_NONE.into()));
+                out.push(live_road_row(settings, info));
             }
             out
         }
         _ => Vec::new(),
+    }
+}
+
+/// *Live traffic data* (T13, Q5): switchable where the world has a source
+/// (with what it gives and its credit), dimmed with why elsewhere and
+/// while the road traffic is off.
+fn live_road_row(settings: &Settings, info: &TrafficMenuInfo) -> Row {
+    const LABEL: &str = "Live traffic data";
+    let road_on = text(settings, "traffic.enabled") != "off"
+        && match info.session {
+            Some(s) => s.rules.level.is_on(),
+            None => text(settings, "traffic.road") != "off",
+        };
+    let on = text(settings, "traffic.live_road") == "on";
+    let value = match &info.live_road {
+        LiveRoadRow::Unknown => return disabled(LABEL, LIVE_ROAD_NONE.into()),
+        LiveRoadRow::NoSource(why) | LiveRoadRow::Unavailable(why) => {
+            let why = if why.is_empty() { LIVE_ROAD_NONE } else { why };
+            return disabled(LABEL, why.into());
+        }
+        _ if !road_on => return disabled(LABEL, LIVE_ROAD_ROAD_OFF.into()),
+        LiveRoadRow::Available { attribution, what } => {
+            let live = format!("Live: {what} – {attribution}");
+            if on {
+                format!("on – {live}")
+            } else {
+                format!("off ({live})")
+            }
+        }
+        LiveRoadRow::Live { attribution, .. } if on => format!("on – {attribution}"),
+        LiveRoadRow::Waiting { note, .. } if on => format!("on – {note}"),
+        LiveRoadRow::Live { attribution, .. } | LiveRoadRow::Waiting { attribution, .. } => {
+            format!("off ({attribution})")
+        }
+    };
+    let line = if on {
+        "set traffic.live_road off"
+    } else {
+        "set traffic.live_road on"
+    };
+    Row {
+        label: LABEL.into(),
+        value: Some(value),
+        left: Some(line.into()),
+        right: Some(line.into()),
+        confirm: Some(Activate::Command(line.into())),
     }
 }
 
@@ -322,6 +375,77 @@ mod tests {
         assert!(MORE_NOTE.contains("adsb.lol (ODbL)"), "the credit (18D)");
     }
 
+    /// T13: *Live traffic data* switchable on Tenerife with the credit,
+    /// dimmed elsewhere, without road traffic and on a server that fetches
+    /// none.
+    #[test]
+    fn live_traffic_data_where_the_world_has_a_source() {
+        let mut s = Settings::default();
+        s.set("traffic.road", "normal").unwrap();
+        let with = |row: LiveRoadRow| TrafficMenuInfo {
+            live_road: row,
+            ..TrafficMenuInfo::alone(Platform::Desktop)
+        };
+        let dgt = LiveRoadRow::Available {
+            attribution: "Fuente: DGT".into(),
+            what: "closures, roadworks and reported jams".into(),
+        };
+        let r = rows(Page::TrafficMore, &s, &with(dgt.clone()));
+        let row = row(&r, "Live traffic data");
+        assert_eq!(
+            row.value.as_deref(),
+            Some("off (Live: closures, roadworks and reported jams – Fuente: DGT)")
+        );
+        assert_eq!(
+            row.confirm,
+            Some(Activate::Command("set traffic.live_road on".into()))
+        );
+        s.set("traffic.live_road", "on").unwrap();
+        let live = with(LiveRoadRow::Live {
+            attribution: "Fuente: DGT".into(),
+            events: 12,
+        });
+        let r = rows(Page::TrafficMore, &s, &live);
+        let on = r.iter().find(|r| r.label == "Live traffic data").unwrap();
+        assert_eq!(on.value.as_deref(), Some("on – Fuente: DGT"));
+        assert_eq!(
+            on.confirm,
+            Some(Activate::Command("set traffic.live_road off".into()))
+        );
+        let down = with(LiveRoadRow::Waiting {
+            attribution: "Fuente: DGT".into(),
+            note: "live data not reachable – using statistics".into(),
+        });
+        let r = rows(Page::TrafficMore, &s, &down);
+        assert_eq!(
+            r.iter()
+                .find(|r| r.label == "Live traffic data")
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("on – live data not reachable – using statistics")
+        );
+        // Elsewhere: dimmed with the reason.
+        for (row_state, why) in [
+            (LiveRoadRow::NoSource(LIVE_ROAD_NONE.into()), LIVE_ROAD_NONE),
+            (
+                LiveRoadRow::Unavailable("this server does not fetch live road data".into()),
+                "this server does not fetch live road data",
+            ),
+        ] {
+            let r = rows(Page::TrafficMore, &s, &with(row_state));
+            let x = r.iter().find(|r| r.label == "Live traffic data").unwrap();
+            assert_eq!(x.confirm, Some(Activate::Disabled));
+            assert_eq!(x.value.as_deref(), Some(why));
+        }
+        // Without road traffic.
+        s.set("traffic.road", "off").unwrap();
+        let r = rows(Page::TrafficMore, &s, &with(dgt));
+        let x = r.iter().find(|r| r.label == "Live traffic data").unwrap();
+        assert_eq!(x.value.as_deref(), Some(LIVE_ROAD_ROAD_OFF));
+        assert_eq!(x.confirm, Some(Activate::Disabled));
+    }
+
     /// Q2: in a shared ride the host's road traffic shows dimmed with who
     /// decides; the sky stays the rider's.
     #[test]
@@ -340,6 +464,7 @@ mod tests {
             may_change: false,
             decided_by: "the host",
             live_air: None,
+            live_road: LiveRoadRow::Unknown,
         };
         let r = rows(Page::Traffic, &s, &info);
         let road = row(&r, "Road traffic");

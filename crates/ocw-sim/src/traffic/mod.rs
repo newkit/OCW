@@ -49,6 +49,7 @@ pub mod around;
 pub mod bus;
 pub mod demand;
 pub mod kin;
+pub mod live;
 pub mod parked;
 pub mod plan;
 pub mod routing;
@@ -58,6 +59,8 @@ pub mod world;
 
 #[cfg(test)]
 mod bus_tests;
+#[cfg(test)]
+mod live_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -440,6 +443,13 @@ pub struct TrafficSim {
     cfg: TrafficConfig,
     source: Box<dyn EdgeRules + Send + Sync>,
     rules: Vec<EdgeRule>,
+    /// The statistics' rules (the package's, before live events; T13).
+    base: Vec<EdgeRule>,
+    /// The live road events in force (T13; empty: the statistics).
+    live: Vec<live::EdgeEvent>,
+    /// The active edges and entries are made again at the next step (the
+    /// rules changed).
+    rebubble: bool,
     /// The bounding box of each edge (min x, min z, max x, max z).
     bounds: Vec<[f64; 4]>,
     curves: Curves,
@@ -534,7 +544,10 @@ impl TrafficSim {
         Self {
             cfg,
             source,
+            base: rules.clone(),
             rules,
+            live: Vec::new(),
+            rebubble: false,
             bounds,
             curves: Curves::new(net),
             fingerprint: net.fingerprint(),
@@ -1719,7 +1732,8 @@ impl TrafficSim {
 
     /// Recomputes the active edges and the entries when the bubbles moved.
     fn update_bubbles(&mut self, net: &RoadNetwork, bubbles: &[Bubble]) {
-        let moved = bubbles.len() != self.bubbles.len()
+        let moved = std::mem::take(&mut self.rebubble)
+            || bubbles.len() != self.bubbles.len()
             || bubbles.iter().zip(&self.bubbles).any(|(a, b)| {
                 let (dx, dz) = (a.center[0] - b.center[0], a.center[1] - b.center[1]);
                 dx * dx + dz * dz > 25.0 * 25.0 || (a.radius - b.radius).abs() > 1.0
@@ -2757,6 +2771,68 @@ impl TrafficSim {
                 )
             })
             .collect()
+    }
+
+    /// Puts the live road events `events` in force (spec 18E T13): the
+    /// rules are the statistics' with each event applied
+    /// ([`live::apply`]); vehicles on a part closed now, or whose route
+    /// goes over one, leave (the next ones route around it: nothing
+    /// spawns on or walks onto a closed part). An empty list is the
+    /// statistics again. Returns the vehicles that left.
+    pub fn set_live(&mut self, events: &[live::EdgeEvent]) -> usize {
+        let mut events: Vec<live::EdgeEvent> = events
+            .iter()
+            .filter(|e| (e.edge as usize) < self.base.len())
+            .copied()
+            .collect();
+        events.sort_by(|a, b| {
+            (a.edge, a.dir, a.kind).cmp(&(b.edge, b.dir, b.kind)).then(
+                a.speed_mps
+                    .partial_cmp(&b.speed_mps)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
+        events.dedup();
+        if events == self.live {
+            return 0;
+        }
+        self.rules = self.base.clone();
+        for ev in &events {
+            live::apply(&mut self.rules[ev.edge as usize], ev);
+        }
+        self.live = events;
+        self.rebubble = true;
+        self.rates_at = None;
+        // Leave: on a closed part, or routed over one.
+        let gone: Vec<u32> = self
+            .vehicles
+            .iter()
+            .filter(|v| {
+                v.f.route[v.pos.step..]
+                    .iter()
+                    .any(|st| !self.rules[st.edge as usize].allows(v.f.class, st.forward))
+            })
+            .map(|v| v.f.id)
+            .collect();
+        for id in &gone {
+            self.remove(*id);
+        }
+        gone.len()
+    }
+
+    /// The live road events in force (T13).
+    pub fn live_events(&self) -> &[live::EdgeEvent] {
+        &self.live
+    }
+
+    /// The statistics' rule of edge `e` (before live events).
+    pub fn base_rule(&self, e: usize) -> &EdgeRule {
+        &self.base[e]
+    }
+
+    /// The statistics' rules (before live events).
+    pub fn base_rules(&self) -> &[EdgeRule] {
+        &self.base
     }
 
     /// Removes vehicle `id` (tests; T13's closures).

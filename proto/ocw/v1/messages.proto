@@ -37,7 +37,19 @@ message ClientMessage {
     TrafficRequest traffic = 22;
     // Whether this rider wants live aircraft (spec 14 Phase 18, 18E T10).
     LiveAirWish live_air = 23;
+    // Whether this rider wants live road events (spec 14 Phase 18, 18E T13).
+    LiveRoadWish live_road = 24;
   }
+}
+
+// The rider's *Live traffic data* (spec 14 Phase 18, 18A, 18D, T13; Q5):
+// sent when `traffic.live_road` changes, and again after every Welcome
+// (desktop only, Q9). The server fetches its world's live road source
+// only while at least one rider wants it and applies the events to the
+// simulated traffic of everyone; the riders who want it get
+// LiveRoadUpdate with the events. Reliable.
+message LiveRoadWish {
+  bool on = 1;
 }
 
 // The rider's *Aircraft: live* (spec 14 Phase 18, 18A, 18D, T10; Q6 (b)):
@@ -799,7 +811,84 @@ message ServerMessage {
     // Live aircraft (spec 14 Phase 18, 18E T10): to the riders who want
     // them only.
     LiveAirUpdate live_air = 16;
+    // Live road events (spec 14 Phase 18, 18E T13): whether the world has
+    // a source (to every rider after its Welcome), and the events in force
+    // (to the riders who want them).
+    LiveRoadUpdate live_road = 17;
   }
+}
+
+// Live road events of the session's world (spec 14 Phase 18, 18D *The*
+// Live traffic data *switch*, 18E T13): the world's source (the per-world
+// table on the server: Tenerife → the DGT's DATEX II incidents), whether
+// it is live, and its records as compact events on the package's road
+// edges – closures, roadworks, reported jams, obstructions – which the
+// server's traffic simulation applies (the vehicles the riders get follow
+// them). **Never a raw record** (18D *What is kept and sent*). Sent to
+// every rider after its Welcome (the status, no events), after each fetch
+// and when its state changes to the riders who sent LiveRoadWish { on }.
+// Reliable.
+message LiveRoadUpdate {
+  LiveRoadStatus status = 1;
+  // Why there are no live events (status other than LIVE), for Settings
+  // and the `traffic` command: "no live data for this world yet", "live
+  // data not reachable – using statistics", …
+  string note = 2;
+  // The source's credit, shown while its events are applied: "Fuente: DGT".
+  string attribution = 3;
+  // What the source gives, for the menu row: "closures, roadworks and
+  // reported jams".
+  string what = 4;
+  // When the events were fetched (Unix ms).
+  int64 fetched_ms = 5;
+  repeated LiveRoadEvent events = 6;
+  // The road graph the edge numbers are of (RoadNetwork::fingerprint).
+  uint64 graph_hash = 7;
+}
+
+enum LiveRoadStatus {
+  // The world has no live road source (on this server): the statistics.
+  LIVE_ROAD_STATUS_NO_SOURCE = 0;
+  // The world has a source; nobody asked for it yet (or not this rider).
+  LIVE_ROAD_STATUS_AVAILABLE = 1;
+  // Live: the events are the source's last fetch.
+  LIVE_ROAD_STATUS_LIVE = 2;
+  // The source failed, is paused or its last fetch is too old: the
+  // statistics meanwhile.
+  LIVE_ROAD_STATUS_DOWN = 3;
+  // This server fetches no live data (the browser's local server, a test
+  // server): the statistics.
+  LIVE_ROAD_STATUS_UNAVAILABLE = 4;
+}
+
+// One live event on one edge (spec 18E T13).
+message LiveRoadEvent {
+  // The edge's index in the package's road graph.
+  uint32 edge = 1;
+  LiveRoadDirection direction = 2;
+  LiveRoadKind kind = 3;
+  // The limit it sets (km/h; 0: the kind's own or none).
+  uint32 speed_kmh = 4;
+  // The road's name in the source ("TF-5"), for the riders' note.
+  string road = 5;
+  // Until when it holds (Unix s; 0: open-ended).
+  int64 until_s = 6;
+}
+
+enum LiveRoadDirection {
+  LIVE_ROAD_DIRECTION_BOTH = 0;
+  // From the edge's `from` vertex to its `to`.
+  LIVE_ROAD_DIRECTION_FORWARD = 1;
+  LIVE_ROAD_DIRECTION_BACKWARD = 2;
+}
+
+enum LiveRoadKind {
+  LIVE_ROAD_KIND_CLOSED = 0;
+  LIVE_ROAD_KIND_LANE_CLOSED = 1;
+  LIVE_ROAD_KIND_ROADWORKS = 2;
+  LIVE_ROAD_KIND_OBSTRUCTION = 3;
+  LIVE_ROAD_KIND_JAM = 4;
+  LIVE_ROAD_KIND_SPEED_LIMIT = 5;
 }
 
 // Live aircraft around the session's world (spec 14 Phase 18, 18C, 18D,

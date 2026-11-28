@@ -32,6 +32,9 @@ serde.workspace = true
 # The access token check in the hello (spec §9.1; pure, also in the
 # browser's local server).
 ocw-auth.workspace = true
+# Live road events (spec 14 Phase 18, 18E T13): the DATEX II feed is read
+# as a stream, keeping only the world's records (pure; the fetch is native).
+quick-xml.workspace = true
 
 # The lib also builds for wasm32-unknown-unknown: the browser app runs the
 # GameServer in its frame loop (spec §14 Phase 10, B1; `local::FrameServer`).

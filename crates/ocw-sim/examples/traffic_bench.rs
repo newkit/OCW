@@ -67,6 +67,9 @@ struct Args {
     view: Option<[f64; 3]>,
     title: Option<String>,
     fixture: Option<String>,
+    /// `--geo-view LAT,LON,R`: `--view` at a place on the globe (the
+    /// package's origin projects it; the fixture gets a `# origin` line).
+    geo_view: Option<[f64; 3]>,
     riders: usize,
     around: Option<String>,
     buses: bool,
@@ -90,6 +93,7 @@ fn args() -> Args {
         view: None,
         title: None,
         fixture: None,
+        geo_view: None,
         riders: 0,
         around: None,
         buses: false,
@@ -123,6 +127,10 @@ fn args() -> Args {
             }
             "--title" => a.title = Some(val),
             "--fixture" => a.fixture = Some(val),
+            "--geo-view" => {
+                let p: Vec<f64> = val.split(',').filter_map(|x| x.parse().ok()).collect();
+                a.geo_view = (p.len() == 3).then(|| [p[0], p[1], p[2]]);
+            }
             "--vertices" => {
                 a.inspect = true;
                 a.vertices = val.split(',').filter_map(|x| x.parse().ok()).collect();
@@ -424,6 +432,19 @@ fn main() {
         );
         Box::new(r)
     };
+    if let (Some(out), Some(g), Some(p)) = (&a.fixture, a.geo_view, &a.package) {
+        // Spec 18E T13: an excerpt around a place of the live road events.
+        let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("{p}: {e}"));
+        let pkg = ocw_world::WorldPackage::skeleton_from_bytes(&bytes).expect("package");
+        let xz =
+            ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1).project(g[0], g[1]);
+        write_fixture_with(out, &net, [xz[0], xz[1], g[2]], Some((g[0], g[1])));
+        println!(
+            "wrote {out} (the place is at x {:.1}, z {:.1} of the package)",
+            xz[0], xz[1]
+        );
+        return;
+    }
     if let (Some(out), Some(view)) = (&a.fixture, a.view) {
         write_fixture(out, &net, view);
         println!("wrote {out}");
@@ -753,6 +774,13 @@ fn main() {
 /// text fixture for the tests (`v X Z`, then `e FROM TO CLASS ONEWAY WIDTH
 /// X,Z X,Z …` with the vertices renumbered; spec 18H).
 fn write_fixture(out: &str, net: &RoadNetwork, view: [f64; 3]) {
+    write_fixture_with(out, net, view, None);
+}
+
+/// [`write_fixture`]; with `geo`, the view's centre on the globe as a
+/// `# origin LAT LON` line (spec 18E T13: the live events' coordinates
+/// project onto the excerpt from there).
+fn write_fixture_with(out: &str, net: &RoadNetwork, view: [f64; 3], geo: Option<(f64, f64)>) {
     let g = net.graph();
     let inside = |v: VertexId| {
         let p = g.vertices[v.0 as usize];
@@ -776,10 +804,16 @@ fn write_fixture(out: &str, net: &RoadNetwork, view: [f64; 3]) {
     for (&v, &k) in &ids {
         verts[k] = g.vertices[v as usize];
     }
-    let mut s = format!(
-        "# Road graph around ({:.0}, {:.0}), {:.0} m: motor roads of the Liechtenstein package (spec 18H).\n# Derived from OpenStreetMap data, (c) OpenStreetMap contributors, ODbL 1.0.\n",
-        view[0], view[1], view[2]
-    );
+    let mut s = match geo {
+        None => format!(
+            "# Road graph around ({:.0}, {:.0}), {:.0} m: motor roads of the Liechtenstein package (spec 18H).\n# Derived from OpenStreetMap data, (c) OpenStreetMap contributors, ODbL 1.0.\n",
+            view[0], view[1], view[2]
+        ),
+        Some((lat, lon)) => format!(
+            "# Road graph within {:.0} m of ({lat:.6}, {lon:.6}): motor roads of the package (spec 18E T13).\n# Derived from OpenStreetMap data, (c) OpenStreetMap contributors, ODbL 1.0.\n# origin {lat:.6} {lon:.6}\n",
+            view[2]
+        ),
+    };
     for p in &verts {
         s += &format!("v {:.2} {:.2}\n", p[0] - view[0], p[1] - view[1]);
     }
