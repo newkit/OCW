@@ -228,11 +228,13 @@ pub mod hand {
         [0.042, -0.05, -0.037],
         [0.056, -0.058, -0.026],
     ];
-    /// How far each finger (index first) curls round the hood before it
-    /// runs straight on (rad round [`HOODS_RADIUS`]): the index finger
-    /// towards the lever, the others further round, the little finger
-    /// most (2026-11-28; before: 1.35 for every finger).
-    pub const HOODS_CURL: [f32; 4] = [1.35, 1.55, 1.8, 2.05];
+    /// On the hoods, how much each finger (index first) bends further at
+    /// its middle and outer joint (rad) after its base joint has followed
+    /// the hood's arc (2026-11-28, from riders' hands on the hoods: the
+    /// index finger reaches over the hood's front towards the lever, the
+    /// others curl round under the hood, the little finger most; before,
+    /// all four ran on straight down in front of the lever).
+    pub const HOODS_CURL: [[f32; 2]; 4] = [[0.1, 0.1], [0.25, 0.2], [0.28, 0.2], [0.4, 0.25]];
     /// A finger's radius at its base and at its tip.
     pub const FINGER_RADIUS: f32 = 0.0085;
     pub const TIP_RADIUS: f32 = 0.0068;
@@ -480,21 +482,44 @@ pub mod hand {
                         // it, the little finger most – not four straight
                         // fingers hanging down in front of the lever.
                         let limit = match shape {
-                            HandShape::Hoods => HOODS_CURL[i],
+                            HandShape::Hoods => 1.35,
                             HandShape::Phone => 1.6,
                             _ => f32::MAX,
                         };
+                        // On the hoods the middle and outer joints bend
+                        // on beyond the arc (HOODS_CURL); elsewhere none.
+                        let kinks = if shape == HandShape::Hoods {
+                            HOODS_CURL[i]
+                        } else {
+                            [0.0, 0.0]
+                        };
+                        let l0 = lens[0];
                         sampled(
                             *lens,
                             *z,
                             |t| {
-                                let a = (t / rf).min(limit);
-                                let phi = phi0 + a;
-                                let rest = t - a * rf;
-                                (
-                                    bu + rf * phi.cos() - rest * phi.sin(),
-                                    bv + rf * phi.sin() + rest * phi.cos(),
-                                )
+                                let base = if kinks == [0.0, 0.0] { t } else { t.min(l0) };
+                                let a = (base / rf).min(limit);
+                                let mut dir = phi0 + a;
+                                let rest = base - a * rf;
+                                let mut u = bu + rf * dir.cos() - rest * dir.sin();
+                                let mut v = bv + rf * dir.sin() + rest * dir.cos();
+                                let mut rem = t - base;
+                                for (k, len) in kinks.iter().zip([lens[1], lens[2]]) {
+                                    if rem <= 0.0 {
+                                        break;
+                                    }
+                                    dir += k;
+                                    let step = rem.min(len);
+                                    u -= step * dir.sin();
+                                    v += step * dir.cos();
+                                    rem -= step;
+                                }
+                                if rem > 0.0 {
+                                    u -= rem * dir.sin();
+                                    v += rem * dir.cos();
+                                }
+                                (u, v)
                             },
                             n,
                         )
