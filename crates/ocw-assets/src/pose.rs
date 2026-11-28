@@ -985,10 +985,21 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     for s in 0..2 {
         let shoulder = torso_pos + torso_world * rider.shoulders[s];
         let out = if s == 0 { -Vec3::X } else { Vec3::X };
+        // The elbows: out and back (on a flat bar further out, the
+        // riders' "attack position"); on the TT extensions down on the
+        // pads, on its base bar out again as on a drop bar's drops
+        // (2026-11-28, the wrists: a forearm along the bar bends the
+        // wrist to the side).
+        let flat_bar = !bike.aero_bars && bike.hoods == bike.drops;
+        let elbows_out = out
+            * (0.7
+                + FLAT_BAR_ELBOWS_OUT * f32::from(u8::from(flat_bar))
+                + SPRINT_ELBOWS_OUT * sprint)
+            + Vec3::new(0.0, -0.35, 0.6);
         let mut pole = if bike.aero_bars {
-            Vec3::new(0.0, -1.0, 0.25)
+            Vec3::new(0.0, -1.0, 0.25).lerp(elbows_out, (p.tops + p.drops).clamp(0.0, 1.0))
         } else {
-            out * (0.7 + SPRINT_ELBOWS_OUT * sprint) + Vec3::new(0.0, -0.35, 0.6)
+            elbows_out
         };
         let mut grip = grips[s];
         if s == 1 && ph > 0.0 {
@@ -1033,6 +1044,10 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
                 GripStyle {
                     handshake: p.handshake,
                     sprint,
+                    // Where the arm reaching the grip puts the elbow.
+                    elbow: Some(
+                        two_bone(shoulder, grips[s], rider.upper_arm, rider.forearm, pole).0,
+                    ),
                 },
             );
             // A TT bar too far for a short rider: the hand slides back
@@ -1161,6 +1176,34 @@ pub struct GripStyle {
     pub handshake: f32,
     /// In a sprint (0 … 1).
     pub sprint: f32,
+    /// About where the elbow is (bike frame; 2026-11-28, the wrists in
+    /// the drops): on a bar that runs along the forearm (the drops, the TT
+    /// bars) the hand turns about the bar towards the forearm as far as
+    /// the palm stays turned in ([`ALONG_PALM_TILT`]), so the wrist does
+    /// not bend back. `None`: towards the shoulder.
+    pub elbow: Option<Vec3>,
+}
+
+/// Across the bar (the tops, flat grips) the hand's long axis lies at most
+/// this far (rad) from the forearm's, the wrist bent back.
+pub const ACROSS_BACK_MAX: f32 = 0.55;
+
+/// On a bar along the forearm, how far the hand may turn about the bar
+/// towards the forearm (rad): the palm faces in within this.
+pub const ALONG_PALM_TILT: f32 = 0.44;
+
+/// The hand's long axis (bar → wrist, before the wrap's oblique turn) on
+/// a bar `k` along the forearm, the palm facing `inward`: turned about
+/// the bar from straight up (the palm in) towards the forearm `fore`
+/// (bar → elbow), at most [`ALONG_PALM_TILT`].
+fn along_axis(k: Vec3, fore: Vec3, inward: Vec3) -> Vec3 {
+    let mut up = k.cross(inward).normalize_or(Vec3::Y);
+    if up.y < 0.0 {
+        up = -up;
+    }
+    let f = (fore - k * fore.dot(k)).normalize_or(up);
+    let a = k.dot(up.cross(f)).atan2(up.dot(f));
+    Quat::from_axis_angle(k, a.clamp(-ALONG_PALM_TILT, ALONG_PALM_TILT)) * up
 }
 
 /// [`bar_at`] for a [`GripStyle`]: in a sprint the drops are held further
@@ -1234,7 +1277,7 @@ pub const HOOD_BELOW_GRIP: f32 = 0.011;
 
 /// In a sprint the drops are held this much further forward (m), deep in
 /// the hooks, the index finger nearer the lever.
-pub const SPRINT_DROPS_FORWARD: f32 = 0.01;
+pub const SPRINT_DROPS_FORWARD: f32 = 0.015;
 
 /// How far behind the drops' grip anchor the hand holds them at sprint
 /// weight `sprint` (m).
@@ -1250,6 +1293,8 @@ pub const SPRINT_HIP_DROP: f32 = 0.0;
 /// the torso lower; the elbows out by this (the arm's pole).
 pub const SPRINT_ARM_BEND: f32 = 0.05;
 pub const SPRINT_ELBOWS_OUT: f32 = 0.4;
+/// On a flat bar the elbows go this much further out (the arm's pole).
+pub const FLAT_BAR_ELBOWS_OUT: f32 = 0.4;
 /// The sprint's head: lifted this much (rad) – the torso low, the eyes up
 /// the road.
 pub const SPRINT_HEAD_UP: f32 = 0.22;
@@ -1367,16 +1412,27 @@ fn hand_on_bar_plain(
     // - the drops, the TT extensions and base bar ends (along): the palm
     //   inward to the bike, the fingers round the bar from the outside.
     let across = k.x.abs() > 0.7;
+    // Bar → elbow (the forearm, held), else towards the shoulder.
+    let fore = style.elbow.map_or(to_sh, |e| (e - c).normalize_or(to_sh));
     let (y_dir, palm_to) = if shape == HandShape::Hoods && !bike.aero_bars {
         (Vec3::new(0.0, 0.25, 1.0), Vec3::NEG_Y)
     } else if across && !bike.aero_bars {
         let flat = Vec3::new(0.0, 0.3, 1.0).normalize();
-        (
-            (to_sh * TOPS_WRIST_FOLLOW + flat * (1.0 - TOPS_WRIST_FOLLOW)),
-            Vec3::new(0.0, -1.0, 0.3),
-        )
+        let lying = (to_sh * TOPS_WRIST_FOLLOW + flat * (1.0 - TOPS_WRIST_FOLLOW)).normalize();
+        // Bent back no further than ACROSS_BACK_MAX from the forearm (a
+        // steep forearm, standing on a flat bar).
+        let bent = lying.angle_between(fore);
+        let y_dir = if bent > ACROSS_BACK_MAX {
+            Quat::IDENTITY.slerp(
+                Quat::from_rotation_arc(lying, fore),
+                (bent - ACROSS_BACK_MAX) / bent,
+            ) * lying
+        } else {
+            lying
+        };
+        (y_dir, Vec3::new(0.0, -1.0, 0.3))
     } else {
-        (to_sh, inward)
+        (along_axis(k, fore, inward), inward)
     };
     let y = (y_dir - k * y_dir.dot(k)).normalize_or(Vec3::Y);
     let mut nn = k.cross(y).normalize_or(palm_to);
@@ -1384,8 +1440,25 @@ fn hand_on_bar_plain(
         nn = -nn;
     }
     let x = nn * n;
-    let rot = Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y))).normalize();
+    let across_hand = Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y))).normalize();
+    // The wrap's bar runs obliquely across the palm ([`hand::bar_axis`]):
+    // the hand turns about the palm's normal so its bar lies along the
+    // bar, the little finger's side towards the wrist – the hand more
+    // along the forearm.
+    let rot = (across_hand * Quat::from_rotation_arc(Vec3::Z, hand::bar_axis(shape)).inverse())
+        .normalize();
     let scale = hand_len / crate::rider::body::HAND;
+    // That puts the wrist towards the little finger along the bar; across
+    // the bar (the tops, flat grips) the hand slides as much towards the
+    // stem, so the wrist and the arm stay where they were.
+    let c = if across && shape == HandShape::Wrap {
+        let o = hand::oblique(shape);
+        let slide = -hand::BAR_Y * o.sin() * o.cos() * scale;
+        let little = rot * hand::bar_axis(shape);
+        c - little * slide
+    } else {
+        c
+    };
     let b = hand::bar_centre(shape, s).unwrap_or(Vec3::NEG_Y * hand_len) * scale;
     (shape, rot, c - rot * b)
 }
@@ -1865,30 +1938,59 @@ mod tests {
         assert!(arm.distance(Vec3::NEG_Z) < 1e-5);
     }
 
+    /// The wrist's bend of a hand turned `hand_rot` against its forearm
+    /// (both along −y at rest), hand `s`: (extension, deviation) in
+    /// degrees – + extension the back of the hand towards the forearm, −
+    /// flexion; + deviation towards the thumb (radial), − towards the
+    /// little finger (ulnar). The forearm's twist is not the wrist's bend.
+    fn wrist_bend(hand_rot: Quat, s: usize) -> (f32, f32) {
+        let f = hand_rot.inverse() * Vec3::NEG_Y;
+        let along = f.dot(Vec3::NEG_Y);
+        let palm = Vec3::X * hand::palm_sign(s);
+        (
+            f.dot(palm).atan2(along).to_degrees(),
+            f.dot(Vec3::Z).atan2(along).to_degrees(),
+        )
+    }
+
     /// The wrists bend plausibly on every grip at every body height.
     #[test]
     fn wrists_bend_plausibly_on_every_grip_and_height() {
         // 2026-11-28 ("check images on hand position and how riders grab
-        // the handlebar"): on every bike, on the hoods and the tops (the
-        // TT bike: extensions and base bar; the flat bar: its grips), at
-        // three body heights, the wrist bends
-        // within the wrist's range against the forearm (flexion,
-        // extension and the sideways bend together; the forearm's twist
-        // apart). That the hands hold the grips is
-        // `hands_and_feet_stay_on_the_bike`, that the fingers wrap them
-        // without clipping `fingers_wrap_every_bikes_grips_without_clipping`.
-        // The wrist's range: about 70° extension or 80° flexion with up
-        // to 30° to the side.
-        const WRIST_LIMIT_DEG: f32 = 85.0;
+        // the handlebar"): on every bike, on the hoods (draped and
+        // handshake), the tops, in the drops and sprinting (the TT bike:
+        // extensions and base bar; the flat bar: its grips), at three body
+        // heights, the wrist bends within what riders' wrists do on a bar:
+        // to the side (towards the thumb or the little finger) under 45°,
+        // bent back (extension) under 40°, bent in (flexion) under 50°;
+        // the forearm's twist apart. Before the wrap's oblique grip
+        // (hand::WRAP_OBLIQUE) the bar crossed the hand straight, so in
+        // the drops and on the TT base bar's horns – a bar running along
+        // the forearm – the wrist bent up to 93°. That the hands hold the
+        // grips is `hands_and_feet_stay_on_the_bike` and
+        // `the_hands_hold_the_grips_on_every_bike_position_and_build`,
+        // that the fingers wrap them without clipping
+        // `fingers_wrap_every_bikes_grips_without_clipping`.
+        const DEVIATION_DEG: f32 = 45.0;
+        const EXTENSION_DEG: f32 = 40.0;
+        const FLEXION_DEG: f32 = 50.0;
         let rest = crate::rider::build(crate::rider::Detail::High);
         let rig0 = RiderRig::from_model(&rest).unwrap();
-        let (mut worst, mut along) = (0.0f32, 0.0f32);
+        let mut worst: std::collections::BTreeMap<&str, (f32, f32, f32)> = Default::default();
+        let mut failed = Vec::new();
         for profile in ocw_core::ProfileId::ALL {
             let bike0 = crate::bikes::rig(profile);
             for scale in [0.85, 1.0, 1.15] {
                 let body = BodyFit::new(&rig0, &bike0, scale);
                 for (what, params) in [
                     ("hoods", PoseParams::default()),
+                    (
+                        "handshake",
+                        PoseParams {
+                            handshake: 1.0,
+                            ..Default::default()
+                        },
+                    ),
                     (
                         "tops",
                         PoseParams {
@@ -1916,31 +2018,26 @@ mod tests {
                 ] {
                     let p = pose(&body.rider, &body.bike, &body.fit, &params);
                     for s in 0..2 {
-                        // The hand's long axis against the forearm's (both
-                        // along −y at rest; the forearm's twist is not the
-                        // wrist's bend).
-                        let w = (p.hands[s] * Vec3::NEG_Y)
-                            .angle_between(Vec3::NEG_Y)
-                            .to_degrees();
-                        // The drops and the TT base bar's horns run along
-                        // the forearm, and the hand's fingers wrap a bar
-                        // across the hand: there the wrist bends further
-                        // (reported, not asserted; an oblique grip needs
-                        // its own finger shape).
-                        if what == "drops" || what == "sprint" {
-                            along = along.max(w);
-                            continue;
+                        let (ext, dev) = wrist_bend(p.hands[s], s);
+                        let e = worst.entry(what).or_insert((0.0, 0.0, 0.0));
+                        *e = (e.0.max(ext), e.1.min(ext), e.2.max(dev.abs()));
+                        if dev.abs() >= DEVIATION_DEG || ext >= EXTENSION_DEG || -ext >= FLEXION_DEG
+                        {
+                            failed.push(format!(
+                                "{profile:?} ×{scale} {what}: wrist {s} extension {ext:.0}°, to the side {dev:.0}°"
+                            ));
                         }
-                        worst = worst.max(w);
-                        assert!(
-                            w < WRIST_LIMIT_DEG,
-                            "{profile:?} {scale} {what}: wrist {s} bent {w} degrees"
-                        );
                     }
                 }
             }
         }
-        eprintln!("the most bent wrist: {worst:.0} degrees (drops and sprint: {along:.0})");
+        for (what, (ext, flex, dev)) in &worst {
+            eprintln!(
+                "{what}: extension up to {ext:.0}°, flexion up to {:.0}°, to the side up to {dev:.0}°",
+                -flex
+            );
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
     }
 
     /// The posed rider's feet are on the pedals and the hands on the bars,
@@ -2139,10 +2236,16 @@ mod tests {
                     "{profile:?} {side}: the other foot on its pedal"
                 );
                 for s in 0..2 {
+                    // On the bar at the grip: within 5 cm of it across the
+                    // bar, and along it within 5 cm plus the oblique
+                    // grip's slide towards the stem on a flat bar.
                     let grip = held_point(&rider, &p, s);
+                    let k = bar_at(&bike, bike.hoods[s], [1.0, 0.0, 0.0]).1;
+                    let d = grip - bike.hoods[s];
+                    let (along, off) = (d.dot(k).abs(), (d - k * d.dot(k)).length());
                     assert!(
-                        grip.distance(bike.hoods[s]) < 0.05,
-                        "{profile:?} {side}: hands {grip}"
+                        off < 0.05 && along < 0.085,
+                        "{profile:?} {side}: hands {grip} ({off:.3} off the bar, {along:.3} along it)"
                     );
                 }
                 // Off the saddle, in front of it.
@@ -2611,6 +2714,62 @@ mod hand_tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Tuning aid (run by hand with `--ignored`): how far each finger can
+    /// curl round the road hoods without cutting into a hood or a bar.
+    #[test]
+    #[ignore]
+    fn sweep_the_hoods_curl() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        let mut cases = Vec::new();
+        for profile in ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            if bike.aero_bars || bike.hoods == bike.drops {
+                continue;
+            }
+            let held = crate::bikes::held_bars(profile);
+            for scale in [0.84, 1.0, 1.15] {
+                let body = BodyFit::new(&rig, &bike, scale);
+                let p = pose(&body.rider, &body.bike, &body.fit, &PoseParams::default());
+                let m = posed(&near, &p, scale);
+                cases.push((m, scale, held.tubes.clone(), held.hoods.clone()));
+            }
+        }
+        for i in 0..4 {
+            let mut best = 0.0;
+            for step in 0..30 {
+                let a = 0.05 * step as f32;
+                let mut curl = hand::HOODS_CURL;
+                curl[i] = [a, 0.6 * a];
+                let mut ok = true;
+                for (m, scale, tubes, hoods) in &cases {
+                    let finger_r = hand::TIP_RADIUS * scale - 0.0015;
+                    for side in 0..2 {
+                        let w = m.world(m.node(nodes::HAND[side]).unwrap());
+                        let d = &hand::fingers_curled(HandShape::Hoods, side, curl)[i];
+                        for q in &d.points {
+                            let q = w.transform_point3(*q);
+                            for (pts, radii) in tubes {
+                                let (dist, r) = to_tube(q, pts, radii);
+                                ok &= dist >= r + finger_r;
+                            }
+                            for (c, radii, rot) in hoods {
+                                let l = rot.inverse() * (q - *c);
+                                ok &= (l / (*radii + Vec3::splat(finger_r))).length() >= 1.03;
+                            }
+                        }
+                    }
+                }
+                if ok {
+                    best = a;
+                } else {
+                    eprintln!("SWEEP finger {i}: {a:.2} clips");
+                }
+            }
+            eprintln!("SWEEP finger {i}: up to {best:.2}");
         }
     }
 
@@ -3208,5 +3367,140 @@ mod hand_tests {
                 }
             }
         }
+    }
+
+    /// The hands on the grips across bikes, positions and builds
+    /// (2026-11-28, "check images on hand position and how riders grab
+    /// the handlebar"): for every bike, on the hoods (draped and
+    /// handshake), the tops, the drops, standing and sprinting, for short,
+    /// default and tall riders of three bases and the skinniest, the normal
+    /// and the heaviest shape, the bar the hand wraps lies on the bike's bar
+    /// (its centre within a little of the bar's centre line, or of the
+    /// hood's body on the hoods), and neither the palm nor a digit cuts
+    /// deep into a bar.
+    #[test]
+    fn the_hands_hold_the_grips_on_every_bike_position_and_build() {
+        use ocw_core::character::{BaseBody, BodyShape, Character};
+        let near = build(Detail::High);
+        let rig0 = RiderRig::from_model(&near).unwrap();
+        let (mut off_bar, mut into) = (f32::MIN, 0.0f32);
+        let mut failed: Vec<String> = Vec::new();
+        for profile in ProfileId::ALL {
+            let held = crate::bikes::held_bars(profile);
+            let bike = crate::shipped::bike_rig(profile);
+            let near_tube = |q: Vec3| {
+                held.tubes
+                    .iter()
+                    .map(|(pts, radii)| to_tube(q, pts, radii))
+                    .min_by(|a, b| (a.0 - a.1).total_cmp(&(b.0 - b.1)))
+                    .expect("a bar")
+            };
+            let positions: [(&str, PoseParams); 6] = [
+                ("hoods", PoseParams::default()),
+                (
+                    "handshake",
+                    PoseParams {
+                        handshake: 1.0,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "tops",
+                    PoseParams {
+                        tops: 1.0,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "drops",
+                    PoseParams {
+                        drops: 1.0,
+                        tuck: 1.0,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "standing",
+                    PoseParams {
+                        stand: 1.0,
+                        rock: 0.1,
+                        crank: 1.0,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "sprint",
+                    crate::anim::targets(crate::anim::Riding::Sprinting, 15.0, 0.0, bike.aero_bars),
+                ),
+            ];
+            for base in BaseBody::ALL {
+                for shape in [BodyShape::SuperSkinny, BodyShape::Normal, BodyShape::Obese] {
+                    for height_cm in [152u16, 178, 203] {
+                        let c = Character {
+                            base,
+                            shape,
+                            height_cm,
+                            ..Default::default()
+                        };
+                        let scale = c.scale();
+                        let body = BodyFit::new(&rig0.for_body(&c), &bike, scale);
+                        for (name, params) in &positions {
+                            let p = pose(&body.rider, &body.bike, &body.fit, params);
+                            let m = posed(&near, &p, scale);
+                            let what =
+                                format!("{profile:?} {name} {base:?} {shape:?} {height_cm} cm");
+                            for side in 0..2 {
+                                let hs = p.hand_shapes[side];
+                                let bar = held_point(&m, &p, side);
+                                // The held bar on the bike's bar.
+                                let gap = if matches!(hs, HandShape::Hoods | HandShape::Handshake) {
+                                    held.hoods
+                                        .iter()
+                                        .map(|(c, _, _)| bar.distance(*c))
+                                        .fold(f32::MAX, f32::min)
+                                        - 0.025
+                                } else {
+                                    let (d, _) = near_tube(bar);
+                                    d - 0.01 * scale
+                                };
+                                off_bar = off_bar.max(gap);
+                                if gap >= 0.0 {
+                                    failed.push(format!(
+                                        "{what} side {side}: {hs:?} held {gap:.4} m off the bar ({bar})"
+                                    ));
+                                }
+                                // Nothing deep in a bar: the palm's
+                                // surface and the digits' surfaces.
+                                let w = m.world(m.node(nodes::HAND[side]).expect("hand"));
+                                let palm = hand::palm(side).0;
+                                let digits = digits(&m, side, hs);
+                                let finger_r = hand::TIP_RADIUS * scale;
+                                let surface = palm
+                                    .iter()
+                                    .map(|q| (w.transform_point3(*q), 0.0))
+                                    .chain(digits.iter().flatten().map(|q| (*q, finger_r)));
+                                for (q, r) in surface {
+                                    let (d, tube_r) = near_tube(q);
+                                    let depth = tube_r + r - d;
+                                    into = into.max(depth);
+                                    if depth >= 0.004 {
+                                        failed.push(format!(
+                                            "{what} side {side}: {hs:?} {depth:.4} m into a bar at {q}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "the held bar at most {off_bar:.4} m off, the hand at most {into:.4} m into a bar; {} failed",
+            failed.len()
+        );
+        failed.sort();
+        failed.dedup();
+        assert!(failed.is_empty(), "{:#?}", &failed[..failed.len().min(40)]);
     }
 }

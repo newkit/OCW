@@ -7135,3 +7135,66 @@ riders = "active = \"Lou Rouleur\"\n[[rider]]\nname = \"Lou Rouleur\"\nweight_kg
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.8=workshop.buy helmet.tt.top", "1.5=character --body a --shape normal --age 50s --hair short-textured --hair-colour #3B2A20 --skin 10 --beard full --moustache classic --glasses 1", "1.6=kit.design --pattern stripes --jersey #3949AB --second #F2F2EE --helmet #E53935", "4=camera.closeup face 90 0 0.42"]
 shot = 9
 pick = false
+
+[[scene]]
+name = "handv2-cuff-full-hoods"
+description = "The glove cuffs (4N, 2026-11-28): the right wrist on the hoods of the road bike, close, from outside - full gloves, skin 5, slim (skinny shape), 165 cm"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Jon Cuff\"\n[[rider]]\nname = \"Jon Cuff\"\nweight_kg = 72.0\nheight_cm = 165.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.2=hearts.grant 3000", "1.3=workshop.buy gloves.full.mid", "1.5=character --skin 5 --shape skinny", "4=camera.closeup right-hand 110 20 0.3"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "handv2-cuff-winter-drops"
+description = "The glove cuffs (4N, 2026-11-28): the right wrist sprinting in the drops of the road bike, close, from outside - winter gloves, skin 10, heavy (fat shape), 190 cm"
+args = ["--route", "loop", "--bots", "0", "--power", "1100"]
+riders = "active = \"Kim Cuff\"\n[[rider]]\nname = \"Kim Cuff\"\nweight_kg = 72.0\nheight_cm = 190.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.2=hearts.grant 3000", "1.3=workshop.buy gloves.winter.upper", "1.5=character --skin 10 --shape fat", "4=camera.closeup right-hand 110 20 0.3"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "handv2-cuff-full-drops-top"
+description = "The glove cuffs (4N, 2026-11-28): the right hand sprinting in the drops of the aero road bike, three-quarter from the front and above - full gloves, skin 15, normal"
+args = ["--route", "loop", "--bots", "0", "--power", "1100"]
+riders = "active = \"Lea Cuff\"\n[[rider]]\nname = \"Lea Cuff\"\nweight_kg = 72.0\nheight_cm = 178.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.2=hearts.grant 3000", "1.3=workshop.buy gloves.full.mid", "1.5=character --skin 15", "4=camera.closeup right-hand 150 35 0.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "handv2-cuff-winter-hoods-top"
+description = "The glove cuffs (4N, 2026-11-28): the right hand on the hoods of the gravel bike, three-quarter from the front and above - winter gloves, skin 1, super-skinny"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Max Cuff\"\n[[rider]]\nname = \"Max Cuff\"\nweight_kg = 72.0\nheight_cm = 178.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.2=hearts.grant 3000", "1.3=workshop.buy gloves.winter.upper", "1.5=character --skin 1 --shape super-skinny", "4=camera.closeup right-hand 150 35 0.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "handv2-mtb-far-out"
+description = "The hands (4N, 2026-11-28): the left hand on the mountain bike's flat bar grip, from outside on the left - winter gloves, skin 12 (the far hand of handfix-mtb-grips)"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Gus Grip\"\n[[rider]]\nname = \"Gus Grip\"\nweight_kg = 72.0\nheight_cm = 178.0\nbike = \"mtb\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.2=hearts.grant 3000", "1.3=workshop.buy gloves.winter.upper", "1.5=character --skin 12", "4=camera.closeup left-hand 260 15 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "handv2-mtb-far-top"
+description = "The hands (4N, 2026-11-28): the left hand on the mountain bike's flat bar grip, three-quarter from the front and above - winter gloves, skin 12"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Gus Grip\"\n[[rider]]\nname = \"Gus Grip\"\nweight_kg = 72.0\nheight_cm = 178.0\nbike = \"mtb\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.2=hearts.grant 3000", "1.3=workshop.buy gloves.winter.upper", "1.5=character --skin 12", "4=camera.closeup left-hand 210 35 0.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "handv2-tt-extensions-top"
+description = "The hands (4N, 2026-11-28): the right hand on the time-trial bike's extensions, three-quarter from the front and above - bare hands in the base mitts, skin 8"
+args = ["--route", "loop", "--bots", "0", "--power", "300"]
+riders = "active = \"Ned Grip\"\n[[rider]]\nname = \"Ned Grip\"\nweight_kg = 72.0\nheight_cm = 178.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --skin 8", "4=camera.closeup right-hand 150 35 0.4"]
+shot = 9
+pick = false
