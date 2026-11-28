@@ -41,6 +41,7 @@ pub mod lod;
 pub mod materials;
 pub mod media;
 pub mod menu;
+pub mod mesh_kind;
 pub mod navi_map;
 pub mod night_sky;
 pub mod obstacles;

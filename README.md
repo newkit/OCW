@@ -927,6 +927,45 @@ while the world's data was loaded, "scene rebuilt" or "riding …" means
 while the first tiles were drawn (the next thing to make smaller on
 iPhones).
 
+**The first tiles on the GPU (2026-11-28).** What was left after the
+base was the ride's start: the first 3 × 3 world tiles' meshes took 132
+MB of GPU buffers on Andorra (wasm + WebGL about 420 MB 20 s into the
+ride). The page log now says which meshes they are ("gpu meshes by kind:
+roads 50.7 MB …, plants far …, houses near …"): **roads** were the
+biggest part (51 MB on Andorra, 77 MB on Tenerife), then the trees' far
+models and the houses. **Now** on iPhones and iPads (and in the `saver`
+and `minimal` memory modes anywhere) the app meshes only the neighbour
+tiles within 300 m of the rider and those the road enters within 600 m
+ahead (200 / 400 m in `minimal`) – usually 1 to 4 of the nine – and the
+far terrain shows the rest; and every browser and the desktop upload the
+world's meshes in smaller vertex formats with the same picture (normals
+and colours in 16 bits, no colour on a terrain coloured by its map: a
+terrain vertex 28 bytes instead of 48, a road vertex 44 instead of 56).
+Andorra 20 s into the ride: 32 MB of meshes instead of 132, wasm + WebGL
+275 MB instead of 421; Tenerife 57 MB instead of 128 (387 MB instead of
+484 – its base keeps the wasm memory at 287 MB). The log says "world
+tiles: the neighbour tiles meshed within 300 m of the rider and on the
+road 600 m ahead …"; `reach=off` meshes all nine again, `reach=N` sets
+the distance (m).
+
+Tenerife's base itself was the other half: its land use is one 75 MB
+piece, and the phone held it whole while it picked out the tiles along the
+route (the wasm memory from 172 to 244 MB). **Now** a phone fetches the
+land use, the seasonal colours (23 MB) and the water lines (17 MB) in 4 MB
+pieces, checks them as they come and keeps only the tiles along the route
+(the log: "section LUSE (74.8 MB) fetched in slices of 4.2 MB, verified
+and decoded as it came"): Tenerife's base ends at 222 MB instead of 247.
+These pieces are not kept in the browser's world cache, so Tenerife
+downloads them again on the next visit.
+
+Tap these and send "rides" or "closed" (ride at least a minute; for the
+first that closed, the log of the reloaded page):
+
+34. <https://newkit.github.io/OCW/?world=europe/andorra&gpu=webgl2&quality=low&log=1> – Andorra with the new default (the near tiles only)
+35. <https://newkit.github.io/OCW/?world=europe/spain/tenerife&gpu=webgl2&quality=low&log=1> – Tenerife with the new default
+36. <https://newkit.github.io/OCW/?world=europe/andorra&gpu=webgl2&quality=low&log=1&reach=off> – Andorra with all nine tiles meshed (as before, but in the smaller formats)
+37. <https://newkit.github.io/OCW/?world=europe/spain/tenerife&gpu=webgl2&quality=low&log=1&memory=minimal> – Tenerife with the least memory (200 m around, 400 m ahead)
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
@@ -2410,13 +2449,10 @@ package is installed only when all its files match the manifest.
 - **The ANT+ network key:** ANT+ sensors are heard only with the ANT+
   network key (16 hex digits), which Garmin publishes for ANT+ developers
   and which OCW does not ship (spec 14 Phase 17 Q1). Enter it once:
-  *Devices* → *ANT+ (USB stick)* → *Enter the network key*, type it (the
-  field shows `*` only; spaces, commas and `0x` as on Garmin's page are
-  fine; Ctrl+V or *Paste the key* pastes), Enter saves. It is kept in
+  *Devices* → *ANT+ (USB stick)* → *Enter the network key*; it is kept in
   `secrets.toml [ant]` next to `ocw.toml` (readable only by you, never in
-  `ocw.toml` or a log); *Remove the key* deletes it. Console:
-  `ant.key.edit`, `ant.key.paste`, `ant.key.save`, `ant.key.cancel`,
-  `ant.key.clear`.
+  `ocw.toml` or a log). Every platform, by hand and in the browser: see
+  **The ANT+ network key – how to add it** below.
 - The *ANT+ (USB stick)* row says what is missing: *network key needed*,
   *no stick*, *cannot open the stick (permission)*, *the stick is busy with
   another app* (Garmin Express, Zwift, …; only one program can use the
@@ -2475,6 +2511,92 @@ package is installed only when all its files match the manifest.
   power: `erg.target 200`), or `trainer.mode off`.
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
+
+**The ANT+ network key – how to add it** (desktop app on Windows, Linux and
+macOS, and the browser app)
+
+1. **Where to get it.** ANT+ sensors talk on a network that needs the
+   **ANT+ network key**: 8 bytes, written as **16 hex digits**. Garmin
+   publishes it for ANT+ developers on its ANT+ developer site
+   (thisisant.com, the *ANT+ network keys* page), after you sign up and
+   accept the ANT+ adopter terms. **OCW never ships it** (spec 14 Phase 17 Q1): you
+   copy it from there yourself. Spaces, commas, colons and `0x` before each
+   byte, as Garmin's page shows them, are fine.
+2. **In the desktop app (Windows, Linux, macOS) – the easy way:** plug in
+   the ANT USB stick, then **Menu → Settings → Trainer → Devices → ANT+ (USB
+   stick) → Enter the network key**. The field shows `*` only; type the key
+   or paste it with **Ctrl+V** (**Cmd+V** on a Mac) or *Paste the key*;
+   **Enter** (or *Save the key*) saves it, Esc / *Cancel* drops it. The page
+   then says *set*, and *Kept in* names the file. *Change the network key*
+   replaces it, **Remove the key** deletes it (ANT+ stops).
+3. **In the desktop app – by hand:** the key is kept in **`secrets.toml`**
+   next to `ocw.toml`, section `[ant]`, key `network_key`:
+
+   | System | File |
+   |---|---|
+   | Windows | **`%APPDATA%\ocw\secrets.toml`** = `C:\Users\<you>\AppData\Roaming\ocw\secrets.toml` – type `%APPDATA%\ocw` into the Explorer's address bar (or Win + R) and open `secrets.toml` with Notepad |
+   | Linux | `~/.config/ocw/secrets.toml` (`$XDG_CONFIG_HOME/ocw/` if set); mode 0600, readable only by you – keep it so |
+   | macOS | `~/Library/Application Support/ocw/secrets.toml` (in the Finder: Go → Go to Folder…, `~/Library/Application Support/ocw`) |
+
+   With `OCW_CONFIG_DIR=DIR` it is `DIR/secrets.toml`; with
+   `--settings-file FILE` it is the `secrets.toml` in FILE's folder. The app
+   makes the file at its first start, with every key as a commented-out
+   example; the ANT+ one looks like this:
+
+   ```toml
+   # [ant]
+   # network_key = "0A1B2C3D4E5F6071"   # The ANT+ network key: 16 hex digits from Garmin's ANT+ developer page (…); this value is a made-up placeholder; default none: ANT+ off; or enter it in Devices -> ANT+ (USB stick)
+   ```
+
+   **`0A1B2C3D4E5F6071` is a made-up placeholder, not the key** – with it
+   the stick hears nothing. Remove the `# ` before both lines and put the
+   real key between the quotes:
+
+   ```toml
+   [ant]
+   network_key = "…the 16 hex digits from Garmin's page…"
+   ```
+
+   Edit the file while OCW is closed, or **restart the app** afterwards: the
+   desktop app reads the key at its start (a key saved on the Devices page
+   counts at once). Never share the file or put it into a repository;
+   `ocw.toml` and the logs never hold the key.
+4. **In the browser app** (Chrome, Edge and the other Chromium browsers on
+   the desktop and on Android – they have WebUSB): **Settings → Trainer →
+   Devices → Add an ANT+ stick** (or the Devices panel's **+ ANT+ stick**),
+   pick the stick in the browser's list, then **ANT+ (USB stick) → Enter the
+   network key** as above (masked field, Ctrl+V / Cmd+V pastes, Enter
+   saves). The key is kept **only in this browser's storage for the page**
+   (`localStorage`, key `ocw.ant.key`) – per browser and per browser
+   profile, never sent to a server, never in the settings or the log; enter
+   it once in each browser you ride in. *Remove the key* deletes it, and so
+   does clearing the site's data. **Firefox, Safari and every browser on iOS
+   have no WebUSB**: there the Devices page says so – use the desktop app,
+   or let the desktop app relay its sensors to the browser (*Share with a
+   browser*, the [sensor bridge](#the-sensor-bridge-a-trainer-from-another-device)).
+5. **Console** (both apps, ` or F12): `ant.key.edit` (open the masked
+   field), `ant.key.paste` (the clipboard into it), `ant.key.save`,
+   `ant.key.cancel`, `ant.key.clear` (remove the key). The key is never
+   printed.
+6. **OCW Studio and the server** do not need the key: only the app the stick
+   is plugged into does.
+7. **Troubleshooting:**
+   - The *ANT+ (USB stick)* row says **network key needed**: no key yet (or
+     the one in `secrets.toml` does not read: the log names the file and
+     says why, e.g. *the key has 16 hex digits (8 bytes); this has 12*).
+   - **A wrong key finds nothing**: the stick opens and the scan (*Scan
+     for devices*; in the browser *Find ANT+ sensors*) runs, but no strap
+     or power meter ever shows up. Check the 16 digits
+     against Garmin's page (the placeholder `0A1B2C3D4E5F6071` is such a
+     wrong key).
+   - **Windows driver:** the desktop app uses Garmin's own ANT driver (the
+     one Zwift and Garmin Express use; Windows Update installs it); the
+     browser needs the **WinUSB** driver instead (Zadig) – see *Windows
+     driver* above and *ANT+ sensors in the browser*.
+   - **Linux:** the stick needs the udev rule (*Install access for the ANT
+     stick*, or `ocw-desktop --install-udev-rule`; see *Linux access* above).
+   - Only one program can use the stick at a time (close Zwift, Garmin
+     Express, the other OCW app).
 
 **Gradient:** the HUD shows the gradient at the rider and, in brackets, the
 average over the next 100 m (`+9.4 % (100 m +7.8 %)`). Bottom left, a mini
@@ -2738,14 +2860,34 @@ bar or the Run dialog (Win + R).
   servers of *Connect to a server*), `[start]` (the last start choice) and
   `[strava]` (`auto_upload`). Edit it by hand while the app is closed; the app
   changes only the section it saves, your comments elsewhere stay.
-  **`secrets.toml`** next to it, readable only by you (mode 0600 on Linux and
-  macOS; on Windows your profile folder is private): `[strava]` (the
-  `client_id` / `client_secret` of your own Strava API app, §2.8.1; an example
-  is in `packaging/secrets.example.toml`; `OCW_STRAVA_CLIENT_ID` /
-  `OCW_STRAVA_CLIENT_SECRET` win over it), `[strava_token]` (its tokens) and
-  `[account]` (the sign-in session when the system keyring is not available).
+  **`secrets.toml`** next to it (Windows: `%APPDATA%\ocw\secrets.toml`),
+  readable only by you (mode 0600 on Linux and macOS; on Windows your profile
+  folder is private): `[strava]` (the `client_id` / `client_secret` of your
+  own Strava API app, §2.8.1; an example is in
+  `packaging/secrets.example.toml`; `OCW_STRAVA_CLIENT_ID` /
+  `OCW_STRAVA_CLIENT_SECRET` win over it), `[strava_token]` (its tokens),
+  `[account]` (the sign-in session when the system keyring is not available)
+  and `[ant]` (the ANT+ network key).
   `ocw.toml` never holds a secret, so you can share it. Also there:
   `trusted-keys.json`, `trusted-roots/` and `keys/` (world package signing).
+- **Both files carry commented-out examples** (spec 3.2.4): the app makes
+  them at its first start with a header (what the file is, where it lives,
+  that the app edits it and keeps your comments) and, at the end, **every
+  section and key it knows commented out**, one line each with what it is,
+  its default and its values or units – e.g. in `secrets.toml`:
+
+  ```toml
+  # [ant]
+  # network_key = "0A1B2C3D4E5F6071"   # The ANT+ network key: 16 hex digits from Garmin's ANT+ developer page (…); this value is a made-up placeholder; default none: ANT+ off; or enter it in Devices -> ANT+ (USB stick)
+  ```
+
+  and in `ocw.toml`, e.g. `# [settings.audio]` / `# master = 80   # …`.
+  To use one, remove the `# ` before its section line and its key line (a
+  section only once per file). Values in `secrets.toml`'s examples are
+  **made-up placeholders**, never real keys. Files of older versions get the
+  missing examples appended once at the next start (your values and comments
+  stay byte for byte); a newer version adds the examples of its new keys
+  the same way. A line `# ocw: no examples` in a file stops that.
 - **Moving from older versions:** at the first start of a version with
   `ocw.toml`, the old files of the config folder – `settings.toml`,
   `riders.toml`, `devices.toml`, `joins.txt`, `strava.toml`,
@@ -4686,9 +4828,10 @@ call with a read-only snippet (shared control socket).
   ones behind "show decided"; milestones blocked by an open question under
   *Blocked work*. The spec stays the only place where questions are written
   and decided; the page re-reads it when it changes.
-- **Janitor:** its mode, the last pass per machine (what it deleted, or
-  would delete in dry-run mode, and why), the recent log entries, and the
-  size of `test-output/` (never deleted).
+- **Janitor:** its mode and schedule, the last pass per machine (when,
+  routine or full disk, what it deleted – or would delete in dry-run mode –
+  how much it freed, and why), the recent log entries, and the size of
+  `test-output/` (never deleted).
 
 **Answering a question:** type the answer in the question's box, or press
 "Accept proposal" or one of the option buttons (they fill the box), then
@@ -4757,35 +4900,78 @@ build log.
 ### Disk cleanup
 
 Every branch checkout on a build machine has its own `target/` (several GB to
-tens of GB). Three tools remove build output, never sources:
+tens of GB), and checkouts of merged branches, old releases and one-off
+names stay behind. **One rule set** (`tools/build-dashboard/cleanup_rules.py`)
+says what may go; the dashboard's janitor applies it by itself, and
+`scripts/remote-gc.sh` is the same by hand:
 
 ```bash
-scripts/remote-gc.sh --branch <branch>          # after merging or abandoning a branch: its target/ on every reachable machine
+scripts/remote-gc.sh --branch <branch>          # after merging or abandoning a branch: its target/ on every reachable machine, at once
 make remote-gc-branch BRANCH=<branch> [DRY=1]   # the same; DRY=1 only lists
-make remote-gc                                  # dry run: target/ of merged or gone agent checkouts, with sizes per machine
-make remote-gc GC=1 [MACHINES="marge macos"]    # delete them
-scripts/remote-gc.sh macos                      # dry run on one machine
-make janitor-plan                               # what the dashboard's janitor would delete at each threshold now
+make remote-gc                                  # dry run of the rules on every machine: per class what would go and why, what is kept and why
+make remote-gc GC=1 [MACHINES="marge macos"]    # delete
+scripts/remote-gc.sh -v macos                   # dry run on one machine, also listing every checkout without target/
+GC=1 scripts/remote-gc.sh --only NAME leela     # only the items whose path contains NAME
+scripts/remote-gc.sh --selftest Win11Builder    # make a scratch checkout with over-long paths there and delete it with the real snippets
+scripts/remote-gc.sh --help                     # the rules and the thresholds (OCW_GC_* environment variables)
+make janitor-plan                               # the janitor's view: the routine pass and what each disk threshold would add
 ```
 
+| Class (by the checkout's name) | Its `target/` goes when |
+|---|---|
+| main checkout, `<repo>-HEAD` (release / deploy builds), a directory with its own `.git` | never |
+| any checkout a live task marker names (running or waiting) | never |
+| any checkout synced within the last 24 h (`OCW_GC_RECENT_H`) | never – except an agent checkout whose branch is gone |
+| agent (`worktree-agent-*`) | branch gone → at once; merged into main and the local worktree removed; merged into main **with commits of its own** and not synced for 2 days (`OCW_GC_AGENT_DAYS`), even while the worktree exists; a branch without commits of its own (a new agent: it also looks merged) only after 14 days without a sync |
+| merge (`merge-*`, branch `merge/…`) | branch gone or merged into main; or not synced for 3 days (`OCW_GC_MERGE_DAYS`) |
+| release (`release-X.Y.Z`) | older than the newest release (highest version among the tags, Cargo.toml and the checkouts there; 0.2.10 > 0.2.9) and not synced for 7 days (`OCW_GC_RELEASE_DAYS`) |
+| other (`fix-*`, `strava-*`, `agent-*`, …) | merged into main with commits of its own; no branch of that name (gone, or a name given by hand) or a branch without commits of its own: not synced for 14 days (`OCW_GC_OTHER_DAYS`); an open branch stays |
+
+**The whole checkout directory** goes when its `target/` may go for a reason
+that cannot end (branch gone or merged, no branch, an older release), it was
+not synced for 30 days (`OCW_GC_CHECKOUT_DAYS`), no local worktree uses the
+branch and it holds **no file under `test-output/` or `data/`** – output that
+may never have been fetched keeps the checkout, and the plan says so. Also
+removed: `target.ocw-gc.*` / `target.ocw-janitor.*` and `<checkout>.ocw-gc.*`
+left by a failed deletion (older than 1 h, `OCW_GC_STRAY_H`); the browser
+profiles our web tests leave in the temp directory (`ocw-chromium-*`, older
+than 24 h, `OCW_GC_TEMP_H`, not named by a running process); release output
+folders `~/ocw-release-X.Y.Z` older than the newest release and unchanged for
+7 days, unless they hold world packages (a `world*` entry). Never: the
+sources of a kept checkout, world data, the sccache cache (capped by
+`sccache_size`, default 30G), task markers (`remote.sh` sweeps those of dead
+processes on every run). "Last synced" is read on the machine: the newest of
+the checkout's `.ocw-sync/` (rewritten by every sync), `.ocw-last-run`
+(touched by every run) and cargo's directories in `target/`, else the
+directory's own time; ages use the machine's clock.
+
+- **Automatic:** the janitor (a thread of the dashboard, on by default) runs
+  a **routine pass once a day** (`OCW_JANITOR_ROUTINE_H`, 0 = never) on every
+  enabled, reachable machine: everything the rules allow. When a machine's
+  checkouts' disk is **above 75 % or has less than 40 GB free**
+  (`OCW_JANITOR_FREE_GB`) it runs a pass at once (at most one an hour per
+  machine, also on machines disabled for building) that also sweeps the main
+  checkout's `target/` (old replaced build units and incremental directories
+  unused for 3 days); above **85 %** it also deletes the `target/` of the least
+  recently used agent, merge and other checkouts idle for more than 24 h,
+  oldest first, until below 85 %; above **92 %** a red banner. One machine per
+  pass, at most one pass every 10 minutes; the last pass per machine (when,
+  what, how much freed) is on the dashboard and survives its restarts
+  (`test-output/build-log/janitor-state.json`).
+- **Kill switch and dry run:** `OCW_JANITOR=off` (or `dry-run`) in the
+  dashboard's environment, or `--janitor off|dry-run|on`; dry-run logs each
+  plan once as `would-delete`.
 - `remote-gc.sh` without `GC=1` only lists; `--branch` deletes unless
-  `--dry-run` is given. Kept always: the main checkout, the sccache cache,
-  the checkouts themselves (only `target/` goes) and any checkout with a
-  running or waiting task (the machine checks the task markers again right
-  before deleting, and `target/` is renamed before it is removed).
-  Unreachable machines are skipped; only machine names are printed.
-- **The janitor** (dashboard thread, on by default) frees space when the
-  checkouts' disk of a machine is above a threshold, one machine per pass,
-  at most one pass every 10 minutes, the fullest machine first:
-  above **75 %** the `target/` of agent checkouts whose branch is merged or
-  gone and unused for 2 h, plus old replaced build units and incremental
-  directories (unused for 3 days) in the main checkout's `target/`; above
-  **85 %** also the `target/` of the least recently used agent checkouts idle
-  for more than 24 h, oldest first, until below 85 %; above **92 %** a red
-  banner. Never: sources, `data/`, `test-output/`, the sccache cache, busy
-  checkouts.
+  `--dry-run` is given (that checkout's `target/` whatever the rules say – the
+  coordinator names the branch it merged). A checkout with a running or
+  waiting task is never touched: the machine checks the task markers again
+  right before each deletion, and a `target/` or checkout is renamed
+  (`….ocw-gc.PID`) before it is removed. On Windows what `Remove-Item` leaves
+  (paths over 260 characters) is removed with `rd` on the `\\?\` form of the
+  path. Unreachable machines are skipped; only machine names are printed.
 - Every deletion (by the janitor, `remote-gc.sh` or `remote.sh`'s dev-profile
-  cleanup) is a JSON line in `test-output/build-log/DAY/janitor.jsonl`.
+  cleanup) is a JSON line in `test-output/build-log/DAY/janitor.jsonl`
+  (machine, path, bytes, kind, class, reason).
 - Snippets these tools send to POSIX machines run under `/bin/sh` and list
   task markers with `find`, never with shell globs: the Mac's login shell is
   zsh, where an unmatched glob aborts the command (spec v3.28).
@@ -5000,7 +5186,7 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
 | `make test-web`, `test-web-world`, `test-web-multiplayer`, `test-web-ble*`, `test-web-audio`, `test-web-voice`, `test-web-livekit`, `test-web-webgl2` | Headless Chromium runs of the browser app (`scripts/test-web*.py`; see [Testing the browser app](#testing-the-browser-app)), into `test-output/web/` |
 | `make test-studio-planners` | OCW Studio's planners against our own BRouter (see [Planner tests with our own BRouter](#planner-tests-with-our-own-brouter)); on marge |
 | `make test-kiosk` | `scripts/test-kiosk.sh`: the kiosk script with a fake app (no display or build) |
-| `make test-remote` | `scripts/test-remote.sh`: `remote.sh`'s slot order, snapshot and sync, the Windows manifest, `remote-gc.sh`'s choice, the build-log parser (no machine needed) |
+| `make test-remote` | `scripts/test-remote.sh`: `remote.sh`'s slot order, snapshot and sync, the Windows manifest, `remote-gc.sh`'s cleanup rules (`test_cleanup_rules.py`), the build-log parser (no machine needed) |
 | `make test-release-version` | `scripts/test-release-version.sh`: the version bump on a copy of the manifests |
 
 - **`.claude/skills/run-ocw/drive.sh`** runs the desktop app headlessly:

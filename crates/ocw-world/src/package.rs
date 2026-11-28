@@ -1203,7 +1203,146 @@ pub struct BaseDecoder<'a, 'b> {
     kept: Option<BTreeSet<TileKey>>,
     /// The graph, moved out of the reader when the tiles were chosen.
     graph: Option<Arc<RoadGraph>>,
+    /// A land-use section being indexed as its bytes come: the payload
+    /// bytes still to come, its size and the index so far (10G: never the
+    /// whole section held, [`crate::landuse::LandUseStream`]).
+    luse: Option<(usize, usize, crate::landuse::LandUseStream)>,
+    /// A per-tile section (`SEAS`, `WATR`) being cut to the kept tiles as
+    /// its bytes come ([`TileRecordFilter`]).
+    filter: Option<(usize, TileRecordFilter)>,
     decode: &'a mut BaseDecode<'b>,
+}
+
+/// The per-tile sections a phone's base cuts to its course as their
+/// bytes come (10G: Tenerife's seasonal tints are 23 MB, its water lines
+/// 17 MB): the header kept, each tile's record kept or dropped as soon as
+/// it is complete, the kept ones decoded at the end as a smaller payload.
+pub const FILTERED_SECTIONS: &[&[u8; 4]] = &[SEASONS_TAG, WATER_LINES_TAG];
+
+/// One [`FILTERED_SECTIONS`] section cut to `keep` as it comes.
+pub struct TileRecordFilter {
+    tag: [u8; 4],
+    keep: BTreeSet<TileKey>,
+    pending: Vec<u8>,
+    /// The kept payload: the header, the record count (patched at the end)
+    /// and the kept records.
+    out: Vec<u8>,
+    /// Where the record count is in `out`, the records and those seen.
+    count_at: Option<usize>,
+    count: u32,
+    seen: u32,
+    kept: u32,
+    /// `SEAS`: the number of seasonal maps a tile has.
+    maps: usize,
+}
+
+impl TileRecordFilter {
+    pub fn new(tag: [u8; 4], keep: BTreeSet<TileKey>) -> Self {
+        Self {
+            tag,
+            keep,
+            pending: Vec::new(),
+            out: Vec::new(),
+            count_at: None,
+            count: 0,
+            seen: 0,
+            kept: 0,
+            maps: 0,
+        }
+    }
+
+    /// The header's length up to the record count (`None`: more bytes
+    /// needed), and for `SEAS` the maps per tile.
+    fn header_len(&self, b: &[u8]) -> Option<(usize, usize)> {
+        if &self.tag == WATER_LINES_TAG {
+            return (!b.is_empty()).then_some((1, 0));
+        }
+        // SEAS: version u32, cells u32, source u8, count u8, then per
+        // season: season u8, four u16, the means' count u8 and 4 bytes each.
+        let count = *b.get(9)? as usize;
+        let mut at = 10;
+        for _ in 0..count {
+            let means = *b.get(at + 9)? as usize;
+            at += 10 + 4 * means;
+        }
+        (b.len() >= at).then_some((at, count))
+    }
+
+    /// The length of the record at the start of `b` (`None`: more bytes
+    /// needed).
+    fn record_len(&self, b: &[u8]) -> Option<usize> {
+        let u32_at = |at: usize| -> Option<usize> {
+            b.get(at..at + 4)
+                .map(|s| u32::from_le_bytes(s.try_into().expect("4 bytes")) as usize)
+        };
+        let mut at = 8;
+        if &self.tag == WATER_LINES_TAG {
+            let lines = u32_at(at)?;
+            at += 4;
+            for _ in 0..lines {
+                let points = u32_at(at + 2)?;
+                at = at.checked_add(6)?.checked_add(points.checked_mul(16)?)?;
+            }
+        } else {
+            for _ in 0..self.maps {
+                let n = u32_at(at)?;
+                at = at.checked_add(4)?.checked_add(n)?;
+            }
+        }
+        (b.len() >= at).then_some(at)
+    }
+
+    /// The next bytes of the section's payload.
+    pub fn push(&mut self, data: &[u8]) -> Result<(), String> {
+        self.pending.extend_from_slice(data);
+        let mut pos = 0;
+        if self.count_at.is_none() {
+            let Some((len, maps)) = self.header_len(&self.pending) else {
+                return Ok(());
+            };
+            if self.pending.len() < len + 4 {
+                return Ok(());
+            }
+            self.maps = maps;
+            self.out.extend_from_slice(&self.pending[..len + 4]);
+            self.count_at = Some(len);
+            self.count =
+                u32::from_le_bytes(self.pending[len..len + 4].try_into().expect("4 bytes"));
+            pos = len + 4;
+        }
+        while self.seen < self.count {
+            let Some(n) = self.record_len(&self.pending[pos..]) else {
+                break;
+            };
+            let rec = &self.pending[pos..pos + n];
+            let key = TileKey {
+                x: i32::from_le_bytes(rec[..4].try_into().expect("4 bytes")),
+                z: i32::from_le_bytes(rec[4..8].try_into().expect("4 bytes")),
+            };
+            if self.keep.contains(&key) {
+                self.out.extend_from_slice(rec);
+                self.kept += 1;
+            }
+            pos += n;
+            self.seen += 1;
+        }
+        self.pending.drain(..pos);
+        Ok(())
+    }
+
+    /// The kept payload (decoded like the whole section), once the whole
+    /// payload was pushed.
+    pub fn finish(mut self) -> Result<Vec<u8>, String> {
+        let name = String::from_utf8_lossy(&self.tag).into_owned();
+        let Some(at) = self.count_at else {
+            return Err(format!("section {name} truncated"));
+        };
+        if self.seen != self.count || !self.pending.is_empty() {
+            return Err(format!("section {name} truncated or with trailing bytes"));
+        }
+        self.out[at..at + 4].copy_from_slice(&self.kept.to_le_bytes());
+        Ok(self.out)
+    }
 }
 
 impl<'a, 'b> BaseDecoder<'a, 'b> {
@@ -1227,6 +1366,8 @@ impl<'a, 'b> BaseDecoder<'a, 'b> {
             keep,
             kept: None,
             graph: None,
+            luse: None,
+            filter: None,
             decode,
         })
     }
@@ -1264,6 +1405,44 @@ impl<'a, 'b> BaseDecoder<'a, 'b> {
     fn sections(&mut self, buf: &[u8]) -> Result<(), String> {
         loop {
             let avail = &buf[self.pos..];
+            if let Some((left, size, st)) = self.luse.as_mut() {
+                let n = avail.len().min(*left);
+                st.push(&avail[..n])?;
+                *left -= n;
+                self.pos += n;
+                if *left > 0 {
+                    return Ok(());
+                }
+                let size = *size;
+                let (_, _, st) = self.luse.take().expect("matched above");
+                self.reader.s.landuse_index = Some(st.finish()?);
+                self.decode.say(format!(
+                    "section LUSE ({}) decoded as it came",
+                    section_mb(size)
+                ));
+                self.read += 1;
+                continue;
+            }
+            if let Some((left, f)) = self.filter.as_mut() {
+                let n = avail.len().min(*left);
+                f.push(&avail[..n])?;
+                *left -= n;
+                self.pos += n;
+                if *left > 0 {
+                    return Ok(());
+                }
+                let (_, f) = self.filter.take().expect("matched above");
+                let tag = f.tag;
+                let payload = f.finish()?;
+                self.reader.section(tag, &payload)?;
+                self.decode.say(format!(
+                    "section {} cut to the kept tiles as it came ({} kept)",
+                    String::from_utf8_lossy(&tag),
+                    section_mb(payload.len())
+                ));
+                self.read += 1;
+                continue;
+            }
             let Some(count) = self.count else {
                 if avail.len() < 4 {
                     return Ok(());
@@ -1285,6 +1464,30 @@ impl<'a, 'b> BaseDecoder<'a, 'b> {
             let len = u64::from_le_bytes(avail[4..12].try_into().expect("8 bytes"));
             let len = usize::try_from(len).map_err(|_| "section too large")?;
             if avail.len() - 12 < len {
+                if &tag == LANDUSE_TAG
+                    && self.reader.full
+                    && self.reader.streamed
+                    && !self.decode.skip.contains(&tag)
+                {
+                    // Indexed as it comes (the browser pushes a big chunk
+                    // in slices).
+                    self.choose_tiles();
+                    let st = crate::landuse::LandUseStream::new(
+                        self.head.samples,
+                        self.reader.keep.clone(),
+                    );
+                    self.luse = Some((len, len, st));
+                    self.pos += 12;
+                    continue;
+                }
+                if FILTERED_SECTIONS.contains(&&tag) && !self.decode.skip.contains(&tag) {
+                    self.choose_tiles();
+                    if let Some(keep) = self.reader.keep.clone() {
+                        self.filter = Some((len, TileRecordFilter::new(tag, keep)));
+                        self.pos += 12;
+                        continue;
+                    }
+                }
                 return Ok(());
             }
             self.section(tag, &avail[12..12 + len])?;
@@ -1337,7 +1540,7 @@ impl<'a, 'b> BaseDecoder<'a, 'b> {
 
     /// The package's base, once every chunk was pushed.
     pub fn finish(mut self) -> Result<StreamedPackage, String> {
-        if self.pos < self.buf.len() {
+        if self.pos < self.buf.len() || self.luse.is_some() || self.filter.is_some() {
             return Err("package truncated".into());
         }
         if self.head.version >= 2 && self.count.is_none() {
@@ -3388,6 +3591,54 @@ mod tests {
         p.look.ortho = Some(crate::ortho::tests::sample_corridor());
         // The forest cover (FRST, spec §14 Phase 8 T3) streams with the base.
         p.look.forest = Some(crate::forest::tests::sample_forest());
+        // Land use, seasonal tints and water lines per tile (10G: a phone
+        // indexes or cuts them as their bytes come, the pieces below).
+        let mut lu = crate::landuse::tests::landuse();
+        let first = lu.tiles.values().next().unwrap().clone();
+        for key in p.tiles.keys() {
+            lu.tiles.entry(*key).or_insert_with(|| first.clone());
+        }
+        p.landuse = Some(lu);
+        p.look.seasons = Some(crate::look::SeasonalTints {
+            cells: 2,
+            source: 0,
+            seasons: [crate::look::Season::Spring, crate::look::Season::Autumn]
+                .map(|season| crate::look::SeasonInfo {
+                    season,
+                    centre_doy: 100,
+                    first_doy: 80,
+                    last_doy: 120,
+                    scenes: 3,
+                })
+                .to_vec(),
+            class_means: vec![
+                vec![(crate::landuse::LandClass::Forest, [10, 80, 20])],
+                vec![
+                    (crate::landuse::LandClass::Forest, [90, 60, 20]),
+                    (crate::landuse::LandClass::Meadow, [120, 110, 40]),
+                ],
+            ],
+            tiles: p
+                .tiles
+                .keys()
+                .enumerate()
+                .map(|(i, k)| (*k, vec![vec![i as u8; 3 + i], vec![7; 2]]))
+                .collect(),
+        });
+        p.look.water_lines = Some(crate::water_lines::WaterLines {
+            tiles: p
+                .tiles
+                .keys()
+                .enumerate()
+                .map(|(i, k)| {
+                    let line = crate::water_lines::WaterLine {
+                        width_m: 2.5,
+                        points: (0..=i).map(|j| [j as f32, 1.0, 2.0, 3.0]).collect(),
+                    };
+                    (*k, vec![line.clone(), line])
+                })
+                .collect(),
+        });
         p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].surface = RoadSurface::Gravel;
         // A lit road (section LITR, spec §14 Phase 9 S2): kept by streaming.
         p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].lit = crate::RoadLit::Yes;
@@ -3475,6 +3726,19 @@ mod tests {
             })
             .unwrap();
             assert_eq!(p.base(), course.base(), "pieces of {piece}");
+            // The land use indexed as it came, the seasons and water lines
+            // cut as they came (10G): the same as cut afterwards.
+            let (a, b) = (p.land_use().unwrap(), course.land_use().unwrap());
+            assert_eq!(a.keys().collect::<Vec<_>>(), b.keys().collect::<Vec<_>>());
+            for k in b.keys() {
+                assert_eq!(a.tile(k), b.tile(k), "land use of {k:?}");
+            }
+            assert_eq!(
+                p.base().look.seasons.as_ref().unwrap().tiles.len(),
+                1,
+                "seasons cut to the kept tile"
+            );
+            assert_eq!(p.base().look.water_lines.as_ref().unwrap().tiles.len(), 1);
         }
         let whole =
             StreamedPackage::from_chunks_kept(&bytes[header.clone()], parts.clone(), |_| None)

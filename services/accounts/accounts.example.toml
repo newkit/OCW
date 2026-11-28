@@ -4,6 +4,9 @@
 # and run `ocw-server --auth-config config/accounts.toml`. Setup steps
 # (registering the Google client and the Strava app, redirect URIs): the
 # README, chapter "Accounts and sign-in". Never commit the real file.
+# Every key is here, set or as a commented-out example with its default
+# (a test checks that none is missing); all ids and secrets below are
+# made-up placeholders.
 
 # The backend's public base URL (no trailing slash): the issuer of our
 # tokens and the base of every endpoint. Real sign-ins need a public HTTPS
@@ -22,6 +25,11 @@ refresh_idle_s = 2592000     # 30 days unused: sign in again
 refresh_max_s = 15552000     # 180 days after the sign-in at the latest
 device_s = 600               # a device code lives 10 minutes
 device_interval_s = 5
+# id_s = 600                 # ID tokens' lifetime (default 600)
+# code_s = 60                # an authorization code lives 1 minute (default 60)
+# login_s = 600              # a sign-in at Google / Strava must come back within 10 minutes (default 600)
+# link_ticket_s = 300        # a ticket linking a second provider lives 5 minutes (default 300)
+# recent_auth_s = 900        # deleting the account wants a sign-in at most 15 minutes old (default 900)
 
 [keys]
 # The Ed25519 signing keys (created on first start, mode 0600), rotated
@@ -37,6 +45,9 @@ rotate_days = 30
 #   kind = "postgres"
 #   url_env = "DATABASE_URL"
 #   max_connections = 8
+# The URL itself works too, but it holds the password (default: none,
+# url_env is used):
+#   url = "postgres://ocw:made-up-password@db.example.org/ocw"
 # "file": one JSON file (mode 0600) for a single small instance;
 # "memory": nothing survives a restart (with both, the workshop and hearts
 # live in memory only: development).
@@ -70,6 +81,8 @@ trusted_proxy = "127.0.0.1"
 [google]
 client_id = "GOOGLE-CLIENT-ID.apps.googleusercontent.com"
 client_secret = "GOOGLE-CLIENT-SECRET"
+# Google's issuer (default; change only for a test double):
+# issuer = "https://accounts.google.com"
 
 # Strava: https://www.strava.com/settings/api → "Authorization Callback
 # Domain": accounts.example.org (the issuer's host). The backend's
@@ -83,6 +96,11 @@ ask_upload = true
 # Strava's default application limits; the backend stays below them.
 limit_15min = 200
 limit_day = 2000
+# Send PKCE to Strava too (default true):
+# pkce = true
+# Strava's endpoints (defaults; change only for a test double):
+# authorize_url = "https://www.strava.com/oauth/authorize"
+# token_url = "https://www.strava.com/oauth/token"
 
 # The apps (public clients with PKCE). Without [[clients]] the built-in
 # three are used: ocw-desktop (loopback redirect http://127.0.0.1:PORT/

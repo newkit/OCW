@@ -204,6 +204,8 @@ ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 # crate Bevy links (MIT OR Apache-2.0); chrono (MIT OR Apache-2.0, already in
 # the tree) for the local UTC offset of the timestamp.
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+# 16-bit floats for packed vertex codes (Bevy's own; ocw-render, 10G).
+half = { version = "2.7.1", default-features = false }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 thiserror = "2"
 # std::time for wasm32-unknown-unknown (MIT OR Apache-2.0; already in the

@@ -1,30 +1,40 @@
-"""The janitor of the build machines' disks (spec §11.2).
+"""The janitor of the build machines' disks (spec 11.2).
 
-The dashboard polls every machine's disks; when the disk holding the
-checkouts fills up, the janitor frees space in this order:
+A thread of the build dashboard. It applies the cleanup rules of
+cleanup_rules.py (the same rule set `scripts/remote-gc.sh` uses: every
+checkout class, leftovers of failed deletions, the web tests' browser
+profiles, old release output) on a schedule, and frees more when a disk
+fills up:
 
-* above 75 %: the `target/` of agent checkouts (`<repo>-worktree-agent-…`)
-  whose branch is merged into main (worktree removed) or gone, unused for
-  2 h; and in the main checkout's `target/` the build units (cargo's
-  `<crate>-<hash>` artefacts: fingerprint, deps files, build-script output)
-  unused for 3 days that a newer unit of the same crate has replaced, plus
-  incremental session directories unused for 3 days (like cargo-sweep);
-* above 85 %: also the `target/` of the least recently used agent checkouts
-  idle for more than 24 h (sources kept), oldest first, until the disk is
-  estimated below 85 % again;
+* routine pass: once a day (`OCW_JANITOR_ROUTINE_H`, default 24; 0 = never)
+  on every enabled, reachable machine – everything the rules allow;
+* when the checkouts' disk is above 75 % or has less than 40 GB free
+  (`OCW_JANITOR_FREE_GB`): a pass at once (at most one an hour per machine,
+  also on machines disabled for building), which besides the rules sweeps
+  the main checkout's `target/`: build units (cargo's `<crate>-<hash>`
+  artefacts: fingerprint, deps files, build-script output) unused for 3 days
+  that a newer unit of the same crate has replaced, plus incremental session
+  directories unused for 3 days (like cargo-sweep);
+* above 85 %: also the `target/` of the least recently used agent, merge and
+  other checkouts idle for more than 24 h (sources kept), oldest first,
+  until the disk is estimated below 85 % again;
 * above 92 %: an alert (red banner in the dashboard, a log line).
 
-Never touched: the sources of any checkout, checkouts with a running or
-waiting remote.sh task (checked again on the machine right before each
-deletion), the sccache cache, data/ and test-output/ – only paths ending in
-`/target` of a checkout (or units inside the main checkout's target/) are
-ever deleted. Every deletion (and, in dry-run mode, every planned one) is
+Never touched: the main checkout's sources, `<repo>-HEAD`, checkouts with a
+running or waiting remote.sh task (checked again on the machine right
+before each deletion), the sccache cache, world data, a checkout's
+test-output/ and data/ (a checkout holding files there is never removed as
+a whole). Every deletion (and, in dry-run mode, every planned one) is
 logged as a JSON line to test-output/build-log/DAY/janitor.jsonl: machine,
 path (relative to the checkouts' directory), size, reason.
 
-The decisions are pure functions (`plan_machine`, `branch_verdict`,
-`sweep_units`), unit-tested in test_janitor.py; `Janitor` runs them, one
-machine per pass, at most one pass every 10 minutes.
+Modes: on, dry-run, off (`--janitor`, or the environment's `OCW_JANITOR` –
+the kill switch). One machine per pass, at most one pass every 10 minutes;
+the last pass per machine is kept in build-log/janitor-state.json, so a
+restarted dashboard does not start over.
+
+The decisions are pure functions (cleanup_rules.py, `plan_machine`,
+`sweep_units`), unit-tested in test_cleanup_rules.py and test_janitor.py.
 """
 
 from __future__ import annotations
@@ -32,22 +42,38 @@ from __future__ import annotations
 import inspect
 import json
 import os
-import re
-import subprocess
 import threading
 import time
 from pathlib import Path
 
-LEVEL_MERGED = 75.0   # % used: delete target/ of merged or gone agent branches
-LEVEL_LRU = 85.0      # % used: also least recently used idle agent checkouts
+import cleanup_rules as rules
+
+LEVEL_MERGED = 75.0   # % used: a pass at once, with the main checkout's sweep
+LEVEL_LRU = 85.0      # % used: also least recently used idle checkouts
 LEVEL_ALERT = 92.0    # % used: red banner
-IDLE_MERGED_S = 2 * 3600
 IDLE_LRU_S = 24 * 3600
 SWEEP_AGE_S = 3 * 86400
 PASS_INTERVAL_S = 600.0
+PRESSURE_INTERVAL_S = 3600.0   # a full disk: at most one pass an hour per machine
+ROUTINE_H = 24.0               # the routine pass: once a day per machine
+FREE_MIN_GB = 40.0             # less free space than this counts like > 75 %
 MODES = ("off", "dry-run", "on")
-AGENT_PREFIX = "worktree-agent-"
-_SAFE_NAME = re.compile(r"^[A-Za-z0-9._+-]+$")
+STATE_FILE = "janitor-state.json"
+KEEP_ACTIONS = 40              # actions kept per machine for the page
+
+
+def _env_float(name: str, default: float, env=None) -> float:
+    try:
+        v = float((os.environ if env is None else env).get(name, ""))
+        return v if v >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def default_mode(env=None) -> str:
+    """The mode without --janitor: OCW_JANITOR (off | dry-run | on), else on."""
+    v = str((os.environ if env is None else env).get("OCW_JANITOR", "")).strip().lower()
+    return {"0": "off", "false": "off", "dry": "dry-run", "1": "on"}.get(v, v if v in MODES else "on")
 
 
 # --------------------------------------------------------------------------
@@ -71,125 +97,55 @@ def disk_pct(d: dict):
     return round(100.0 * used / size, 1)
 
 
-def level_for(pct) -> int:
-    """0, 75, 85 or 92: the highest threshold the disk is above."""
-    if pct is None:
-        return 0
-    for lv in (LEVEL_ALERT, LEVEL_LRU, LEVEL_MERGED):
-        if pct > lv:
-            return int(lv)
-    return 0
+def level_for(pct, free=None, free_min=None) -> int:
+    """0, 75, 85 or 92: the highest threshold the disk is above; a disk
+    with less than `free_min` bytes free counts as above 75 %."""
+    lv = 0
+    if pct is not None:
+        lv = next((int(x) for x in (LEVEL_ALERT, LEVEL_LRU, LEVEL_MERGED) if pct > x), 0)
+    if not lv and free is not None and free_min and free < free_min:
+        lv = int(LEVEL_MERGED)
+    return lv
 
 
-def checkout_kind(name: str, base: str):
-    """('main' | 'agent' | 'other' | None, branch) of a checkout directory
-    name next to the main checkout `base` (e.g. "OCW")."""
-    if name == base:
-        return "main", "main"
-    if not name.startswith(base + "-"):
-        return None, None
-    branch = name[len(base) + 1:]
-    return ("agent" if branch.startswith(AGENT_PREFIX) else "other"), branch
+fmt_age = rules.fmt_age
 
 
-def branch_verdict(branch: str, branches, worktree_branches, merged):
-    """Why an agent checkout's target/ may go (like scripts/remote-gc.sh):
-    "branch gone", "merged into main, worktree removed", or None (keep: an
-    open branch, a live worktree – a new agent's branch looks merged since
-    it has no commits yet – or not an agent checkout)."""
-    if not branch.startswith(AGENT_PREFIX):
-        return None
-    if branch not in branches:
-        return "branch gone"
-    if branch in worktree_branches:
-        return None
-    if branch in merged:
-        return "merged into main, worktree removed"
-    return None
-
-
-def fmt_age(s) -> str:
-    s = int(max(0, s or 0))
-    if s >= 86400:
-        return "%dd %dh" % (s // 86400, s % 86400 // 3600)
-    if s >= 3600:
-        return "%dh %02dm" % (s // 3600, s % 3600 // 60)
-    return "%dm" % (s // 60)
-
-
-def candidates(checkouts: list, now: float, verdicts: dict) -> dict:
-    """The agent checkouts each rule could delete, ignoring the disk level:
-    {"merged": [...], "lru": [...] (oldest first), "kept": [...]}; each a
-    checkout dict with "reason" added."""
-    merged, lru, kept = [], [], []
-    for c in checkouts:
-        c = dict(c)
-        idle = now - (c.get("last_used") or 0)
-        if c.get("kind") == "main":
-            c["reason"] = "main checkout (only its old build units are swept)"
-            kept.append(c)
-            continue
-        if c.get("kind") != "agent":
-            c["reason"] = "not an agent checkout"
-            kept.append(c)
-            continue
-        if c.get("busy"):
-            c["reason"] = "in use (running or waiting task)"
-            kept.append(c)
-            continue
-        why = verdicts.get(c.get("branch"))
-        if why and idle >= IDLE_MERGED_S:
-            c["reason"] = "%s, unused for %s" % (why, fmt_age(idle))
-            merged.append(c)
-        elif idle >= IDLE_LRU_S:
-            c["reason"] = "least recently used, idle for %s" % fmt_age(idle)
-            lru.append(c)
-        else:
-            c["reason"] = ("%s but used %s ago" % (why, fmt_age(idle))) if why else \
-                "branch open, used %s ago" % fmt_age(idle)
-            kept.append(c)
-    lru.sort(key=lambda c: c.get("last_used") or 0)
-    return {"merged": merged, "lru": lru, "kept": kept}
-
-
-def plan_machine(checkouts: list, disk: dict, now: float, verdicts: dict, sweep=None) -> dict:
-    """What the janitor does on one machine now: {"pct", "level",
-    "actions": [{"kind": "target"|"sweep", "checkout", "path", "bytes",
-    "reason", "level"}], "alert"}. `disk` is the checkouts' disk
-    ({"total", "used"} in bytes); `sweep` the main checkout's dry-run sweep
-    ({"bytes", "units"}) or None."""
+def plan_machine(inv: dict, facts: dict, now: float | None = None, lim: dict | None = None, sweep=None,
+                 free_min: float | None = None) -> dict:
+    """What the janitor does on one machine now: {"pct", "level", "actions":
+    [{"kind", "op", "path", "bytes", "reason", "cls", "level"}], "alert",
+    "plan"}: everything the cleanup rules allow (level 0); above 75 % the
+    main checkout's sweep (`sweep`: its dry run {"bytes", "units"} or None);
+    above 85 % the least recently used idle checkouts until below."""
+    disk = inv.get("disk") or {}
     pct = disk_pct(disk)
-    level = level_for(pct)
-    cand = candidates(checkouts, now, verdicts)
-    actions = []
+    level = level_for(pct, disk.get("free"), free_min)
+    p = rules.plan(inv, facts, lim, now)
+    actions = [dict(_action(i), level=0) for i in p["items"] if i["delete"]]
     if level >= LEVEL_MERGED:
-        for c in cand["merged"]:
-            actions.append({"kind": "target", "checkout": c["name"], "path": c["name"] + "/target",
-                            "bytes": c.get("target_bytes") or 0, "reason": c["reason"], "level": int(LEVEL_MERGED)})
-        main = next((c for c in checkouts if c.get("kind") == "main"), None)
+        main = next((c for c in inv.get("checkouts", []) if c["cls"] == "main"), None)
         if sweep and sweep.get("units") and main and not main.get("busy"):
-            actions.append({"kind": "sweep", "checkout": main["name"], "path": main["name"] + "/target",
+            actions.append({"kind": "sweep", "op": None, "cls": "main", "path": main["name"] + "/target",
                             "bytes": sweep.get("bytes") or 0, "units": sweep.get("units"),
                             "reason": "build units unused for 3 days and replaced by newer ones",
                             "level": int(LEVEL_MERGED)})
     size = disk_size(disk)
+    lru = rules.lru_candidates(p, IDLE_LRU_S)
     if level >= LEVEL_LRU and size:
         used = (disk.get("used") or 0) - sum(a["bytes"] for a in actions)
-        for c in cand["lru"]:
+        for i in lru:
             if 100.0 * used / size <= LEVEL_LRU:
                 break
-            actions.append({"kind": "target", "checkout": c["name"], "path": c["name"] + "/target",
-                            "bytes": c.get("target_bytes") or 0, "reason": c["reason"], "level": int(LEVEL_LRU)})
-            used -= c.get("target_bytes") or 0
-    return {"pct": pct, "level": level, "actions": actions, "alert": level >= LEVEL_ALERT,
-            "candidates": cand}
+            actions.append(dict(_action(i), level=int(LEVEL_LRU),
+                                reason="least recently used, idle for %s (%s)" % (fmt_age(i["idle"]), i["reason"])))
+            used -= i["bytes"]
+    return {"pct": pct, "level": level, "actions": actions, "alert": level >= LEVEL_ALERT, "plan": p, "lru": lru}
 
 
-def safe_target(path: str) -> bool:
-    """A janitor path is "<checkout>/target" with a plain directory name."""
-    parts = path.split("/")
-    return len(parts) == 2 and parts[1] == "target" and bool(_SAFE_NAME.match(parts[0])) \
-        and parts[0] not in (".", "..")
+def _action(i: dict) -> dict:
+    return {"kind": i["kind"], "op": i["op"], "cls": i["cls"], "path": i["path"], "bytes": i["bytes"],
+            "reason": i["reason"] + ((" – " + i["note"]) if i.get("note") else "")}
 
 
 def disk_alerts(machines: list) -> list:
@@ -355,168 +311,10 @@ foreach ($fp in @(Get-ChildItem -LiteralPath $t -Directory -Recurse -Depth 2 -Fo
 
 
 # --------------------------------------------------------------------------
-# Remote snippets: inventory and deletion
+# Running the snippets of cleanup_rules.py on a machine
 # --------------------------------------------------------------------------
 
-
-def _sh_path(p: str) -> str:
-    """A POSIX shell word for a path from machines.toml ("~/src/OCW")."""
-    if p == "~" or p.startswith("~/"):
-        return '"$HOME"' + _shq(p[1:]) if len(p) > 1 else '"$HOME"'
-    return _shq(p)
-
-
-def _shq(s: str) -> str:
-    return "'" + s.replace("'", "'\\''") + "'"
-
-
-def _psq(s: str) -> str:
-    return "'" + s.replace("'", "''") + "'"
-
-
-def posix_inventory(repo_path: str) -> str:
-    """Read-only: the disks, every checkout with a target/ (size, last use),
-    the checkouts of live task markers."""
-    return r"""
-export LC_ALL=C
-r=@REPO@
-mt() { stat -c %Y "$@" 2>/dev/null || stat -f %m "$@" 2>/dev/null; }
-echo @@disks; df -Pk "$HOME" "${r%/*}" 2>/dev/null | tail -n +2
-echo @@checkouts
-for d in "$r" "$r"-*; do
-  [ -d "$d/target" ] || continue
-  t=$(for f in "$d/.ocw-last-run" "$d/target" "$d"/target/*/deps "$d"/target/*/.fingerprint "$d"/target/*/incremental; do [ -e "$f" ] && mt "$f"; done | sort -n | tail -n 1)
-  kb=$(du -sk "$d/target" 2>/dev/null | cut -f1)
-  echo "${kb:-0} ${t:-0} ${d##*/}"
-done
-echo @@busy
-for g in /tmp/ocw-tasks/*.json; do [ -e "$g" ] || continue; p=${g##*/}; p=${p%%-*}; ps -p "$p" >/dev/null 2>&1 && sed -n 's/.*"checkout":"\([^"]*\)".*/\1/p' "$g"; done
-echo @@end
-""".replace("@REPO@", _sh_path(repo_path))
-
-
-def posix_delete(repo_path: str, names: list) -> str:
-    """Deletes <checkouts dir>/NAME/target for each name, unless a live task
-    marker names the checkout (checked right before): renamed first, so a
-    run starting meanwhile sees no half-deleted target/."""
-    for n in names:
-        if not _SAFE_NAME.match(n):
-            raise ValueError("unsafe checkout name %r" % n)
-    return r"""
-export LC_ALL=C
-r=@REPO@; p=${r%/*}
-busy() { for g in /tmp/ocw-tasks/*.json; do [ -e "$g" ] || continue; q=${g##*/}; q=${q%%-*}; grep -q "\"checkout\":\"$1\"" "$g" && ps -p "$q" >/dev/null 2>&1 && return 0; done; return 1; }
-for n in @NAMES@; do
-  t="$p/$n/target"
-  [ -d "$t" ] || { echo "@@gone $n"; continue; }
-  if busy "$n"; then echo "@@busy $n"; continue; fi
-  kb=$(du -sk "$t" 2>/dev/null | cut -f1)
-  g="$p/$n/target.ocw-janitor.$$"
-  mv "$t" "$g" && rm -rf "$g" && echo "@@deleted $n ${kb:-0}" || echo "@@failed $n"
-done
-echo @@end
-""".replace("@REPO@", _sh_path(repo_path)).replace("@NAMES@", " ".join(_shq(n) for n in names))
-
-
-def windows_inventory(repo_path: str) -> str:
-    return r"""
-$ErrorActionPreference = 'SilentlyContinue'; $ProgressPreference = 'SilentlyContinue'
-$r = @REPO@; $parent = Split-Path $r; $leaf = Split-Path -Leaf $r
-$o = [ordered]@{}
-$want = @($r.Substring(0, 1).ToUpper(), 'C')
-$o.disks = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady -and $want -contains $_.Name.Substring(0, 1).ToUpper() } |
-  ForEach-Object { [ordered]@{ name = $_.Name.Substring(0, 2); total = [int64]$_.TotalSize; used = [int64]($_.TotalSize - $_.TotalFreeSpace); free = [int64]$_.AvailableFreeSpace } })
-$o.checkouts = @(Get-ChildItem -LiteralPath $parent -Directory -Force | Where-Object { $_.Name -eq $leaf -or $_.Name -like ($leaf + '-*') } | ForEach-Object {
-  $t = Join-Path $_.FullName 'target'
-  if (Test-Path -LiteralPath $t) {
-    $ts = @((Join-Path $_.FullName '.ocw-last-run'), $t) + @(Get-ChildItem -LiteralPath $t -Directory -Force | ForEach-Object { Join-Path $_.FullName 'deps'; Join-Path $_.FullName '.fingerprint'; Join-Path $_.FullName 'incremental' })
-    $last = 0; foreach ($f in $ts) { $i = Get-Item -LiteralPath $f -Force; if ($i) { $u = ([DateTimeOffset]$i.LastWriteTimeUtc).ToUnixTimeSeconds(); if ($u -gt $last) { $last = $u } } }
-    $sz = (Get-ChildItem -LiteralPath $t -Recurse -File -Force | Measure-Object Length -Sum).Sum
-    [ordered]@{ name = $_.Name; bytes = [int64]$sz; last_used = $last } } })
-$o.busy = @(Get-ChildItem -LiteralPath (Join-Path $env:TEMP 'ocw-tasks') -Filter '*.json' | ForEach-Object {
-  if (Get-Process -Id ($_.BaseName -split '-')[0]) { try { ([IO.File]::ReadAllText($_.FullName).TrimStart([char]0xFEFF) | ConvertFrom-Json).checkout } catch {} } })
-$o | ConvertTo-Json -Depth 4 -Compress
-""".replace("@REPO@", _psq(repo_path))
-
-
-def windows_delete(repo_path: str, names: list) -> str:
-    for n in names:
-        if not _SAFE_NAME.match(n):
-            raise ValueError("unsafe checkout name %r" % n)
-    return r"""
-$ErrorActionPreference = 'SilentlyContinue'; $ProgressPreference = 'SilentlyContinue'
-$parent = Split-Path @REPO@
-$busy = @(Get-ChildItem -LiteralPath (Join-Path $env:TEMP 'ocw-tasks') -Filter '*.json' | ForEach-Object {
-  if (Get-Process -Id ($_.BaseName -split '-')[0]) { try { ([IO.File]::ReadAllText($_.FullName).TrimStart([char]0xFEFF) | ConvertFrom-Json).checkout } catch {} } })
-foreach ($n in @(@NAMES@)) {
-  $t = Join-Path (Join-Path $parent $n) 'target'
-  if (-not (Test-Path -LiteralPath $t)) { '@@gone ' + $n; continue }
-  if ($busy -contains $n) { '@@busy ' + $n; continue }
-  $kb = [int64](((Get-ChildItem -LiteralPath $t -Recurse -File -Force | Measure-Object Length -Sum).Sum) / 1024)
-  $g = $t + '.ocw-janitor.' + $PID
-  Rename-Item -LiteralPath $t -NewName (Split-Path -Leaf $g)
-  if (Test-Path -LiteralPath $g) { Remove-Item -LiteralPath $g -Recurse -Force; if (Test-Path -LiteralPath $g) { '@@failed ' + $n } else { '@@deleted ' + $n + ' ' + $kb } } else { '@@failed ' + $n }
-}
-'@@end'
-""".replace("@REPO@", _psq(repo_path)).replace("@NAMES@", ", ".join(_psq(n) for n in names))
-
-
-def parse_posix_inventory(text: str, base: str) -> dict:
-    sec, cur = {}, None
-    for line in text.splitlines():
-        if re.fullmatch(r"@@\w+", line.strip()):
-            cur = line.strip()[2:]
-            sec[cur] = []
-        elif cur:
-            sec[cur].append(line)
-    disks, seen = [], set()
-    for i, l in enumerate(sec.get("disks", [])):
-        f = l.split()
-        if len(f) >= 6 and f[1].isdigit() and f[0] not in seen:
-            seen.add(f[0])
-            disks.append({"name": "home" if i == 0 else "src", "total": int(f[1]) * 1024,
-                          "used": int(f[2]) * 1024, "free": int(f[3]) * 1024})
-    busy = {l.strip() for l in sec.get("busy", []) if l.strip()}
-    checkouts = []
-    for l in sec.get("checkouts", []):
-        f = l.split(None, 2)
-        if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
-            kind, branch = checkout_kind(f[2], base)
-            if kind:
-                checkouts.append({"name": f[2], "kind": kind, "branch": branch, "target_bytes": int(f[0]) * 1024,
-                                  "last_used": int(f[1]), "busy": f[2] in busy})
-    # The checkouts live on the disk of the repo's directory (the last df line).
-    return {"disks": disks, "disk": disks[-1] if disks else {}, "checkouts": checkouts}
-
-
-def parse_windows_inventory(text: str, base: str) -> dict:
-    start = text.find("{")
-    data = json.loads(text[start:]) if start >= 0 else {}
-    lst = lambda v: v if isinstance(v, list) else ([v] if v else [])  # noqa: E731
-    disks = [{"name": d.get("name"), "total": d.get("total"), "used": d.get("used"), "free": d.get("free")}
-             for d in lst(data.get("disks"))]
-    busy = {str(b) for b in lst(data.get("busy"))}
-    checkouts = []
-    for c in lst(data.get("checkouts")):
-        kind, branch = checkout_kind(str(c.get("name")), base)
-        if kind:
-            checkouts.append({"name": c["name"], "kind": kind, "branch": branch,
-                              "target_bytes": int(c.get("bytes") or 0), "last_used": int(c.get("last_used") or 0),
-                              "busy": c["name"] in busy})
-    drive = None
-    return {"disks": disks, "disk": next((d for d in disks if d["name"] != "C:"), disks[0] if disks else {}),
-            "checkouts": checkouts, "drive": drive}
-
-
-def parse_results(text: str) -> list:
-    """@@deleted NAME KB / @@busy NAME / @@gone NAME / @@failed NAME lines."""
-    out = []
-    for l in text.splitlines():
-        m = re.match(r"@@(deleted|busy|gone|failed)\s+(\S+)(?:\s+(\d+))?", l.strip())
-        if m:
-            out.append({"result": m.group(1), "checkout": m.group(2),
-                        "bytes": int(m.group(3)) * 1024 if m.group(3) else None})
-    return out
+_sh_path, _shq, _psq = rules._sh_path, rules._shq, rules._psq
 
 
 def parse_sweep(text: str):
@@ -529,22 +327,28 @@ def parse_sweep(text: str):
     return None
 
 
-# --------------------------------------------------------------------------
-# Git: which agent branches are merged or gone (on the coordinator)
-# --------------------------------------------------------------------------
+def inventory(ssh, m) -> dict:
+    """The parsed inventory of machine `m` (ssh(m, script, timeout, stdin))."""
+    base = rules.base_name(m.repo_path)
+    if m.os == "windows":
+        return rules.parse_windows_inventory(ssh(m, rules.windows_inventory(m.repo_path), 2400), base)
+    return rules.parse_posix_inventory(ssh(m, rules.posix_inventory(m.repo_path), 1800), base)
 
 
-def git_verdicts(repo: Path, names: list) -> dict:
-    """branch -> reason for the agent branches among `names` (like
-    scripts/remote-gc.sh's verdict)."""
-    def git(*a):
-        return subprocess.run(["git", "-C", str(repo)] + list(a), capture_output=True, text=True,
-                              timeout=30).stdout
-    branches = set(git("for-each-ref", "--format=%(refname:short)", "refs/heads").split())
-    wt = {l[len("branch refs/heads/"):] for l in git("worktree", "list", "--porcelain").splitlines()
-          if l.startswith("branch refs/heads/")}
-    merged = set(git("for-each-ref", "--merged", "main", "--format=%(refname:short)", "refs/heads").split())
-    return {b: branch_verdict(b, branches, wt, merged) for b in names}
+def run_ops(ssh, m, ops: list, dry: bool = False) -> dict:
+    """Deletes (or with `dry` only measures) the ops on machine `m`:
+    op -> {"result", "bytes"}; an op without an answer counts as failed."""
+    base = rules.base_name(m.repo_path)
+    ops = [op for op in ops if rules.safe_op(op, base)]
+    if not ops:
+        return {}
+    if m.os == "windows":
+        res = {}
+        for i in range(0, len(ops), 40):  # an encoded command line has a length limit
+            res.update(rules.parse_results(ssh(m, rules.windows_delete(m.repo_path, ops[i:i + 40], dry), 3600)))
+    else:
+        res = rules.parse_results(ssh(m, rules.posix_delete(m.repo_path, dry), 3600, stdin=rules.ops_stdin(ops, base)))
+    return {op: res.get(op, {"result": "failed", "bytes": None}) for op in ops}
 
 
 # --------------------------------------------------------------------------
@@ -553,16 +357,22 @@ def git_verdicts(repo: Path, names: list) -> dict:
 
 
 class Janitor:
-    """Runs a pass over one machine at a time, at most every PASS_INTERVAL_S,
-    on the machine whose checkouts' disk is fullest above 75 %."""
+    """Runs a pass over one machine at a time, at most every PASS_INTERVAL_S:
+    first the machine whose checkouts' disk is fullest above 75 % (each at
+    most once an hour), then the enabled machine whose routine pass is due
+    (once a day)."""
 
     def __init__(self, machines: list, repo: Path, log_root: Path | None, mode: str = "on",
-                 ssh=None, interval: float = PASS_INTERVAL_S, clock=time.time):
+                 ssh=None, interval: float = PASS_INTERVAL_S, clock=time.time, routine_s: float | None = None,
+                 free_min: float | None = None, limits: dict | None = None):
         assert mode in MODES
         self.machines = {m.name: m for m in machines}
         self.repo, self.log_root, self.mode = repo, log_root, mode
-        self.ssh = ssh            # ssh(machine, script, timeout) -> stdout text (or raises)
+        self.ssh = ssh            # ssh(machine, script, timeout, stdin=None) -> stdout text (or raises)
         self.interval, self.clock = interval, clock
+        self.routine_s = _env_float("OCW_JANITOR_ROUTINE_H", ROUTINE_H) * 3600 if routine_s is None else routine_s
+        self.free_min = _env_float("OCW_JANITOR_FREE_GB", FREE_MIN_GB) * 1e9 if free_min is None else free_min
+        self.limits = rules.limits() if limits is None else limits
         self.last_pass = None     # epoch of the last pass
         self.visited: dict = {}   # machine -> epoch of its last pass
         self.results: dict = {}   # machine -> result of its last pass
@@ -570,6 +380,34 @@ class Janitor:
         self.lock = threading.Lock()
         self.test_output_bytes = None
         self._last_dry: dict = {}
+        self.load_state()
+
+    # ---- the last pass per machine, kept across restarts
+    def state_path(self):
+        return None if self.log_root is None else self.log_root / STATE_FILE
+
+    def load_state(self):
+        p = self.state_path()
+        try:
+            data = json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else {}
+        except (OSError, ValueError):
+            data = {}
+        for name, r in (data.get("machines") or {}).items():
+            if name in self.machines and isinstance(r, dict) and r.get("at"):
+                self.results[name] = r
+                self.visited[name] = r["at"]
+
+    def save_state(self):
+        p = self.state_path()
+        if p is None:
+            return
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"machines": self.results}, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, p)
+        except OSError:
+            pass
 
     # ---- logging
     def log(self, entry: dict):
@@ -594,27 +432,39 @@ class Janitor:
     def due(self) -> bool:
         return self.mode != "off" and (self.last_pass is None or self.clock() - self.last_pass >= self.interval)
 
+    def pressure(self, st: dict) -> bool:
+        """The checkouts' disk is above 75 %, or short of free space."""
+        free = next((d.get("free") for d in st.get("disks") or [] if "checkouts" in str(d.get("role"))), None)
+        return level_for(st.get("disk_pct"), free, self.free_min) > 0
+
+    def routine_due(self, name: str, now: float) -> bool:
+        return self.routine_s > 0 and now - (self.visited.get(name) or 0) >= self.routine_s
+
     def pick(self, states: list):
-        """The online machine whose checkout disk is fullest above 75 %
-        (ties: the one visited longest ago)."""
-        best = None
+        """(machine, why) of the next pass or (None, None): the online
+        machine whose checkout disk is fullest above 75 % and that had no
+        pass for an hour ("disk"); else the enabled online machine whose
+        daily pass is due, the longest-waiting first ("routine")."""
+        now = self.clock()
+        full, routine = [], []
         for st in states:
-            if not st.get("online") or st.get("name") not in self.machines:
+            name = st.get("name")
+            if not st.get("online") or name not in self.machines:
                 continue
-            pct = st.get("disk_pct")
-            if pct is None or pct <= LEVEL_MERGED:
-                continue
-            key = (pct, -(self.visited.get(st["name"]) or 0))
-            if best is None or key > best[0]:
-                best = (key, st["name"])
-        return best[1] if best else None
+            seen = self.visited.get(name) or 0
+            if self.pressure(st) and now - seen >= min(PRESSURE_INTERVAL_S, self.routine_s or PRESSURE_INTERVAL_S):
+                full.append(((st.get("disk_pct") or 0, -seen), name))
+            elif st.get("enabled", True) and self.routine_due(name, now):
+                routine.append((seen, name))
+        if full:
+            return max(full)[1], "disk"
+        if routine:
+            return min(routine)[1], "routine"
+        return None, None
 
     # ---- a pass
     def inventory(self, m) -> dict:
-        base = re.split(r"[\\/]", m.repo_path.rstrip("\\/"))[-1]
-        if m.os == "windows":
-            return parse_windows_inventory(self.ssh(m, windows_inventory(m.repo_path), 1800), base)
-        return parse_posix_inventory(self.ssh(m, posix_inventory(m.repo_path), 900), base)
+        return inventory(self.ssh, m)
 
     def sweep(self, m, delete: bool):
         target = m.repo_path.rstrip("\\/") + ("\\target" if m.os == "windows" else "/target")
@@ -625,27 +475,31 @@ class Janitor:
         cmd = "python3 - %s %d %s" % (_sh_path(target), SWEEP_AGE_S, "delete" if delete else "dry")
         return parse_sweep(self.ssh(m, cmd, 1800, stdin=sweep_script()))
 
+    def facts(self) -> dict:
+        return rules.git_facts(self.repo)
+
     def plan(self, m, inv: dict, now: float, with_sweep: bool = True) -> dict:
-        verdicts = git_verdicts(self.repo, [c["branch"] for c in inv["checkouts"] if c["kind"] == "agent"])
         sweep = None
-        if with_sweep and level_for(disk_pct(inv["disk"])) >= LEVEL_MERGED:
-            main = next((c for c in inv["checkouts"] if c["kind"] == "main"), None)
+        disk = inv.get("disk") or {}
+        if with_sweep and level_for(disk_pct(disk), disk.get("free"), self.free_min) >= LEVEL_MERGED:
+            main = next((c for c in inv["checkouts"] if c["cls"] == "main"), None)
             if main and not main["busy"]:
                 sweep = self.sweep(m, False)
-        return plan_machine(inv["checkouts"], inv["disk"], now, verdicts, sweep)
+        return plan_machine(inv, self.facts(), now, self.limits, sweep, self.free_min)
 
-    def run_pass(self, name: str) -> dict:
+    def run_pass(self, name: str, why: str = "disk") -> dict:
         m = self.machines[name]
         now = self.clock()
         self.last_pass = now
         self.visited[name] = now
-        res = {"at": now, "mode": self.mode, "actions": [], "freed": 0}
+        res = {"at": now, "mode": self.mode, "why": why, "actions": [], "freed": 0, "count": 0, "bytes": 0}
         try:
             inv = self.inventory(m)
             p = self.plan(m, inv, now)
         except Exception as e:  # unreachable machine, timeout, parse error
             res["error"] = "%s: %s" % (type(e).__name__, e)
             self.results[name] = res
+            self.save_state()
             return res
         res.update(pct=p["pct"], level=p["level"])
         if p["alert"]:
@@ -657,31 +511,35 @@ class Janitor:
                 for a in p["actions"]:
                     self.log(dict(_entry(name, a, p["pct"]), action="would-delete", mode="dry-run"))
                 self._last_dry[name] = sig
-            res["actions"] = [dict(a, result="planned") for a in p["actions"]]
+            acts = [dict(a, result="planned") for a in p["actions"]]
         else:
-            res["actions"] = self.execute(m, p, name)
-            res["freed"] = sum(a.get("freed") or 0 for a in res["actions"])
+            acts = self.execute(m, p, name)
+            res["freed"] = sum(a.get("freed") or 0 for a in acts)
+        done = [a for a in acts if a["result"] in ("planned", "deleted")]
+        res.update(count=len(done), bytes=sum(a.get("bytes") or 0 for a in done),
+                   actions=[{k: a.get(k) for k in ("kind", "path", "bytes", "reason", "result")}
+                            for a in acts[:KEEP_ACTIONS]])
         self.results[name] = res
+        self.save_state()
         return res
 
     def execute(self, m, p: dict, name: str) -> list:
         out = []
-        targets = [a for a in p["actions"] if a["kind"] == "target" and safe_target(a["path"])]
-        if targets:
-            names = [a["checkout"] for a in targets]
-            script = windows_delete(m.repo_path, names) if m.os == "windows" else posix_delete(m.repo_path, names)
+        ops = [a for a in p["actions"] if a["kind"] != "sweep" and a.get("op")]
+        if ops:
             try:
-                results = {r["checkout"]: r for r in parse_results(self.ssh(m, script, 3600))}
+                results = run_ops(self.ssh, m, [a["op"] for a in ops])
             except Exception as e:
                 results = {}
                 self.log({"machine": name, "action": "error", "reason": "%s: %s" % (type(e).__name__, e)})
-            for a in targets:
-                r = results.get(a["checkout"], {"result": "failed"})
-                a = dict(a, result=r["result"], freed=r.get("bytes") if r["result"] == "deleted" else 0)
+            for a in ops:
+                r = results.get(a["op"], {"result": "failed"})
+                a = dict(a, result=r["result"], freed=(r.get("bytes") or 0) if r["result"] == "deleted" else 0)
                 if r["result"] == "deleted":
                     a["bytes"] = r.get("bytes") or a["bytes"]
-                self.log(dict(_entry(name, a, p["pct"]), action="delete" if r["result"] == "deleted" else r["result"],
-                              mode="on"))
+                if r["result"] != "gone":
+                    self.log(dict(_entry(name, a, p["pct"]),
+                                  action="delete" if r["result"] == "deleted" else r["result"], mode="on"))
                 out.append(a)
         for a in p["actions"]:
             if a["kind"] != "sweep":
@@ -703,16 +561,18 @@ class Janitor:
         """Called by the loop: one pass if due and a machine needs it."""
         if not self.due():
             return None
-        name = self.pick(states)
+        name, why = self.pick(states)
         if name is None:
             return None
-        return self.run_pass(name)
+        return self.run_pass(name, why)
 
     def status(self, machines: list) -> dict:
         with self.lock:
             recent = list(self.recent)
         nxt = None if self.last_pass is None else self.last_pass + self.interval
+        routine = {n: (self.visited.get(n) or 0) + self.routine_s for n in self.machines} if self.routine_s > 0 else {}
         return {"mode": self.mode, "levels": {"merged": LEVEL_MERGED, "lru": LEVEL_LRU, "alert": LEVEL_ALERT},
+                "routine_h": self.routine_s / 3600.0, "free_min_gb": self.free_min / 1e9, "next_routine": routine,
                 "last_pass": self.last_pass, "next_pass": nxt, "machines": dict(self.results),
                 "recent": recent[-12:], "alerts": disk_alerts(machines),
                 "test_output_bytes": self.test_output_bytes}
@@ -721,6 +581,8 @@ class Janitor:
 def _entry(machine: str, a: dict, pct) -> dict:
     e = {"machine": machine, "path": a["path"], "bytes": a.get("bytes"), "reason": a["reason"],
          "kind": a["kind"], "level": a.get("level"), "disk_pct": pct}
+    if a.get("cls"):
+        e["class"] = a["cls"]
     if a.get("units") is not None:
         e["units"] = a["units"]
     return e
