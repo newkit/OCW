@@ -6272,3 +6272,82 @@ args = ["--world", "{world}", "--free-ride", "--start", "-25712,-7061", "--bots"
 at = ["0.3=time 2026-11-28 12:00", "0.3=weather clear", "0.5=character --body a --hair ponytail --hair-colour #8D5524 --skin 4", "0.6=set --temp traffic.live_road on", "2=camera.orbit 20 30 25", "4=traffic road busy"]
 shot = 30
 pick = false
+
+# --- The folding bike (spec 2.5, 2026-11-28, after the user's photo) -------
+# A 20-inch city folding bike in sky blue with hot pink tyres, grips and
+# pedals; made-up riders with different looks; never the unicorn here.
+
+[[scene]]
+name = "folding-freiburg-autumn"
+description = "The folding bike (spec 2.5, 2026-11-28): Fenna Faltrad (made-up) rides the sky-blue 20-inch folding bike with hot pink tyres, chrome fenders and rack upright through Freiburg's old town on an autumn afternoon (no HUD), the camera beside her"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "2", "--power", "150"]
+riders = """
+active = "Fenna Faltrad"
+
+[[rider]]
+name = "Fenna Faltrad"
+weight_kg = 61.0
+height_cm = 168.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#F4E3C1"
+helmet_color = "#2E7D32"
+kit = "plain"
+"""
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-22 15:30", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair ponytail --hair-colour auburn --skin 3 --glasses 1", "2.5=camera.orbit 120 8 4.5"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "folding-freiburg-front"
+description = "The folding bike from the front (spec 2.5): Milo Klapp (made-up) sits upright on it, the hands on the swept-back bar's pink grips, in Freiburg's old town in autumn (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "0", "--power", "130"]
+riders = """
+active = "Milo Klapp"
+
+[[rider]]
+name = "Milo Klapp"
+weight_kg = 82.0
+height_cm = 184.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#37474F"
+helmet_color = "#F2F2EE"
+kit = "band"
+"""
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-22 16:10", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --age 50s --shape normal --hair short --hair-colour #4A4A4A --skin 9 --beard short-boxed", "2.5=camera.orbit 160 6 4"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "folding-freiburg-video"
+description = "Video: the folding bike (spec 2.5) in Freiburg's old town in autumn – Fenna Faltrad (made-up) pedalling upright, the small 20-inch wheels turning, two bots on road bikes"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "2", "--power", "160"]
+riders = """
+active = "Fenna Faltrad"
+
+[[rider]]
+name = "Fenna Faltrad"
+weight_kg = 61.0
+height_cm = 168.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#F4E3C1"
+helmet_color = "#2E7D32"
+kit = "plain"
+"""
+at = ["0.5=set display.quality high", "0.5=time 2026-10-22 15:30", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair ponytail --hair-colour auburn --skin 3 --glasses 1", "1=camera.orbit 100 10 5"]
+video = 6
+pick = false
+
+[[scene]]
+name = "folding-workshop-stand"
+description = "The workshop (spec 14 Phase 4): the folding bike on the repair stand in its sky blue, the garage's other bikes on the wall; Rosa Pedal (made-up)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Rosa Pedal\"\n[[rider]]\nname = \"Rosa Pedal\"\nweight_kg = 70.0\nheight_cm = 175.0\nbike = \"folding\"\n"
+at = ["2.2=workshop open"]
+shot = 10
+pick = false

@@ -1821,7 +1821,7 @@ mod tests {
     }
 
     /// Spec §14 Phase 9 Q3 (changed 2026-11-19): every exported bike model
-    /// – all six bike types – has its lamp anchors: a small front lens at
+    /// – every bike type – has its lamp anchors: a small front lens at
     /// the bars, ahead of and above a small rear one on the seat post; the
     /// light set (where it fits) puts bigger lenses there.
     #[test]
@@ -1836,8 +1836,11 @@ mod tests {
             );
             assert!(front.y > 0.6 && rear.y > 0.5, "{p:?}: {front} {rear}");
             assert!(fs < 0.03 && rs < 0.03, "{p:?}: small lamps {fs} {rs}");
-            if p.bike() == ocw_core::BikeType::TimeTrial {
-                continue; // the light set does not fit a TT bike
+            if matches!(
+                p.bike(),
+                ocw_core::BikeType::TimeTrial | ocw_core::BikeType::Folding
+            ) {
+                continue; // the light set fits neither a TT nor a folding bike
             }
             let m = ocw_assets::bikes::build_with(
                 p,
@@ -2113,7 +2116,7 @@ mod tests {
         let mut app = app(view);
         app.update();
         let entities = app.world().resource::<RiderEntities>().0.clone();
-        assert_eq!(entities.len(), 6);
+        assert_eq!(entities.len(), ProfileId::ALL.len());
         let rider = ocw_assets::shipped::rider_model();
         let prims = |name: &str| {
             let i = rider.node(name).unwrap();

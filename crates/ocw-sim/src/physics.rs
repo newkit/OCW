@@ -814,6 +814,46 @@ mod tests {
         assert!(of(&flat, RoadAero) > 0.005 && of(&flat, TimeTrial) > of(&flat, RoadAero));
         assert!(of(&climb, RoadClimbing) > 0.005 && of(&flat, RoadClimbing) < 0.0);
         assert!(of(&flat, Mountain) < of(&flat, Gravel) && of(&flat, Gravel) < 0.0);
+        // The folding bike (upright, small wheels) is the slowest within
+        // the caps, on the flat and uphill (spec 2.5, 2026-11-28).
+        for v in [&flat, &climb] {
+            assert!(
+                v.iter()
+                    .all(|(id, d)| *id == Folding || *d > of(v, Folding))
+            );
+        }
+    }
+
+    /// The folding bike's numbers for the spec (run with `--nocapture`):
+    /// its speed at 150 and 250 W on the flat and on a 6 % climb against
+    /// the road bike's, for a 75 kg rider.
+    #[test]
+    fn folding_bike_speeds() {
+        use ocw_core::ProfileId::*;
+        for power in [150.0, 250.0] {
+            for grade in [0.0, 0.06] {
+                let env = Environment::with_grade(grade);
+                let road = steady_speed(&RiderProfile::default(), &env, power);
+                let fold = steady_speed(&RiderProfile::curated(Folding, 75.0), &env, power);
+                println!(
+                    "folding {power} W {:.0} %: {:.2} km/h, road {:.2} km/h ({:+.2} %)",
+                    grade * 100.0,
+                    fold * 3.6,
+                    road * 3.6,
+                    (fold / road - 1.0) * 100.0
+                );
+                assert!(fold < road);
+                // The caps hold at 250 W (spec 2.5); at 150 W, where the
+                // rolling resistance counts more, it is a little further
+                // behind.
+                let cap = if grade > 0.0 { 0.05 } else { 0.03 };
+                let cap = if power < 200.0 { cap + 0.01 } else { cap };
+                assert!(fold / road > 1.0 - cap);
+            }
+        }
+        // Small wheels feel gravel more than the road bike's.
+        let gravel = Environment::with_grade(0.0).with_surface(ocw_world::Surface::Gravel);
+        assert!(of(&relative_speeds(gravel), Folding) < 0.0);
     }
 
     /// Surface-dependent rolling resistance (spec §5.2.1): wide tyres feel

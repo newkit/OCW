@@ -63,7 +63,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 105] = [
+pub const ALL: [Slot; 107] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -103,6 +103,11 @@ pub const ALL: [Slot; 105] = [
     slot("carbon", Tint::Fixed, 0x0C0C0E, 0.15, 0.22),
     slot("light_front", Tint::Fixed, 0xFFF6E0, 0.0, 0.2),
     slot("light_rear", Tint::Fixed, 0xE0201C, 0.0, 0.2),
+    // The folding bike (2026-11-28, the user's photo): coloured tyres and
+    // the grips and platform pedals, hot pink in its file; its fenders,
+    // rack, handlepost and seat post are `chrome`.
+    slot("tyre_colour", Tint::Fixed, 0xFF3FAE, 0.0, 0.8),
+    slot("grip", Tint::Fixed, 0xFF3FAE, 0.0, 0.7),
     // Plants (spec §14 Phase 15, 15B): the crown is tinted per plant and
     // by the season (`ocw-render::flora`; the file's colour is the summer
     // default, its vertex colours the shading), bark per species, `dry`

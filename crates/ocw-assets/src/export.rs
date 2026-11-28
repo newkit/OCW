@@ -39,6 +39,7 @@ pub fn bike_file(p: ProfileId) -> &'static str {
         ProfileId::TimeTrial => "bikes/bike-tt.glb",
         ProfileId::Gravel => "bikes/bike-gravel.glb",
         ProfileId::Mountain => "bikes/bike-mtb-hardtail.glb",
+        ProfileId::Folding => "bikes/bike-folding.glb",
     }
 }
 
@@ -364,7 +365,7 @@ mod tests {
             1 + crate::workshop::Piece::ALL.len() + 1 + crate::vehicles::Vehicle::ALL.len() + 1;
         assert_eq!(
             a.len(),
-            6 + 2 + crate::rider_split::part_files().len() + 4 + more
+            ProfileId::ALL.len() + 2 + crate::rider_split::part_files().len() + 4 + more
         );
         for ((ea, ba), (eb, bb)) in a.iter().zip(&b) {
             assert_eq!(ea, eb);
@@ -376,7 +377,7 @@ mod tests {
         let checked = crate::manifest::validate(&text, &files).unwrap_or_else(|e| panic!("{e:#?}"));
         assert_eq!(
             checked.len(),
-            12 + crate::rider_split::part_files().len() + more
+            ProfileId::ALL.len() + 6 + crate::rider_split::part_files().len() + more
         );
     }
 

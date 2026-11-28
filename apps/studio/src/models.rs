@@ -681,7 +681,7 @@ mod tests {
         // In the order of the kinds: bikes first, riders, wear, …
         assert_eq!(groups[0].folder, "bikes");
         assert_eq!(groups[0].kind, Kind::Bike);
-        assert_eq!(groups[0].entries.len(), 6);
+        assert_eq!(groups[0].entries.len(), ocw_core::ProfileId::ALL.len());
         let order: Vec<&str> = groups.iter().map(|g| g.folder.as_str()).collect();
         let bikes = order.iter().position(|f| *f == "bikes").unwrap();
         let flora = order.iter().position(|f| *f == "flora").unwrap();

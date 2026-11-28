@@ -508,8 +508,15 @@ pub fn bot_power_w(i: u32) -> f64 {
 pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
     use ocw_core::ProfileId::*;
     use ocw_core::bike::PALETTE;
-    const BIKES: [ocw_core::ProfileId; 6] =
-        [Road, TimeTrial, Gravel, Mountain, RoadAero, RoadClimbing];
+    const BIKES: [ocw_core::ProfileId; 7] = [
+        Road,
+        TimeTrial,
+        Gravel,
+        Mountain,
+        RoadAero,
+        RoadClimbing,
+        Folding,
+    ];
     let i = i as usize;
     let n = PALETTE.len();
     let look = ocw_core::RiderLook {
@@ -536,7 +543,13 @@ pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
         },
         ..Default::default()
     };
-    (BIKES[i % BIKES.len()], look)
+    let bike = BIKES[i % BIKES.len()];
+    // A folding bike in its own sky blue (the user's photo, 2026-11-28).
+    let look = ocw_core::RiderLook {
+        frame: bike.default_paint().unwrap_or(look.frame),
+        ..look
+    };
+    (bike, look)
 }
 
 /// Adds the `i`-th server bot ("Bot i+1") with its power, bike and look

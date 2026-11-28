@@ -246,7 +246,7 @@ tier = "base"
 name = "Stock chain"
 hearts = 0
 weight_g = 270
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -306,7 +306,7 @@ tier = "base"
 name = "Stock grips"
 hearts = 0
 weight_g = 120
-fits = ["mtb"]
+fits = ["mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -366,7 +366,7 @@ tier = "base"
 name = "Stock plastic bottle cage (each)"
 hearts = 0
 weight_g = 40
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -376,7 +376,7 @@ tier = "base"
 name = "Basic lights"
 hearts = 0
 weight_g = 0
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 # Every bike's own small lamps (Phase 9 Q3, changed 2026-11-19; the id stays
 # for saved garages): a commuter lamp of about 60 lm front, a small 4 lm red
@@ -390,7 +390,7 @@ tier = "base"
 name = "No bike computer"
 hearts = 0
 weight_g = 0
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -400,7 +400,115 @@ tier = "base"
 name = "No bag"
 hearts = 0
 weight_g = 0
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
+model = "stock"
+
+# The folding bike (spec 2.5, 2026-11-28, after the user's photo): a
+# 20-inch city folding bike with one gear, fenders and a rack; its own base
+# parts, so the bike is complete.
+
+[[part]]
+id = "frame.folding.base"
+slot = "frame"
+tier = "base"
+name = "Folding frameset, steel, with fenders and rack"
+hearts = 0
+weight_g = 5200
+fits = ["folding"]
+profile = "folding"
+model = "bike-folding"
+
+[[part]]
+id = "wheels.folding.base"
+slot = "wheels"
+tier = "base"
+name = "20-inch city wheels, alloy"
+hearts = 0
+weight_g = 2300
+fits = ["folding"]
+standard = { wheel = "20" }
+model = "stock"
+
+[[part]]
+id = "tyres.folding.base"
+slot = "tyres"
+tier = "base"
+name = "20 x 1.75 city tyres"
+hearts = 0
+weight_g = 1000
+fits = ["folding"]
+standard = { wheel = "20", width_mm = 44 }
+model = "stock"
+
+[[part]]
+id = "groupset.folding.base"
+slot = "groupset"
+tier = "base"
+name = "Single speed with coaster-style rim brakes"
+hearts = 0
+weight_g = 1400
+fits = ["folding"]
+standard = { speeds = 1, shifting = "mech", family = "city" }
+model = "stock"
+
+[[part]]
+id = "crankset.folding.base"
+slot = "crankset"
+tier = "base"
+name = "Steel crankset with chainguard"
+hearts = 0
+weight_g = 950
+fits = ["folding"]
+model = "stock"
+
+[[part]]
+id = "cassette.folding.base"
+slot = "cassette"
+tier = "base"
+name = "Single sprocket"
+hearts = 0
+weight_g = 120
+fits = ["folding"]
+model = "stock"
+
+[[part]]
+id = "cockpit.folding.base"
+slot = "cockpit"
+tier = "base"
+name = "Folding handlepost with swept-back city bar and bell"
+hearts = 0
+weight_g = 1150
+fits = ["folding"]
+model = "stock"
+
+[[part]]
+id = "saddle.sprung.base"
+slot = "saddle"
+tier = "base"
+name = "Sprung city saddle"
+hearts = 0
+weight_g = 650
+fits = ["folding"]
+model = "stock"
+
+[[part]]
+id = "seatpost.long.base"
+slot = "seatpost"
+tier = "base"
+name = "Long seat post with quick release"
+hearts = 0
+weight_g = 450
+fits = ["folding"]
+model = "stock"
+
+[[part]]
+id = "pedals.platform.base"
+slot = "pedals"
+tier = "base"
+name = "Platform pedals with reflectors"
+hearts = 0
+weight_g = 420
+fits = ["folding"]
 model = "stock"
 
 # --- frame -------------------------------------------------------------------
@@ -1159,7 +1267,7 @@ tier = "top"
 name = "Large-screen bike computer with out-front mount"
 hearts = 660
 weight_g = 210
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "computer-large"
 sources = "computer.top"
 priced = 2026-11-13
@@ -1210,7 +1318,7 @@ tier = "base"
 name = "Short-sleeve club jersey"
 hearts = 0
 weight_g = 140
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -1220,7 +1328,7 @@ tier = "base"
 name = "Bib shorts"
 hearts = 0
 weight_g = 200
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -1230,7 +1338,7 @@ tier = "base"
 name = "Cycling socks"
 hearts = 0
 weight_g = 35
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -1240,7 +1348,7 @@ tier = "base"
 name = "Road shoes"
 hearts = 0
 weight_g = 560
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -1250,7 +1358,7 @@ tier = "base"
 name = "Fingerless mitts"
 hearts = 0
 weight_g = 50
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -1260,7 +1368,7 @@ tier = "base"
 name = "Vented road helmet"
 hearts = 0
 weight_g = 300
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -1270,7 +1378,7 @@ tier = "base"
 name = "No cap"
 hearts = 0
 weight_g = 0
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "stock"
 
 [[part]]
@@ -1280,7 +1388,7 @@ tier = "mid"
 name = "Long-sleeve thermal jersey"
 hearts = 130
 weight_g = 300
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "jersey-long-sleeve"
 sources = "apparel.jersey.thermal"
 priced = 2026-11-14
@@ -1292,7 +1400,7 @@ tier = "upper"
 name = "Aero race jersey"
 hearts = 210
 weight_g = 120
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 aero = 1
 model = "jersey-aero"
 sources = "apparel.jersey.aero"
@@ -1305,7 +1413,7 @@ tier = "top"
 name = "Road skinsuit"
 hearts = 430
 weight_g = 210
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 aero = 2
 covers = ["shorts"]
 model = "skinsuit"
@@ -1319,7 +1427,7 @@ tier = "mid"
 name = "Winter bib tights"
 hearts = 180
 weight_g = 330
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "shorts-tights"
 sources = "apparel.shorts.tights"
 priced = 2026-11-14
@@ -1331,7 +1439,7 @@ tier = "upper"
 name = "Aero race bib shorts"
 hearts = 250
 weight_g = 180
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 aero = 1
 model = "shorts-aero"
 sources = "apparel.shorts.aero"
@@ -1344,7 +1452,7 @@ tier = "entry"
 name = "Tall merino socks"
 hearts = 20
 weight_g = 50
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "socks-tall"
 sources = "apparel.socks.tall"
 priced = 2026-11-14
@@ -1356,7 +1464,7 @@ tier = "upper"
 name = "Aero race socks"
 hearts = 34
 weight_g = 30
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 aero = 1
 model = "socks-aero"
 sources = "apparel.socks.aero"
@@ -1369,7 +1477,7 @@ tier = "top"
 name = "Carbon race shoes"
 hearts = 400
 weight_g = 460
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 efficiency = 1
 model = "shoes-race"
 sources = "apparel.shoes.race"
@@ -1382,7 +1490,7 @@ tier = "mid"
 name = "Road shoes with aero overshoes"
 hearts = 70
 weight_g = 620
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 aero = 1
 model = "shoes-overshoes"
 sources = "apparel.shoes.overshoes"
@@ -1395,7 +1503,7 @@ tier = "entry"
 name = "Gel mitts"
 hearts = 30
 weight_g = 50
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "gloves-gel"
 sources = "apparel.gloves.gel"
 priced = 2026-11-14
@@ -1407,7 +1515,7 @@ tier = "mid"
 name = "Full-finger gloves"
 hearts = 60
 weight_g = 60
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "gloves-full"
 sources = "apparel.gloves.full"
 priced = 2026-11-14
@@ -1419,7 +1527,7 @@ tier = "upper"
 name = "Insulated winter gloves"
 hearts = 108
 weight_g = 150
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "gloves-winter"
 sources = "apparel.gloves.winter"
 priced = 2026-11-14
@@ -1431,7 +1539,7 @@ tier = "top"
 name = "Lightweight vented road helmet"
 hearts = 320
 weight_g = 235
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "helmet-light"
 sources = "apparel.helmet.light"
 priced = 2026-11-14
@@ -1443,7 +1551,7 @@ tier = "top"
 name = "Aero road helmet"
 hearts = 268
 weight_g = 280
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 aero = 2
 model = "helmet-aero-road"
 sources = "apparel.helmet.aero-road"
@@ -1456,7 +1564,7 @@ tier = "top"
 name = "Time-trial helmet"
 hearts = 500
 weight_g = 400
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 aero = 4
 model = "helmet-tt"
 sources = "apparel.helmet.tt"
@@ -1469,7 +1577,7 @@ tier = "entry"
 name = "Cotton cycling cap"
 hearts = 30
 weight_g = 45
-fits = ["road", "tt", "gravel", "mtb"]
+fits = ["road", "tt", "gravel", "mtb", "folding"]
 model = "cap-cotton"
 sources = "apparel.cap.cotton"
 priced = 2026-11-14
