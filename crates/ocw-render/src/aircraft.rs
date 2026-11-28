@@ -255,9 +255,108 @@ struct Part {
 struct Spinner {
     pivot: Transform,
     axis: Vec3,
-    /// Revolutions per second at full speed (drawn, not the real rate).
+    /// Revolutions per second at full speed (the real rate, v7.08).
     rate: f32,
+    blades: u32,
     parts: Vec<Part>,
+    /// The motion-blur disc in the pivot's frame (drawn as the blades
+    /// blur, [`disc_blend`]).
+    disc: Option<Handle<Mesh>>,
+}
+
+/// A landing-gear leg (`gear_*`): it swings about `pivot` (the leg's
+/// top) by `up_angle` about `axis` into the bay as it retracts.
+#[derive(Clone)]
+struct Leg {
+    pivot: Transform,
+    axis: Vec3,
+    up_angle: f32,
+    parts: Vec<Part>,
+}
+
+/// Seconds the gear takes to swing in or out (v7.08).
+pub const GEAR_TRAVEL_S: f32 = 5.0;
+
+/// A spinner's real rate (revolutions per second in flight) and its
+/// blades, by model and node (v7.08; the user, 2026-11-28: "the rotor of
+/// a helicopter spins way faster"): a light helicopter's main rotor
+/// ~450 rpm and its tail rotor ~2,000, the medium transport helicopter's
+/// ~215 and ~1,150, a piston plane's propeller ~2,400 rpm.
+pub fn spin_rate(model: &str, node: &str) -> (f32, u32) {
+    let medium = model.contains("medium");
+    match node {
+        "prop" => (40.0, 2),
+        "rotor_main" if medium => (3.6, 5),
+        "rotor_main" => (7.5, 3),
+        "rotor_tail" if medium => (19.0, 3),
+        "rotor_tail" => (33.0, 2),
+        _ => (5.0, 2),
+    }
+}
+
+/// How much a rotor of `blades` turning `rev_s` is drawn as its blur disc
+/// (0: solid blades … 1: the disc only): by the blades' passing rate
+/// alone – solid under 6 Hz, the disc from 15 Hz – so it looks the same at
+/// any video or frame rate (at 30 or 60 fps such rates alias: the blades
+/// would seem slow, still or turning backwards).
+pub fn disc_blend(rev_s: f32, blades: u32) -> f32 {
+    let pass = rev_s.abs() * blades as f32;
+    ((pass - 6.0) / 9.0).clamp(0.0, 1.0)
+}
+
+/// The rotor's angle after `dt` seconds at `rev_s` (time-based, so the
+/// same after a second at any frame rate).
+pub fn spin_step(angle: f32, dt: f32, rev_s: f32) -> f32 {
+    (angle + dt * rev_s * std::f32::consts::TAU).rem_euclid(std::f32::consts::TAU)
+}
+
+/// The blur disc of a rotor of radius `r` about `axis` (in its pivot's
+/// frame): an annulus of soft radial streaks in `color`, its rim a little
+/// darker, coned up by `cone` (rad) as a main rotor in flight.
+fn disc_mesh(axis: Vec3, r: f32, color: [f32; 4], blades: u32, cone: f32) -> Mesh {
+    let n = 48u32;
+    let u = if axis.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+    let v = axis.cross(u).normalize();
+    let u = v.cross(axis).normalize();
+    let mut pos = Vec::new();
+    let mut col = Vec::new();
+    let mut idx = Vec::new();
+    let rings = [0.12f32, 0.55, 0.97, 1.0];
+    let alpha = [0.18f32, 0.5, 0.62, 0.85];
+    // A blur reads as a grey veil of the blades' dark colour.
+    let color = [
+        color[0] * 0.5 + 0.05,
+        color[1] * 0.5 + 0.05,
+        color[2] * 0.5 + 0.05,
+        1.0,
+    ];
+    for k in 0..n {
+        let th = k as f32 / n as f32 * std::f32::consts::TAU;
+        let streak = 0.75 + 0.25 * (th * blades as f32 * 2.0).sin();
+        for (ri, rf) in rings.iter().enumerate() {
+            let rr = r * rf;
+            pos.push(((u * th.cos() + v * th.sin()) * rr + axis * (rr * cone.tan())).to_array());
+            col.push([color[0], color[1], color[2], alpha[ri] * streak]);
+        }
+    }
+    let m = rings.len() as u32;
+    for k in 0..n {
+        let k2 = (k + 1) % n;
+        for ri in 0..m - 1 {
+            let (a, b, c, d) = (k * m + ri, k2 * m + ri, k2 * m + ri + 1, k * m + ri + 1);
+            idx.extend_from_slice(&[a, b, c, a, c, d]);
+        }
+    }
+    let nor = vec![axis.to_array(); pos.len()];
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nor);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+    mesh.insert_indices(Indices::U32(idx));
+    mesh
 }
 
 /// One model's meshes (a kind has one or more, 18G).
@@ -265,7 +364,7 @@ struct Spinner {
 struct KindModel {
     near: Vec<Part>,
     far: Vec<Part>,
-    gear: Vec<Part>,
+    gear: Vec<Leg>,
     spinners: Vec<Spinner>,
     lamps: Vec<(Vec3, Lamp)>,
     /// The model's largest extent (m).
@@ -303,8 +402,70 @@ struct Spin {
     owner: u64,
 }
 
+/// The solid blades of a spinner (hidden once its disc takes over).
 #[derive(Component)]
-struct GearPart(u64);
+struct Blades {
+    owner: u64,
+    rate: f32,
+    blades: u32,
+}
+
+/// A spinner's blur disc and its own material (its alpha the blend).
+#[derive(Component)]
+struct Disc {
+    owner: u64,
+    rate: f32,
+    blades: u32,
+    material: Handle<StandardMaterial>,
+    /// The alpha set last.
+    alpha: f32,
+}
+
+#[derive(Component)]
+struct GearPart {
+    owner: u64,
+    pivot: Transform,
+    axis: Vec3,
+    up_angle: f32,
+    /// 0 up … 1 down.
+    ext: f32,
+}
+
+impl GearPart {
+    /// The leg swung `up_angle` × (1 − ext) about its top.
+    fn transform(&self) -> Transform {
+        self.pivot
+            * Transform::from_rotation(Quat::from_axis_angle(
+                self.axis,
+                self.up_angle * (1.0 - self.ext),
+            ))
+    }
+}
+
+/// The gear's extension (0 up … 1 down) after `dt` s moving towards
+/// `down` over [`GEAR_TRAVEL_S`] (eased by the caller's transform).
+pub fn gear_travel(ext: f32, down: bool, dt: f32) -> f32 {
+    let step = dt / GEAR_TRAVEL_S;
+    if down {
+        (ext + step).min(1.0)
+    } else {
+        (ext - step).max(0.0)
+    }
+}
+
+/// A blur disc's material: unlit, alpha-blended, both sides, its vertex
+/// colours (the blades' colour and streaks) times `alpha`.
+fn disc_material(alpha: f32) -> StandardMaterial {
+    StandardMaterial {
+        base_color: Color::linear_rgba(1.0, 1.0, 1.0, alpha),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        double_sided: true,
+        fog_enabled: false,
+        ..default()
+    }
+}
 
 #[derive(Component)]
 struct Dot {
@@ -321,7 +482,7 @@ struct TrailRibbon;
 enum Group {
     Body,
     Far,
-    Gear,
+    Gear(usize),
     Spin(usize),
 }
 
@@ -363,29 +524,70 @@ pub(crate) fn mesh_of(
 }
 
 /// The meshes of one model file, grouped.
-fn kind_model(model: &Model, meshes: &mut Assets<Mesh>) -> KindModel {
+fn kind_model(id: &str, model: &Model, meshes: &mut Assets<Mesh>) -> KindModel {
     let lod = model.node("lod1");
     let spin_names = [
-        ("prop", Vec3::Z, 7.3f32),
-        ("rotor_main", Vec3::Y, 4.7),
-        ("rotor_tail", Vec3::X, 11.0),
+        ("prop", Vec3::Z),
+        ("rotor_main", Vec3::Y),
+        ("rotor_tail", Vec3::X),
     ];
     let mut spinners: Vec<Spinner> = spin_names
         .iter()
-        .filter_map(|(n, axis, rate)| {
+        .filter_map(|(n, axis)| {
             let i = model.node(n)?;
             let w = model.world(i);
+            let (rate, blades) = spin_rate(id, n);
             Some(Spinner {
                 pivot: Transform::from_matrix(Mat4::from(w)),
                 axis: *axis,
-                rate: *rate,
+                rate,
+                blades,
                 parts: Vec::new(),
+                disc: None,
             })
         })
         .collect();
     let spin_nodes: Vec<usize> = spin_names
         .iter()
-        .filter_map(|(n, _, _)| model.node(n))
+        .filter_map(|(n, _)| model.node(n))
+        .collect();
+    let mut radius = vec![0.0f32; spin_nodes.len()];
+    let mut blade_color = vec![[0.1f32, 0.1, 0.1, 1.0]; spin_nodes.len()];
+    // The gear legs: the outermost `gear_*` nodes of the near model.
+    let leg_nodes: Vec<usize> = (0..model.nodes.len())
+        .filter(|&i| {
+            model.nodes[i].name.starts_with("gear_")
+                && !lod.is_some_and(|l| model.is_below(i, l))
+                && model.nodes[i]
+                    .parent
+                    .is_none_or(|p| !model.under_named(p, |s| s.starts_with("gear_")))
+        })
+        .collect();
+    let mut legs: Vec<Leg> = leg_nodes
+        .iter()
+        .map(|&g| {
+            let at = Vec3::from(model.world(g).translation);
+            let top = model
+                .bounds_where(|i| model.is_below(i, g))
+                .map_or(at.y, |(_, hi)| hi.y);
+            let name = model.nodes[g].name.as_str();
+            // Nose legs fold forward, main legs inwards.
+            let (axis, up_angle) = if name.contains("nose") {
+                (Vec3::X, std::f32::consts::FRAC_PI_2)
+            } else if at.x < -0.01 {
+                (Vec3::Z, std::f32::consts::FRAC_PI_2)
+            } else if at.x > 0.01 {
+                (Vec3::Z, -std::f32::consts::FRAC_PI_2)
+            } else {
+                (Vec3::X, 0.0)
+            };
+            Leg {
+                pivot: Transform::from_translation(Vec3::new(at.x, top, at.z)),
+                axis,
+                up_angle,
+                parts: Vec::new(),
+            }
+        })
         .collect();
     let mut out = KindModel {
         near: Vec::new(),
@@ -409,8 +611,8 @@ fn kind_model(model: &Model, meshes: &mut Assets<Mesh>) -> KindModel {
             Group::Far
         } else if let Some(k) = spin_nodes.iter().position(|&s| model.is_below(i, s)) {
             Group::Spin(k)
-        } else if model.under_named(i, |s| s.starts_with("gear_")) {
-            Group::Gear
+        } else if let Some(k) = leg_nodes.iter().position(|&g| model.is_below(i, g)) {
+            Group::Gear(k)
         } else {
             Group::Body
         };
@@ -419,6 +621,9 @@ fn kind_model(model: &Model, meshes: &mut Assets<Mesh>) -> KindModel {
             Group::Spin(k) => {
                 let pivot = model.world(spin_nodes[*k]);
                 pivot.inverse() * world
+            }
+            Group::Gear(k) => {
+                bevy::math::Affine3A::from_translation(-legs[*k].pivot.translation) * world
             }
             _ => world,
         };
@@ -432,18 +637,38 @@ fn kind_model(model: &Model, meshes: &mut Assets<Mesh>) -> KindModel {
             match &group {
                 Group::Body => out.near.push(part),
                 Group::Far => out.far.push(part),
-                Group::Gear => out.gear.push(part),
-                Group::Spin(k) => spinners[*k].parts.push(part),
+                Group::Gear(k) => legs[*k].parts.push(part),
+                Group::Spin(k) => {
+                    let axis = spinners[*k].axis;
+                    for v in &p.positions {
+                        let q = xf.transform_point3(Vec3::from(*v));
+                        let r = (q - axis * q.dot(axis)).length();
+                        if r > radius[*k] {
+                            radius[*k] = r;
+                            if !ocw_assets::slots::LIGHTS.contains(&mat.name.as_str()) {
+                                blade_color[*k] = mat.color;
+                            }
+                        }
+                    }
+                    spinners[*k].parts.push(part);
+                }
             }
         }
     }
     if let Some((lo, hi)) = model.near_bounds() {
         out.size_m = (hi - lo).max_element().max(1.0);
     }
+    for (k, s) in spinners.iter_mut().enumerate() {
+        if radius[k] > 0.1 {
+            let cone = if s.axis == Vec3::Y { 0.05 } else { 0.0 };
+            s.disc = Some(meshes.add(disc_mesh(s.axis, radius[k], blade_color[k], s.blades, cone)));
+        }
+    }
     out.spinners = spinners
         .into_iter()
         .filter(|s| !s.parts.is_empty())
         .collect();
+    out.gear = legs.into_iter().filter(|l| !l.parts.is_empty()).collect();
     out
 }
 
@@ -509,7 +734,7 @@ fn ensure_models(
     for k in AirKind::ALL {
         for &id in k.model_ids() {
             let m = ocw_assets::shipped::model(id);
-            models.kinds.insert(id, kind_model(&m, meshes));
+            models.kinds.insert(id, kind_model(id, &m, meshes));
         }
     }
     models.dot = Some(meshes.add(Sphere::new(1.0).mesh().ico(1).expect("ico sphere")));
@@ -594,9 +819,26 @@ fn sync_aircraft(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     cams: Query<(&Camera, &GlobalTransform, &Projection), With<FollowCamera>>,
-    mut roots: Query<(&mut Plane, &mut Transform), (Without<Spin>, Without<Dot>)>,
-    mut spins: Query<(&mut Spin, &mut Transform), (Without<Plane>, Without<Dot>)>,
-    mut gears: Query<(&GearPart, &mut Visibility), (Without<Dot>, Without<Plane>)>,
+    mut roots: Query<
+        (&mut Plane, &mut Transform),
+        (Without<Spin>, Without<Dot>, Without<GearPart>),
+    >,
+    mut spins: Query<
+        (&mut Spin, &mut Transform),
+        (Without<Plane>, Without<Dot>, Without<GearPart>),
+    >,
+    mut gears: Query<
+        (&mut GearPart, &mut Transform, &mut Visibility),
+        (Without<Dot>, Without<Plane>, Without<Spin>),
+    >,
+    mut rotors: Query<
+        (Option<&Blades>, Option<&mut Disc>, &mut Visibility),
+        (
+            Or<(With<Blades>, With<Disc>)>,
+            Without<GearPart>,
+            Without<Dot>,
+        ),
+    >,
     mut dots: Query<
         (&Dot, &mut Transform, &mut Visibility),
         (Without<Plane>, Without<Spin>, Without<GearPart>),
@@ -668,6 +910,11 @@ fn sync_aircraft(
             ))
             .id();
         let mut kids = Vec::new();
+        let disc_mats: Vec<Option<Handle<StandardMaterial>>> = km
+            .spinners
+            .iter()
+            .map(|s| s.disc.as_ref().map(|_| materials.add(disc_material(0.0))))
+            .collect();
         let mut part = |commands: &mut Commands, p: &Part, range: &VisibilityRange| {
             let c = paint(a.kind, &p.slot, p.color, a.look);
             let m = material(&mut models, &mut materials, &p.slot, c);
@@ -687,12 +934,33 @@ fn sync_aircraft(
         for p in &km.far {
             kids.push(part(&mut commands, p, &far_range));
         }
-        for p in &km.gear {
-            let e = part(&mut commands, p, &near_range);
-            commands.entity(e).insert(GearPart(a.id));
-            kids.push(e);
+        for leg in &km.gear {
+            let ext = if a.gear_down { 1.0 } else { 0.0 };
+            let g = GearPart {
+                owner: a.id,
+                pivot: leg.pivot,
+                axis: leg.axis,
+                up_angle: leg.up_angle,
+                ext,
+            };
+            let pivot = commands
+                .spawn((
+                    g.transform(),
+                    if a.gear_down {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    },
+                    g,
+                ))
+                .id();
+            for p in &leg.parts {
+                let e = part(&mut commands, p, &near_range);
+                commands.entity(pivot).add_child(e);
+            }
+            kids.push(pivot);
         }
-        for s in &km.spinners {
+        for (s, disc_mat) in km.spinners.iter().zip(disc_mats) {
             let pivot = commands
                 .spawn((
                     s.pivot,
@@ -706,11 +974,46 @@ fn sync_aircraft(
                     },
                 ))
                 .id();
+            let blades = commands
+                .spawn((
+                    Transform::default(),
+                    Visibility::default(),
+                    Blades {
+                        owner: a.id,
+                        rate: s.rate,
+                        blades: s.blades,
+                    },
+                ))
+                .id();
+            commands.entity(pivot).add_child(blades);
             for p in &s.parts {
                 let e = part(&mut commands, p, &near_range);
-                commands.entity(pivot).add_child(e);
+                commands.entity(blades).add_child(e);
             }
             kids.push(pivot);
+            // The blur disc stands still at the pivot (a turning streak
+            // pattern would alias too).
+            if let (Some(mesh), Some(material)) = (&s.disc, disc_mat) {
+                kids.push(
+                    commands
+                        .spawn((
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(material.clone()),
+                            s.pivot,
+                            Visibility::Hidden,
+                            near_range.clone(),
+                            NotShadowCaster,
+                            Disc {
+                                owner: a.id,
+                                rate: s.rate,
+                                blades: s.blades,
+                                material,
+                                alpha: 0.0,
+                            },
+                        ))
+                        .id(),
+                );
+            }
         }
         let dot_mesh = models.dot.clone().expect("dot mesh");
         for (at, lamp) in &km.lamps {
@@ -741,13 +1044,45 @@ fn sync_aircraft(
         let Some((a, _)) = info.get(&s.owner) else {
             continue;
         };
-        s.angle = (s.angle + dt * s.rate * std::f32::consts::TAU * a.rotor as f32)
-            % std::f32::consts::TAU;
+        s.angle = spin_step(s.angle, dt, s.rate * a.rotor as f32);
         *tf = s.pivot * Transform::from_rotation(Quat::from_axis_angle(s.axis, s.angle));
     }
-    for (g, mut vis) in &mut gears {
-        if let Some((a, _)) = info.get(&g.0) {
-            vis.set_if_neq(if a.gear_down {
+    for (blades, disc, mut vis) in &mut rotors {
+        let (owner, rate, n) = if let Some(b) = blades {
+            (b.owner, b.rate, b.blades)
+        } else if let Some(d) = disc.as_ref() {
+            (d.owner, d.rate, d.blades)
+        } else {
+            continue;
+        };
+        let Some((a, _)) = info.get(&owner) else {
+            continue;
+        };
+        let blend = disc_blend(rate * a.rotor as f32, n);
+        let shown = if blades.is_some() {
+            blend < 0.85
+        } else {
+            blend > 0.0
+        };
+        vis.set_if_neq(if shown {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+        if let Some(mut d) = disc
+            && (d.alpha - blend).abs() > 0.02
+        {
+            d.alpha = blend;
+            if let Some(mut m) = materials.get_mut(&d.material) {
+                m.base_color = Color::linear_rgba(1.0, 1.0, 1.0, blend);
+            }
+        }
+    }
+    for (mut g, mut tf, mut vis) in &mut gears {
+        if let Some((a, _)) = info.get(&g.owner) {
+            g.ext = gear_travel(g.ext, a.gear_down, dt);
+            *tf = g.transform();
+            vis.set_if_neq(if g.ext > 0.001 {
                 Visibility::Inherited
             } else {
                 Visibility::Hidden
@@ -1196,7 +1531,7 @@ mod tests {
             .into_iter()
             .flat_map(|k| k.model_ids().iter().map(move |id| (k, *id)))
         {
-            let km = kind_model(&ocw_assets::shipped::model(id), &mut meshes);
+            let km = kind_model(id, &ocw_assets::shipped::model(id), &mut meshes);
             // True size alongside, at the switch to lod1 and well past it.
             for d in [0.0, 5.0, 30.0, 120.0, lod_m(k), 3.0 * lod_m(k)] {
                 assert_eq!(draw_scale(d, focal, km.size_m), 1.0, "{k:?} at {d} m");
@@ -1217,7 +1552,7 @@ mod tests {
             .into_iter()
             .flat_map(|k| k.model_ids().iter().map(move |id| (k, *id)))
         {
-            let m = kind_model(&ocw_assets::shipped::model(id), &mut meshes);
+            let m = kind_model(id, &ocw_assets::shipped::model(id), &mut meshes);
             assert!(!m.near.is_empty() && !m.far.is_empty(), "{id}");
             match k {
                 AirKind::Airliner => {
@@ -1236,5 +1571,97 @@ mod tests {
                 AirKind::Glider => assert!(m.spinners.is_empty()),
             }
         }
+    }
+
+    /// Real rotor and propeller speeds (v7.08, the user 2026-11-28): the
+    /// light helicopter's main rotor ~450 rpm, the medium one's ~215, tail
+    /// rotors 1,100 – 2,200, a propeller ~2,400 rpm.
+    #[test]
+    fn rotors_turn_at_their_real_rates() {
+        let rpm = |m: &str, n: &str| spin_rate(m, n).0 * 60.0;
+        assert!((390.0..=530.0).contains(&rpm("vehicles/helicopter-light", "rotor_main")));
+        assert!(
+            (190.0..=260.0).contains(&rpm("vehicles/helicopter-medium-transport", "rotor_main"))
+        );
+        for m in [
+            "vehicles/helicopter-light",
+            "vehicles/helicopter-medium-transport",
+        ] {
+            assert!((1100.0..=2200.0).contains(&rpm(m, "rotor_tail")), "{m}");
+        }
+        assert!((2300.0..=2700.0).contains(&rpm("vehicles/plane-high-wing", "prop")));
+        assert_eq!(
+            spin_rate("vehicles/helicopter-medium-transport", "rotor_main").1,
+            5
+        );
+        // Every spinner of the shipped models has its blur disc.
+        let mut meshes = Assets::<Mesh>::default();
+        for id in [
+            "vehicles/helicopter-light",
+            "vehicles/helicopter-medium-transport",
+            "vehicles/plane-high-wing",
+        ] {
+            let km = kind_model(id, &ocw_assets::shipped::model(id), &mut meshes);
+            assert!(!km.spinners.is_empty());
+            assert!(km.spinners.iter().all(|s| s.disc.is_some()), "{id}");
+        }
+    }
+
+    /// Solid blades when still or spooling slowly, the blur disc at speed:
+    /// by the blades' passing rate only, so the same at 30 and 60 fps; the
+    /// angle after a second is the same at either frame rate.
+    #[test]
+    fn the_blur_disc_takes_over_by_rpm_alone() {
+        assert_eq!(disc_blend(0.0, 5), 0.0);
+        assert_eq!(disc_blend(0.5, 3), 0.0, "spooling up slowly: solid");
+        assert_eq!(disc_blend(3.6, 5), 1.0);
+        assert_eq!(disc_blend(7.5, 3), 1.0);
+        assert_eq!(disc_blend(40.0, 2), 1.0);
+        assert_eq!(disc_blend(0.4 * 40.0, 2), 1.0, "an idling propeller blurs");
+        let mid = disc_blend(2.0, 5);
+        assert!(mid > 0.0 && mid < 1.0);
+        assert!(disc_blend(2.4, 5) > mid);
+        let run = |fps: u32| (0..fps).fold(0.0f32, |a, _| spin_step(a, 1.0 / fps as f32, 3.3));
+        assert!((run(30) - run(60)).abs() < 1e-3, "{} {}", run(30), run(60));
+        assert!((run(60) - 0.3 * std::f32::consts::TAU).abs() < 1e-3);
+    }
+
+    /// The airliners' gear legs swing into their bays over GEAR_TRAVEL_S
+    /// (nose forward, mains inwards).
+    #[test]
+    fn the_gear_swings_in_and_out() {
+        let mut meshes = Assets::<Mesh>::default();
+        for id in [
+            "vehicles/airliner-twinjet",
+            "vehicles/airliner-twinjet-split-winglet",
+        ] {
+            let km = kind_model(id, &ocw_assets::shipped::model(id), &mut meshes);
+            assert_eq!(km.gear.len(), 3, "{id}: nose and two mains");
+            for leg in &km.gear {
+                assert!(leg.up_angle.abs() > 1.5, "{id}: retracts");
+                assert!(
+                    leg.pivot.translation.y > 1.5,
+                    "{id}: pivots at the leg's top"
+                );
+            }
+        }
+        let mut e = 1.0;
+        let mut t = 0.0;
+        while e > 0.0 {
+            e = gear_travel(e, false, 1.0 / 60.0);
+            t += 1.0 / 60.0;
+        }
+        assert!((t - GEAR_TRAVEL_S).abs() < 0.05, "{t}");
+        assert_eq!(gear_travel(0.5, true, 100.0), 1.0);
+        // A left main leg folds its wheels inwards (+X).
+        let left = GearPart {
+            owner: 0,
+            pivot: Transform::from_xyz(-3.8, 2.5, 1.0),
+            axis: Vec3::Z,
+            up_angle: std::f32::consts::FRAC_PI_2,
+            ext: 0.0,
+        };
+        let wheel = left.transform() * Vec3::new(0.0, -1.9, 0.0);
+        assert!(wheel.x > -2.0 && (wheel.y - 2.5).abs() < 0.01, "{wheel}");
     }
 }
