@@ -931,10 +931,10 @@ fn kit_design_command() -> Command {
                 .long("pattern")
                 .value_parser(|s: &str| {
                     ocw_core::KitPattern::parse(s).ok_or_else(|| {
-                        "plain, band, sash, stripes, chevrons or gradient".to_string()
+                        "plain, band, sash, stripes, chevrons, gradient or newkit".to_string()
                     })
                 })
-                .help("plain, band, sash, stripes, chevrons, gradient"),
+                .help("plain, band, sash, stripes, chevrons, gradient, newkit (the newk.it kit: its colours and the rider's name)"),
         )
         .arg(
             Arg::new("jersey")
@@ -1016,7 +1016,10 @@ fn kit_design_command() -> Command {
 /// The `kit.design` options in `m` applied to `l`.
 fn apply_design_args(l: &mut RiderLook, m: &clap::ArgMatches) {
     if let Some(p) = m.get_one::<ocw_core::KitPattern>("pattern") {
+        let before = l.pattern;
         l.pattern = *p;
+        // The newk.it kit comes in its colours; colours given here win.
+        *l = ocw_core::kit::newkit::on_pattern_change(before, *l);
     }
     if let Some(c) = m.get_one::<Rgb>("jersey") {
         l.jersey = *c;
@@ -2027,6 +2030,7 @@ fn write_view(
         RiderShow {
             look,
             kit,
+            name: rider.name.clone(),
             on_stand: scene.trying_on(),
             yaw: scene.dress.yaw,
         }

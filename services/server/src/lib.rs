@@ -536,6 +536,12 @@ pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
         },
         ..Default::default()
     };
+    // The newk.it kit in its own colours (its riders' names on it).
+    let look = if look.pattern == ocw_core::KitPattern::Newkit {
+        ocw_core::kit::newkit::dress(look)
+    } else {
+        look
+    };
     (BIKES[i % BIKES.len()], look)
 }
 

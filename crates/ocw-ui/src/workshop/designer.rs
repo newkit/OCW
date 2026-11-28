@@ -112,7 +112,7 @@ impl Field {
     pub fn help(self) -> &'static str {
         match self {
             Self::Pattern => {
-                "Our own patterns: plain, chest band, sash, stripes, chevrons, gradient."
+                "Plain, chest band, sash, stripes, chevrons, gradient, and the newk.it kit (its own colours and your name)."
             }
             Self::First => "The jersey's main colour.",
             Self::Second => {
@@ -198,7 +198,10 @@ impl Field {
         match self {
             Self::Pattern => {
                 let n = KitPattern::ALL.len() as i32;
+                let before = l.pattern;
                 l.pattern = KitPattern::ALL[(l.pattern.wire() as i32 + d).rem_euclid(n) as usize];
+                // The newk.it kit comes in its own colours.
+                l = ocw_core::kit::newkit::on_pattern_change(before, l);
             }
             Self::First => l.jersey = step_colour(l.jersey, d),
             Self::Second => k.second = step_opt(k.second, d),
@@ -291,6 +294,30 @@ mod tests {
             p = Field::Pattern.step(p, 1);
         }
         assert_eq!(seen, KitPattern::ALL.to_vec());
+    }
+
+    /// The newk.it kit is a choice of the jersey designer and comes in
+    /// its colours; its Confirm line reproduces it.
+    #[test]
+    fn the_newkit_kit_is_chosen_with_its_colours() {
+        let l = RiderLook {
+            pattern: KitPattern::Gradient,
+            ..RiderLook::default()
+        };
+        let k = Field::Pattern.step(l, 1);
+        assert_eq!(k.pattern, KitPattern::Newkit);
+        assert_eq!(Field::Pattern.value(&k), "newk.it");
+        assert_eq!(k.jersey, ocw_core::kit::newkit::BLACK);
+        assert_eq!(k.design.third, Some(ocw_core::kit::newkit::PINK));
+        let s = line(&k);
+        assert!(
+            s.contains("--pattern newkit") && s.contains("--third #CE0F69"),
+            "{s}"
+        );
+        // Recolouring it keeps the pattern.
+        let blue = Field::First.step(k, 1);
+        assert_eq!(blue.pattern, KitPattern::Newkit);
+        assert_ne!(blue.jersey, k.jersey);
     }
 
     #[test]

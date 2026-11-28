@@ -1483,6 +1483,8 @@ pub struct RiderShow {
     pub look: ocw_core::RiderLook,
     /// The rider variants of the worn kit (`ocw_assets::rider::VARIANTS`).
     pub kit: Vec<String>,
+    /// The rider's name (the newk.it kit prints it, spec 14 Phase 8, 8E).
+    pub name: String,
     /// *Try on the bike*: on the stand bike, pedalling slowly.
     pub on_stand: bool,
     /// Turned about the vertical (rad).
@@ -1514,6 +1516,7 @@ struct ShownRider {
 pub(crate) fn spawn_rider_model(
     commands: &mut Commands,
     look: &ocw_core::RiderLook,
+    name: &str,
     kit: &[String],
     layer: RenderLayers,
     scale: f32,
@@ -1526,6 +1529,7 @@ pub(crate) fn spawn_rider_model(
     let rider_model = ocw_assets::shipped::rider_model();
     let c = look.character.validated();
     let mut colours = crate::riders::avatar_colours(ocw_core::RiderId(0), true, Some(look));
+    colours.kit.name = crate::riders::kit_name(Some(look), name);
     colours.gloved_tips = ocw_assets::rider::hand::covers_fingertips(kit);
     let hands_shown = pose.map_or([ocw_assets::rider::hand::HandShape::Relaxed; 2], |p| {
         p.hand_shapes
@@ -1673,6 +1677,7 @@ fn sync_rider(
         let (root, nodes) = spawn_rider_model(
             &mut commands,
             &show.look,
+            &show.name,
             &show.kit,
             layer(),
             body.scale,

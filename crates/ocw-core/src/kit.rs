@@ -14,6 +14,8 @@
 
 use crate::bike::{KitPattern, Rgb, RiderLook};
 
+pub mod newkit;
+
 /// The highest race number (three digits; 0 = no number).
 pub const MAX_RACE_NUMBER: u16 = 999;
 
@@ -269,6 +271,12 @@ pub fn pattern_weights(
             one(0)
         }
     };
+    // The newk.it kit's own layout (its helmet: the centre stripe below).
+    match (pattern, garment) {
+        (KitPattern::Newkit, Garment::Jersey) => return newkit::jersey(three, region, p),
+        (KitPattern::Newkit, Garment::Shorts) => return newkit::shorts(three, region, p),
+        _ => {}
+    }
     match garment {
         Garment::Jersey => {
             if region != BodyRegion::Torso && pattern != KitPattern::Gradient {
@@ -308,6 +316,7 @@ pub fn pattern_weights(
                 KitPattern::Gradient => {
                     gradient((y - GRADIENT[0]) / (GRADIENT[1] - GRADIENT[0]), three)
                 }
+                KitPattern::Newkit => unreachable!("drawn by newkit"),
             }
         }
         Garment::Shorts => {
@@ -478,6 +487,11 @@ pub fn number_ink(number: u16, garment: Garment, region: BodyRegion, p: [f32; 3]
 /// which has no pattern): the pattern sampled on a cylinder around the
 /// torso. Deterministic.
 pub fn dominant_jersey_colour(look: &RiderLook) -> Rgb {
+    // The newk.it kit is a black kit with white panels: far away it
+    // reads as its first colour, even where the panels' area is larger.
+    if look.pattern == KitPattern::Newkit {
+        return look.jersey;
+    }
     let colours = look.kit_colours();
     let three = look.design.third.is_some();
     let mut area = [0.0f32; 3];

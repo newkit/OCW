@@ -766,11 +766,18 @@ impl Riders {
             || edit.pattern.is_some()
         {
             let l = r.look();
+            // The newk.it kit comes in its colours; colours given win.
+            let l = ocw_core::kit::newkit::on_pattern_change(
+                l.pattern,
+                RiderLook {
+                    pattern: edit.pattern.unwrap_or(l.pattern),
+                    ..l
+                },
+            );
             r.set_look(RiderLook {
                 frame: edit.frame.unwrap_or(l.frame),
                 jersey: edit.jersey.unwrap_or(l.jersey),
                 helmet: edit.helmet.unwrap_or(l.helmet),
-                pattern: edit.pattern.unwrap_or(l.pattern),
                 ..l
             });
         }

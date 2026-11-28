@@ -260,16 +260,23 @@ pub enum KitPattern {
     Chevrons,
     /// A vertical blend from the first to the second colour.
     Gradient,
+    /// The "newk.it" kit (spec 14 Phase 8, 8E *The newk.it kit*): the
+    /// design and the name newk.it are the user's, used with permission –
+    /// black with white rounded-square panels, the wordmark across the
+    /// chest, pink lettering on the back and the bib shorts, the rider's
+    /// own name on the chest, the sleeve and the shorts ([`crate::kit::newkit`]).
+    Newkit,
 }
 
 impl KitPattern {
-    pub const ALL: [KitPattern; 6] = [
+    pub const ALL: [KitPattern; 7] = [
         KitPattern::Plain,
         KitPattern::Band,
         KitPattern::Sash,
         KitPattern::Stripes,
         KitPattern::Chevrons,
         KitPattern::Gradient,
+        KitPattern::Newkit,
     ];
 
     pub fn id(self) -> &'static str {
@@ -280,6 +287,7 @@ impl KitPattern {
             Self::Stripes => "stripes",
             Self::Chevrons => "chevrons",
             Self::Gradient => "gradient",
+            Self::Newkit => "newkit",
         }
     }
 
@@ -291,6 +299,7 @@ impl KitPattern {
             Self::Stripes => "Stripes",
             Self::Chevrons => "Chevrons",
             Self::Gradient => "Gradient",
+            Self::Newkit => "newk.it",
         }
     }
 
@@ -299,6 +308,12 @@ impl KitPattern {
         let s = s.trim();
         if s.eq_ignore_ascii_case("bands") {
             return Some(Self::Band);
+        }
+        if ["newk.it", "newk-it", "newk_it", "newk it"]
+            .iter()
+            .any(|n| s.eq_ignore_ascii_case(n))
+        {
+            return Some(Self::Newkit);
         }
         Self::ALL
             .into_iter()
@@ -505,7 +520,10 @@ mod tests {
         // The wire numbers stay what older apps know.
         assert_eq!(KitPattern::Sash.wire(), 2);
         assert_eq!(KitPattern::Gradient.wire(), 5);
+        assert_eq!(KitPattern::Newkit.wire(), 6);
         assert_eq!(KitPattern::parse("Bands"), Some(KitPattern::Band));
+        assert_eq!(KitPattern::parse("newk.it"), Some(KitPattern::Newkit));
+        assert_eq!(KitPattern::parse("NEWKIT"), Some(KitPattern::Newkit));
         assert_eq!(palette_step(PALETTE[0], 1), PALETTE[1]);
         assert_eq!(palette_step(PALETTE[0], -1), PALETTE[11]);
         assert_eq!(palette_step(PALETTE[11], 1), PALETTE[0]);

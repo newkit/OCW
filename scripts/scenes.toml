@@ -6272,3 +6272,156 @@ args = ["--world", "{world}", "--free-ride", "--start", "-25712,-7061", "--bots"
 at = ["0.3=time 2026-11-28 12:00", "0.3=weather clear", "0.5=character --body a --hair ponytail --hair-colour #8D5524 --skin 4", "0.6=set --temp traffic.live_road on", "2=camera.orbit 20 30 25", "4=traffic road busy"]
 shot = 30
 pick = false
+
+# --- The newk.it kit (spec 14 Phase 8, 8E; the design and the name newk.it are
+# the user's, used with permission). Made-up riders only. ----------------------
+
+[[scene]]
+name = "newkit-mirror"
+description = "The newk.it kit in the workshop mirror (spec 14 Phase 8, 8E): over the shoulder the back with the pink vertical \"newk\" and \".it\", in the mirror the front – the white-outlined panels, the outlined \"newk.it\" across the chest with its dot on the zip, the rider's name MIRA VELO in pink on the left chest and sleeve, the white right sleeve and collar"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Mira Velo"
+
+[[rider]]
+name = "Mira Velo"
+weight_kg = 63.0
+ftp_w = 230
+bike = "road"
+frame_color = "#1E1E22"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --body b --hair ponytail --hair-colour #8D5524 --skin 3", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 8
+
+[[scene]]
+name = "newkit-mirror-left"
+description = "The newk.it kit from the rider's left (turned 90°): the black left sleeve with the white line and the name in pink, the side panels, the pink \"newk.it\" up the left thigh of the bib shorts"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Mira Velo"
+
+[[rider]]
+name = "Mira Velo"
+weight_kg = 63.0
+ftp_w = 230
+bike = "road"
+frame_color = "#1E1E22"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --body b --hair ponytail --hair-colour #8D5524 --skin 3", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 90"]
+shot = 9
+
+[[scene]]
+name = "newkit-mirror-right"
+description = "The newk.it kit from the rider's right (turned -90°): the white right sleeve with its black line, the side panels, the logo's three squares on the right thigh of the bib shorts"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Mira Velo"
+
+[[rider]]
+name = "Mira Velo"
+weight_kg = 63.0
+ftp_w = 230
+bike = "road"
+frame_color = "#1E1E22"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --body b --hair ponytail --hair-colour #8D5524 --skin 3", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit -90"]
+shot = 9
+
+[[scene]]
+name = "newkit-mirror-back"
+description = "The newk.it kit turned round (180°): the front over the shoulder and the back in the mirror – the pink \"newk\" down the back's left half, \".it\" on the white panel at the bottom right, the name MIRA VELO in pink across the back of the bib shorts"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = """
+active = "Mira Velo"
+
+[[rider]]
+name = "Mira Velo"
+weight_kg = 63.0
+ftp_w = 230
+bike = "road"
+frame_color = "#1E1E22"
+helmet_color = "#F2F2EE"
+"""
+at = ["1.5=character --body b --hair ponytail --hair-colour #8D5524 --skin 3", "2=kit.design --pattern newkit", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 180"]
+shot = 9
+
+[[scene]]
+name = "newkit-bf-front"
+description = "Two made-up riders in the newk.it kit at a race start on the Titisee - Feldberg road in the Black Forest, from the front – each with their own name on the chest and sleeve (KAI LINDQVIST, the own rider; JUNO PACE, a bot), among bots in other kits"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "7", "--power", "250"]
+riders = """
+active = "Kai Lindqvist"
+
+[[rider]]
+name = "Kai Lindqvist"
+weight_kg = 76.0
+ftp_w = 270
+bike = "road-aero"
+frame_color = "#F2F2EE"
+helmet_color = "#1E1E22"
+"""
+at = ["0.3=time 2026-06-20 10:30", "0.3=weather clear", "1=character --body a --hair short --hair-colour #3B2A1E --skin 5 --beard 1", "1=dev.bot_bike 7 --name \"Juno Pace\"", "1.5=kit.design --pattern newkit", "2.5=event race --km 3", "2.5=camera.orbit 165 12 5"]
+shot = 13
+
+[[scene]]
+name = "newkit-bf-back"
+description = "The same start from behind: the pink vertical \"newk\" and \".it\" on the backs (the race number's paper bib over the middle), the names across the bib shorts"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "7", "--power", "250"]
+riders = """
+active = "Kai Lindqvist"
+
+[[rider]]
+name = "Kai Lindqvist"
+weight_kg = 76.0
+ftp_w = 270
+bike = "road-aero"
+frame_color = "#F2F2EE"
+helmet_color = "#1E1E22"
+"""
+at = ["0.3=time 2026-06-20 10:30", "0.3=weather clear", "1=character --body a --hair short --hair-colour #3B2A1E --skin 5 --beard 1", "1=dev.bot_bike 7 --name \"Juno Pace\"", "1.5=kit.design --pattern newkit", "2.5=event race --km 3", "2.5=camera.orbit 15 14 5"]
+shot = 13
+
+[[scene]]
+name = "newkit-bf-ride"
+description = "A made-up rider (Kai Lindqvist) riding up the B317 towards the Feldberg in the newk.it kit, orbit camera from the front left close up – the outlined wordmark across the chest, the name on the chest and the left sleeve, the pink lettering on the left thigh"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0", "--power", "260"]
+riders = """
+active = "Kai Lindqvist"
+
+[[rider]]
+name = "Kai Lindqvist"
+weight_kg = 76.0
+ftp_w = 270
+bike = "road-aero"
+frame_color = "#F2F2EE"
+helmet_color = "#1E1E22"
+"""
+at = ["0.3=time 2026-06-20 10:30", "0.3=weather clear", "1=character --body a --hair short --hair-colour #3B2A1E --skin 5 --beard 1", "1.5=kit.design --pattern newkit", "2.5=teleport 4.2", "2.5=camera.orbit 140 10 2.6"]
+shot = 9
+
+[[scene]]
+name = "newkit-bf-ride-video"
+description = "Video: Kai Lindqvist in the newk.it kit riding on the B317 in the Black Forest, the orbit camera circling slowly from the front to the back"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0", "--power", "260"]
+riders = """
+active = "Kai Lindqvist"
+
+[[rider]]
+name = "Kai Lindqvist"
+weight_kg = 76.0
+ftp_w = 270
+bike = "road-aero"
+frame_color = "#F2F2EE"
+helmet_color = "#1E1E22"
+"""
+at = ["0.3=time 2026-06-20 10:30", "0.3=weather clear", "1=character --body a --hair short --hair-colour #3B2A1E --skin 5 --beard 1", "1.5=kit.design --pattern newkit", "2.5=teleport 4.2", "2.5=camera.orbit 170 10 3.2", "4=camera.orbit 120 10 3.2", "5.5=camera.orbit 60 12 3.2", "7=camera.orbit 10 14 3.2"]
+warmup = 3
+video = 7
+pick = false

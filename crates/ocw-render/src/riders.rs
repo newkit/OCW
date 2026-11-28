@@ -398,11 +398,26 @@ pub struct KitColours {
     pub gloves: Option<Color>,
     pub helmet_finish: ocw_core::Finish,
     pub shoe_finish: ocw_core::Finish,
+    /// The rider's name as the newk.it kit prints it
+    /// (`ocw_core::kit::newkit::pack_name`; zero: none, and for the other
+    /// patterns).
+    pub name: [u32; 4],
 }
 
 fn rgb(c: ocw_core::Rgb) -> Color {
     let [r, g, b] = c.channels();
     Color::srgb_u8(r, g, b)
+}
+
+/// The rider's name as their kit prints it: packed for the shader when
+/// the look is the newk.it kit (spec 14 Phase 8, 8E), else zero.
+pub fn kit_name(look: Option<&RiderLook>, name: &str) -> [u32; 4] {
+    match look {
+        Some(l) if l.pattern == ocw_core::KitPattern::Newkit => {
+            ocw_core::kit::newkit::pack_name(name)
+        }
+        _ => [0; 4],
+    }
 }
 
 /// The colours of a rider: their look, or (an old server without looks)
@@ -441,6 +456,7 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
                     gloves: d.gloves.map(rgb),
                     helmet_finish: d.helmet_finish,
                     shoe_finish: d.shoe_finish,
+                    name: [0; 4],
                 },
                 rgb(ocw_core::kit::dominant_jersey_colour(l)),
             )
@@ -459,6 +475,7 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
                 gloves: None,
                 helmet_finish: Default::default(),
                 shoe_finish: Default::default(),
+                name: [0; 4],
             },
             jersey,
         ),
@@ -542,6 +559,9 @@ pub fn flying(view: &RideView, id: RiderId) -> bool {
 struct AvatarLook {
     bike: ProfileId,
     look: Option<RiderLook>,
+    /// The name the newk.it kit prints ([`kit_name`]; zero for the other
+    /// kits, so a rename rebuilds only a rider in that kit).
+    name: [u32; 4],
     /// The model variants of the fitted parts ([`part_variants`]).
     variants: Vec<String>,
     /// The rider variants of the worn kit ([`kit_variants`]).
@@ -652,8 +672,9 @@ fn sync_riders(
         .map(|r| {
             let variants = part_variants(&r.parts);
             let kit = kit_variants(&r.parts);
+            let name = kit_name(r.look.as_ref(), &r.name);
             (
-                r.id, r.state, r.id, r.is_local, r.bike, r.look, variants, kit, r.wobble,
+                r.id, r.state, r.id, r.is_local, r.bike, r.look, variants, kit, r.wobble, name,
             )
         })
         .chain(ghost.and_then(|(id, state, on)| {
@@ -668,9 +689,10 @@ fn sync_riders(
                 Vec::new(),
                 Vec::new(),
                 0.0,
+                [0; 4],
             ))
         }));
-    for (id, state, track_of, is_local, bike, look, variants, kit, wobble) in all {
+    for (id, state, track_of, is_local, bike, look, variants, kit, wobble, name) in all {
         let rig = &lib.bike_rigs[profile_index(bike)];
         let mut t = avatar_transform_on(
             view.track(track_of),
@@ -701,6 +723,7 @@ fn sync_riders(
         let wanted = AvatarLook {
             bike,
             look,
+            name,
             variants,
             kit,
         };
@@ -1170,6 +1193,7 @@ fn spawn_avatar(
     transform: Transform,
 ) -> Entity {
     let mut colours = avatar_colours(id, is_local, built.look.as_ref());
+    colours.kit.name = built.name;
     colours.gloved_tips = ocw_assets::rider::hand::covers_fingertips(&built.kit);
     let ghost = id == GHOST_ID;
     let b = profile_index(built.bike);
@@ -1920,6 +1944,83 @@ mod tests {
         // The same parts again: kept.
         app.update();
         assert_eq!(entity(&app), third);
+    }
+
+    /// The newk.it kit (spec 14 Phase 8, 8E): two riders in it each wear
+    /// their own name; a rename rebuilds the avatar with the new name, a
+    /// rider in another kit is kept on a rename.
+    #[test]
+    fn riders_in_the_newkit_kit_wear_their_own_names() {
+        let kit = ocw_core::kit::newkit::dress(RiderLook::default());
+        let rider = |id: u32, name: &str, look: RiderLook| crate::RiderView {
+            id: RiderId(id),
+            name: name.into(),
+            state: ocw_sim::RiderState {
+                distance: 10.0 + f64::from(id),
+                ..Default::default()
+            },
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: id == 1,
+            bike: ProfileId::Road,
+            look: Some(look),
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
+            damage: None,
+            cue: Default::default(),
+            signs: Default::default(),
+        };
+        let mut view = RideView::new(Route::test_loop());
+        view.riders.push(rider(1, "Ada Rider", kit));
+        view.riders.push(rider(2, "Bea Climber", kit));
+        view.riders
+            .push(rider(3, "Cleo Sprint", RiderLook::default()));
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<GearMaterial>()
+            .insert_resource(view)
+            .add_plugins(RidersPlugin);
+        app.update();
+        let pack = ocw_core::kit::newkit::pack_name;
+        let names = |app: &App| -> Vec<[u32; 4]> {
+            app.world()
+                .resource::<Assets<GearMaterial>>()
+                .iter()
+                .map(|(_, m)| m.extension.look.name.to_array())
+                .filter(|n| n[3] > 0)
+                .collect()
+        };
+        let built = |app: &App, id: u32| {
+            let e = app.world().resource::<RiderEntities>().0[&RiderId(id)];
+            (e, app.world().get::<AvatarLook>(e).unwrap().name)
+        };
+        let n = names(&app);
+        assert!(n.contains(&pack("Ada Rider")) && n.contains(&pack("Bea Climber")));
+        assert_eq!(built(&app, 1).1, pack("Ada Rider"));
+        assert_eq!(built(&app, 3).1, [0; 4], "other kits print no name");
+        // A rename: rebuilt with the new name.
+        let (ada, _) = built(&app, 1);
+        let (cleo, _) = built(&app, 3);
+        {
+            let mut v = app.world_mut().resource_mut::<RideView>();
+            v.riders[0].name = "Ada Climbs".into();
+            v.riders[2].name = "Cleo Climbs".into();
+        }
+        app.update();
+        assert_ne!(built(&app, 1).0, ada);
+        assert_eq!(built(&app, 1).1, pack("Ada Climbs"));
+        assert!(names(&app).contains(&pack("Ada Climbs")));
+        assert_eq!(built(&app, 3).0, cleo, "not in the kit: kept");
+        // The far model's jersey is the kit's black.
+        let c = avatar_colours(RiderId(1), true, Some(&kit));
+        assert_eq!(
+            c.far_jersey.to_srgba().to_u8_array()[..3],
+            [0x11, 0x11, 0x14]
+        );
     }
 
     /// Part ids map to the generator's variants; base parts and frames

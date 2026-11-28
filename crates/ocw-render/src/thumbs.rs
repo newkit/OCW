@@ -896,6 +896,7 @@ fn render_thumbs(
                 let (root, _) = crate::workshop::spawn_rider_model(
                     &mut commands,
                     &r.look,
+                    "",
                     &r.kit,
                     layer(),
                     scale,

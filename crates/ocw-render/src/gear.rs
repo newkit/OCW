@@ -175,6 +175,10 @@ pub struct GearLook {
     pub third: Vec4,
     /// Per texture layer: mean albedo (linear), repeat size (m).
     pub layers: [Vec4; 3],
+    /// The rider's name on the newk.it kit's jersey and shorts
+    /// (`ocw_core::kit::newkit::pack_name`; zero on everything else, so
+    /// other parts still share their materials across riders).
+    pub name: UVec4,
 }
 
 pub const FLAG_THREE: u32 = 1;
@@ -383,6 +387,14 @@ pub fn surface(
         }
         None => {}
     }
+    // The newk.it kit prints the rider's name (jersey and shorts only).
+    let name = if pattern == KitPattern::Newkit
+        && matches!(garment, Some(Garment::Jersey | Garment::Shorts))
+    {
+        UVec4::from_array(kit.name)
+    } else {
+        UVec4::ZERO
+    };
     let mut flags = 0;
     if kit.three && garment.is_some() {
         flags |= FLAG_THREE;
@@ -395,7 +407,8 @@ pub fn surface(
     } else {
         (Vec4::ZERO, Vec4::ZERO, Vec4::ZERO)
     };
-    if kind == GearKind::Knit && garment == Some(Garment::Jersey) {
+    // The mesh side panels (not under the newk.it kit's lettering).
+    if kind == GearKind::Knit && garment == Some(Garment::Jersey) && pattern != KitPattern::Newkit {
         flags |= FLAG_MESH_PANELS;
     }
     GearSurface {
@@ -420,6 +433,7 @@ pub fn surface(
             second,
             third,
             layers: DEFAULT_LAYERS,
+            name,
         },
     }
 }
@@ -467,6 +481,7 @@ impl GearSurface {
             .flat_map(|v| v.to_array())
             .map(f32::to_bits)
             .collect();
+        k.extend(l.name.to_array());
         k.extend(
             [
                 self.metallic,
@@ -871,6 +886,122 @@ mod tests {
         let src = include_str!("gear.wesl");
         assert!(src.contains(&format!("const AXLE_R: f32 = {AXLE_R};")));
         assert!(src.contains("fn h_brushed(") && src.contains("mode == BRUSH_LINEAR"));
+    }
+
+    /// The newk.it kit (spec 14 Phase 8, 8E): the jersey and the shorts
+    /// carry the rider's name (riders in it get their own materials, all
+    /// other parts stay shared), no texture of its own (the procedural
+    /// pattern: nothing for the phone's texture budget, 16 bytes per
+    /// material), and the shader has the Rust twin's layout and font.
+    #[test]
+    fn the_newkit_kit_prints_each_riders_name() {
+        use ocw_core::kit::newkit::{self, NAME_GLYPHS, layout as nl};
+        let look = newkit::dress(RiderLook::default());
+        let named = |n: &str| {
+            let mut c = colours(&look);
+            c.kit.name = crate::riders::kit_name(Some(&look), n);
+            c
+        };
+        let (ada, bea) = (named("Ada Rider"), named("Bea Climber"));
+        let j = |c: &AvatarColours| surface("jersey", "torso", [1.0; 4], c);
+        assert_eq!(
+            j(&ada).look.name,
+            UVec4::from_array(newkit::pack_name("Ada Rider"))
+        );
+        assert_eq!(j(&ada).look.mode.z, KitPattern::Newkit.wire() as f32);
+        // No mesh side panels under the lettering (no seam cuts it).
+        assert_eq!(j(&ada).look.flags() & FLAG_MESH_PANELS, 0);
+        assert_ne!(j(&ada).key(false), j(&bea).key(false));
+        let s = surface("shorts", "pelvis", [0.01, 0.01, 0.01, 1.0], &bea);
+        assert_eq!(s.look.name.w, 11);
+        assert_eq!(s.look.third, lin(Color::srgb_u8(0xCE, 0x0F, 0x69)), "pink");
+        for (slot, node) in [
+            ("sock", "shin_l"),
+            ("helmet", "helmet_road"),
+            ("skin", "head"),
+        ] {
+            let a = surface(slot, node, [1.0; 4], &ada);
+            assert_eq!(a.look.name, UVec4::ZERO, "{slot}");
+            assert_eq!(a.key(false), surface(slot, node, [1.0; 4], &bea).key(false));
+        }
+        assert_eq!(
+            crate::riders::kit_name(Some(&RiderLook::default()), "Ada"),
+            [0; 4]
+        );
+        // No texture of its own.
+        let m = j(&ada).material(false);
+        assert!(m.extension.albedo.is_none() && m.extension.normal.is_none());
+        assert_eq!(std::mem::size_of::<UVec4>(), 16);
+        // The shader's twin: the font, the layout.
+        let src = include_str!("gear.wesl");
+        let table = NAME_GLYPHS
+            .iter()
+            .map(|g| format!("{g}u"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(src.contains(&table), "the name font");
+        for (name, v) in [
+            ("NK_END", nl::END),
+            ("NK_DOT_CENTRE", nl::DOT_CENTRE),
+            ("NK_AXIS_Z", nl::AXIS_Z),
+            ("NK_ROUND", nl::ROUND),
+            ("NK_CELL_GAP", nl::CELL_GAP),
+            ("NK_CELL_STROKE", nl::CELL_STROKE),
+            ("NK_CELL_RADIUS", nl::CELL_RADIUS),
+            ("NK_COLLAR", nl::COLLAR),
+            ("NK_COLLAR_X", nl::COLLAR_X),
+            ("NK_CHEST_XH", nl::CHEST_XH),
+            ("NK_CHEST_BASE", nl::CHEST_BASE),
+            ("NK_OUTLINE", nl::OUTLINE),
+            ("NK_BACK_XH", nl::BACK_XH),
+            ("NK_BACK_TOP", nl::BACK_TOP),
+            ("NK_BACK_BASE", nl::BACK_BASE),
+            ("NK_BACK_IT_XH", nl::BACK_IT_XH),
+            ("NK_BACK_IT_TOP", nl::BACK_IT_TOP),
+            ("NK_BACK_IT_BASE", nl::BACK_IT_BASE),
+            ("NK_SLEEVE_LINE", nl::SLEEVE_LINE),
+            ("NK_SLEEVE_LINE_HALF", nl::SLEEVE_LINE_HALF),
+            ("NK_CUFF", nl::CUFF),
+            ("NK_SLEEVE_R", nl::SLEEVE_R),
+            ("NK_THIGH_R", nl::THIGH_R),
+            ("NK_LEG_XH", nl::LEG_XH),
+            ("NK_LEG_BOTTOM", nl::LEG_BOTTOM),
+            ("NK_LEG_BASE", nl::LEG_BASE),
+            ("NK_SQUARE_HALF", nl::SQUARE_HALF),
+            ("NK_SQUARE_RADIUS", nl::SQUARE_RADIUS),
+            ("NK_SQUARE_STROKE", nl::SQUARE_STROKE),
+            ("NK_SHORTS_BACK_Z", nl::SHORTS_BACK_Z),
+        ] {
+            assert!(
+                src.contains(&format!("const {name}: f32 = {v};")),
+                "{name} {v}"
+            );
+        }
+        let starts = nl::STARTS.map(|v| format!("{v:.2}")).join(", ");
+        assert!(
+            src.contains(&format!("array<f32, 7>({starts})")),
+            "{starts}"
+        );
+        for (name, v) in [
+            ("NK_SEMI", nl::SEMI),
+            ("NK_COLS", nl::COLS),
+            ("NK_SLEEVE_AXIS", nl::SLEEVE_AXIS),
+            ("NK_THIGH_AXIS", nl::THIGH_AXIS),
+        ] {
+            let a = |x: f32| {
+                if x.fract() == 0.0 {
+                    format!("{x:.1}")
+                } else {
+                    format!("{x}")
+                }
+            };
+            let want = format!(
+                "const {name}: vec2<f32> = vec2<f32>({}, {});",
+                a(v[0]),
+                a(v[1])
+            );
+            assert!(src.contains(&want), "{want}");
+        }
     }
 
     #[test]

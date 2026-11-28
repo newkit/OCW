@@ -304,9 +304,11 @@ fn rider_args(c: Command) -> Command {
             .long("kit")
             .value_name("PATTERN")
             .value_parser(|s: &str| {
-                ocw_core::KitPattern::parse(s).ok_or_else(|| "plain, band or sash".to_string())
+                ocw_core::KitPattern::parse(s).ok_or_else(|| {
+                    "plain, band, sash, stripes, chevrons, gradient or newkit".to_string()
+                })
             })
-            .help("Jersey pattern: plain, band or sash"),
+            .help("Jersey pattern: plain, band, sash, stripes, chevrons, gradient, newkit"),
     )
 }
 

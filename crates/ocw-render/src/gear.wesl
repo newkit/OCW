@@ -44,6 +44,9 @@ struct GearLook {
     third: vec4<f32>,
     // Per texture layer (knit, carbon, leather): mean albedo, repeat (m).
     layers: array<vec4<f32>, 3>,
+    // The rider's name on the newk.it kit (ocw_core::kit::newkit::pack_name:
+    // five 6-bit codes in x, y, z; the count in w; zero elsewhere).
+    name: vec4<u32>,
 }
 
 @if(BINDLESS) {
@@ -212,6 +215,9 @@ fn blend(t0: f32, three: bool) -> vec4<f32> {
 }
 
 fn jersey_weights(p: vec3<f32>, region: u32, pattern: u32, three: bool, aa: f32) -> vec4<f32> {
+    if pattern == 6u {
+        return newkit_jersey(p, region, three, aa);
+    }
     if region != 0u && pattern != 5u {
         return vec4<f32>(1.0, 0.0, 0.0, 0.0);
     }
@@ -240,6 +246,9 @@ fn jersey_weights(p: vec3<f32>, region: u32, pattern: u32, three: bool, aa: f32)
 }
 
 fn shorts_weights(p: vec3<f32>, region: u32, pattern: u32, three: bool, aa: f32) -> vec4<f32> {
+    if pattern == 6u {
+        return newkit_shorts(p, region, three, aa);
+    }
     if pattern == 0u || (region != 0u && region != 2u) {
         return vec4<f32>(1.0, 0.0, 0.0, 0.0);
     }
@@ -308,6 +317,331 @@ fn digits_cover(n: u32, u: f32, v: f32, h: f32, aa: f32) -> f32 {
     let o = 0.5 * aa;
     return 0.25 * (digits_ink(n, u - o, v - o, h) + digits_ink(n, u + o, v - o, h)
         + digits_ink(n, u - o, v + o, h) + digits_ink(n, u + o, v + o, h));
+}
+
+// The newk.it kit (pattern 6; spec 14 Phase 8, 8E; the design and the name
+// newk.it are the user's, used with permission; Rust twin:
+// ocw_core::kit::newkit, the same layout constants).
+const NK_END: f32 = 4.04;
+const NK_DOT_CENTRE: f32 = 3.09;
+const NK_AXIS_Z: f32 = 0.035;
+const NK_SEMI: vec2<f32> = vec2<f32>(0.175, 0.11);
+const NK_ROUND: f32 = 0.14;
+const NK_COLS: vec2<f32> = vec2<f32>(0.19, 0.31);
+const NK_ROWS: vec4<f32> = vec4<f32>(0.01, 0.13, 0.36, 0.62);
+const NK_CELL_GAP: f32 = 0.007;
+const NK_CELL_STROKE: f32 = 0.011;
+const NK_CELL_RADIUS: f32 = 0.035;
+const NK_COLLAR: f32 = 0.5;
+const NK_COLLAR_X: f32 = 0.1;
+const NK_CHEST_XH: f32 = 0.059;
+const NK_CHEST_BASE: f32 = 0.322;
+const NK_OUTLINE: f32 = 0.006;
+const NK_BACK_XH: f32 = 0.13;
+const NK_BACK_TOP: f32 = 0.47;
+const NK_BACK_BASE: f32 = -0.1;
+const NK_BACK_IT_XH: f32 = 0.075;
+const NK_BACK_IT_TOP: f32 = 0.11;
+const NK_BACK_IT_BASE: f32 = 0.09;
+const NK_SLEEVE_LINE: f32 = 0.235;
+const NK_SLEEVE_LINE_HALF: f32 = 0.004;
+const NK_CUFF: f32 = 0.212;
+const NK_SLEEVE_AXIS: vec2<f32> = vec2<f32>(0.18, 0.03);
+const NK_SLEEVE_R: f32 = 0.046;
+const NK_THIGH_AXIS: vec2<f32> = vec2<f32>(0.09, 0.0);
+const NK_THIGH_R: f32 = 0.07;
+const NK_LEG_XH: f32 = 0.065;
+const NK_LEG_BOTTOM: f32 = -0.285;
+const NK_LEG_BASE: f32 = 0.045;
+const NK_SQUARES: vec3<f32> = vec3<f32>(-0.265, -0.205, -0.145);
+const NK_SQUARE_HALF: f32 = 0.024;
+const NK_SQUARE_RADIUS: f32 = 0.008;
+const NK_SQUARE_STROKE: f32 = 0.007;
+const NK_CHEST_NAME: vec4<f32> = vec4<f32>(-0.085, 0.44, 0.022, 0.11);
+const NK_SLEEVE_NAME: vec4<f32> = vec4<f32>(0.0, 0.27, 0.02, 0.1);
+const NK_SHORTS_NAME: vec4<f32> = vec4<f32>(0.0, -0.092, 0.02, 0.2);
+const NK_SHORTS_BACK_Z: f32 = 0.04;
+const NK_NAME_MAX: u32 = 12u;
+const NK_H: f32 = 0.1;
+
+fn nk_box(p: vec2<f32>, lo: vec2<f32>, hi: vec2<f32>) -> f32 {
+    let d = max(lo - p, p - hi);
+    return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0);
+}
+
+fn nk_circle(p: vec2<f32>, c: vec2<f32>, r: f32) -> f32 {
+    return length(p - c) - r;
+}
+
+fn nk_capsule(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, h: f32) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let t = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * t) - h;
+}
+
+// A ring of radius r, half width h about c: the top half (part 0), the
+// bottom half (1) or the bottom-left quarter (2); flat ends.
+fn nk_arc(p: vec2<f32>, c: vec2<f32>, r: f32, h: f32, part: u32) -> f32 {
+    let q = p - c;
+    var inside = q.y >= 0.0;
+    if part == 1u {
+        inside = q.y <= 0.0;
+    } else if part == 2u {
+        inside = q.x <= 0.0 && q.y <= 0.0;
+    }
+    if inside {
+        return abs(length(q) - r) - h;
+    }
+    let a = nk_box(p, vec2<f32>(c.x - r - h, c.y), vec2<f32>(c.x - r + h, c.y));
+    if part == 2u {
+        return min(a, nk_box(p, vec2<f32>(c.x, c.y - r - h), vec2<f32>(c.x, c.y - r + h)));
+    }
+    return min(a, nk_box(p, vec2<f32>(c.x + r - h, c.y), vec2<f32>(c.x + r + h, c.y)));
+}
+
+// Signed distance (x-heights) to glyph g of "newk.it" (0 n, 1 e, 2 w, 3 k,
+// 4 ".", 5 i, 6 t), p from its left edge and the baseline.
+fn nk_glyph(g: u32, p: vec2<f32>) -> f32 {
+    switch g {
+        case 0u: {
+            return min(min(nk_box(p, vec2<f32>(0.0, 0.0), vec2<f32>(0.2, 0.72)),
+                nk_box(p, vec2<f32>(0.36, 0.0), vec2<f32>(0.56, 0.72))),
+                nk_arc(p, vec2<f32>(0.28, 0.72), 0.18, NK_H, 0u));
+        }
+        case 1u: {
+            var d = min(nk_arc(p, vec2<f32>(0.28, 0.72), 0.18, NK_H, 0u),
+                nk_arc(p, vec2<f32>(0.28, 0.28), 0.18, NK_H, 1u));
+            d = min(d, nk_box(p, vec2<f32>(0.0, 0.28), vec2<f32>(0.2, 0.72)));
+            d = min(d, nk_box(p, vec2<f32>(0.36, 0.28), vec2<f32>(0.56, 0.72)));
+            d = min(d, nk_box(p, vec2<f32>(0.0, 0.44), vec2<f32>(0.56, 0.56)));
+            return max(d, -nk_box(p, vec2<f32>(0.3, 0.14), vec2<f32>(0.7, 0.44)));
+        }
+        case 2u: {
+            var d = min(nk_box(p, vec2<f32>(0.0, 0.28), vec2<f32>(0.2, 1.0)),
+                nk_box(p, vec2<f32>(0.36, 0.28), vec2<f32>(0.56, 1.0)));
+            d = min(d, nk_box(p, vec2<f32>(0.72, 0.28), vec2<f32>(0.92, 1.0)));
+            d = min(d, nk_arc(p, vec2<f32>(0.28, 0.28), 0.18, NK_H, 1u));
+            return min(d, nk_arc(p, vec2<f32>(0.64, 0.28), 0.18, NK_H, 1u));
+        }
+        case 3u: {
+            let diag = max(min(nk_capsule(p, vec2<f32>(0.15, 0.38), vec2<f32>(0.48, 0.92), NK_H),
+                nk_capsule(p, vec2<f32>(0.26, 0.5), vec2<f32>(0.48, 0.08), NK_H)),
+                nk_box(p, vec2<f32>(0.0, 0.0), vec2<f32>(0.56, 1.0)));
+            return min(nk_box(p, vec2<f32>(0.0, 0.0), vec2<f32>(0.2, 1.42)), diag);
+        }
+        case 4u: {
+            return nk_circle(p, vec2<f32>(0.13, 0.13), 0.13);
+        }
+        case 5u: {
+            return min(nk_box(p, vec2<f32>(0.0, 0.0), vec2<f32>(0.2, 1.0)),
+                nk_circle(p, vec2<f32>(0.1, 1.24), 0.11));
+        }
+        default: {
+            var d = min(nk_box(p, vec2<f32>(0.04, 0.26), vec2<f32>(0.24, 1.3)),
+                nk_arc(p, vec2<f32>(0.3, 0.26), 0.16, NK_H, 2u));
+            d = min(d, nk_box(p, vec2<f32>(0.3, 0.0), vec2<f32>(0.44, 0.2)));
+            return min(d, nk_box(p, vec2<f32>(0.0, 0.82), vec2<f32>(0.44, 1.0)));
+        }
+    }
+}
+
+// Signed distance (x-heights) to the glyphs first..=last of "newk.it".
+fn nk_word(p: vec2<f32>, first: u32, last: u32) -> f32 {
+    var starts = array<f32, 7>(0.00, 0.65, 1.30, 2.31, 2.96, 3.31, 3.60);
+    if p.y < -0.5 || p.y > 1.9 || p.x < starts[first] - 0.5 || p.x > NK_END + 0.5 {
+        return 1.0;
+    }
+    var d = 1.0;
+    for (var g = first; g <= last; g++) {
+        d = min(d, nk_glyph(g, vec2<f32>(p.x - starts[g], p.y)));
+    }
+    return d;
+}
+
+// Round the torso from the zip and from the spine (m, + to the right).
+fn nk_around(p: vec3<f32>) -> f32 {
+    return atan2(p.x / NK_SEMI.x, -(p.z - NK_AXIS_Z) / NK_SEMI.y) * NK_ROUND;
+}
+
+fn nk_behind(p: vec3<f32>) -> f32 {
+    return atan2(p.x / NK_SEMI.x, (p.z - NK_AXIS_Z) / NK_SEMI.y) * NK_ROUND;
+}
+
+// Signed distance to a rounded panel centred at c with the half sizes h
+// (the gap taken off).
+fn nk_panel_sd(p: vec2<f32>, c: vec2<f32>, h: vec2<f32>) -> f32 {
+    let q = abs(p - c) - (h - NK_CELL_GAP) + NK_CELL_RADIUS;
+    return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - NK_CELL_RADIUS;
+}
+
+// The panel at (u, y): x 1 when filled white, y its signed distance (m).
+// The back above the lowest row is one panel across the spine.
+fn nk_panel(u: f32, y: f32) -> vec2<f32> {
+    let pi_r = 3.14159265 * NK_ROUND;
+    if abs(u) > NK_COLS.y && y >= NK_ROWS.y {
+        let s = select(-pi_r - u, pi_r - u, u > 0.0);
+        let w = pi_r - NK_COLS.y;
+        let sd = nk_panel_sd(vec2<f32>(s, y), vec2<f32>(0.0, 0.5 * (NK_ROWS.y + NK_ROWS.w)),
+            vec2<f32>(w, 0.5 * (NK_ROWS.w - NK_ROWS.y)));
+        return vec2<f32>(0.0, sd);
+    }
+    var cols = array<f32, 7>(-pi_r, -NK_COLS.y, -NK_COLS.x, 0.0, NK_COLS.x, NK_COLS.y, pi_r);
+    var k = 5;
+    for (var i = 0; i < 6; i++) {
+        if u < cols[i + 1] {
+            k = i;
+            break;
+        }
+    }
+    var j = 2;
+    if y < NK_ROWS.y {
+        j = 0;
+    } else if y < NK_ROWS.z {
+        j = 1;
+    }
+    var rows = array<f32, 4>(NK_ROWS.x, NK_ROWS.y, NK_ROWS.z, NK_ROWS.w);
+    let u0 = cols[k];
+    let u1 = cols[k + 1];
+    let y0 = rows[j];
+    let y1 = rows[j + 1];
+    let sd = nk_panel_sd(vec2<f32>(u, y), vec2<f32>(0.5 * (u0 + u1), 0.5 * (y0 + y1)),
+        vec2<f32>(0.5 * (u1 - u0), 0.5 * (y1 - y0)));
+    let white = (j == 1 && k >= 1 && k <= 4) || (j == 0 && k == 5);
+    return vec2<f32>(select(0.0, 1.0, white), sd);
+}
+
+fn newkit_jersey(p: vec3<f32>, region: u32, three: bool, aa: f32) -> vec4<f32> {
+    let black = vec4<f32>(1.0, 0.0, 0.0, 0.0);
+    let white = vec4<f32>(0.0, 0.0, 1.0, 0.0);
+    let pink = select(white, vec4<f32>(0.0, 0.0, 0.0, 1.0), three);
+    if region == 0u {
+        let u = nk_around(p);
+        let pn = nk_panel(u, p.y);
+        let inside = over(-pn.y, 0.0, aa);
+        let core = over(-pn.y, NK_CELL_STROKE, aa);
+        var w = mix(black, white, select(inside - core, inside, pn.x > 0.5));
+        if p.z < NK_AXIS_Z {
+            let d = nk_word(vec2<f32>(NK_DOT_CENTRE - u / NK_CHEST_XH, (p.y - NK_CHEST_BASE) / NK_CHEST_XH), 0u, 6u) * NK_CHEST_XH;
+            w = mix(w, white, over(-d, -NK_OUTLINE, aa));
+            w = mix(w, black, over(-d, 0.0, aa));
+        } else {
+            let s = nk_behind(p);
+            let newk = nk_word(vec2<f32>((NK_BACK_TOP - p.y) / NK_BACK_XH, (s - NK_BACK_BASE) / NK_BACK_XH), 0u, 3u) * NK_BACK_XH;
+            let it = nk_word(vec2<f32>(2.96 + (NK_BACK_IT_TOP - p.y) / NK_BACK_IT_XH, (s - NK_BACK_IT_BASE) / NK_BACK_IT_XH), 4u, 6u) * NK_BACK_IT_XH;
+            w = mix(w, pink, over(-min(newk, it), 0.0, aa));
+        }
+        return mix(w, white, over(p.y, NK_COLLAR, aa) * within(p.x, NK_COLLAR_X, aa));
+    }
+    if region == 1u {
+        let line = within(p.y - NK_SLEEVE_LINE, NK_SLEEVE_LINE_HALF, aa);
+        var w = mix(black, white, line);
+        if p.x > 0.0 {
+            // The right sleeve: white with a black line.
+            w = mix(white, black, line);
+        }
+        return mix(w, black, 1.0 - over(p.y, NK_CUFF, aa));
+    }
+    return black;
+}
+
+// Round the thigh from its outside (m): + to the back on the left leg,
+// + to the front on the right one.
+fn nk_round_thigh(p: vec3<f32>) -> f32 {
+    let dx = abs(p.x) - NK_THIGH_AXIS.x;
+    let dz = p.z - NK_THIGH_AXIS.y;
+    return atan2(select(-dz, dz, p.x < 0.0), dx) * NK_THIGH_R;
+}
+
+fn newkit_shorts(p: vec3<f32>, region: u32, three: bool, aa: f32) -> vec4<f32> {
+    let black = vec4<f32>(1.0, 0.0, 0.0, 0.0);
+    let white = vec4<f32>(0.0, 0.0, 1.0, 0.0);
+    if region != 2u {
+        return black;
+    }
+    let s = nk_round_thigh(p);
+    if p.x < 0.0 {
+        let pink = select(white, vec4<f32>(0.0, 0.0, 0.0, 1.0), three);
+        let d = nk_word(vec2<f32>((p.y - NK_LEG_BOTTOM) / NK_LEG_XH, (NK_LEG_BASE - s) / NK_LEG_XH), 0u, 6u) * NK_LEG_XH;
+        return mix(black, pink, over(-d, 0.0, aa));
+    }
+    var squares = array<f32, 3>(NK_SQUARES.x, NK_SQUARES.y, NK_SQUARES.z);
+    var cov = 0.0;
+    for (var i = 0; i < 3; i++) {
+        let q = abs(vec2<f32>(s, p.y - squares[i])) - NK_SQUARE_HALF + NK_SQUARE_RADIUS;
+        let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - NK_SQUARE_RADIUS;
+        var c = over(-d, 0.0, aa);
+        if i > 0 {
+            c = c - over(-d, NK_SQUARE_STROKE, aa);
+        }
+        cov = max(cov, c);
+    }
+    return mix(black, white, cov);
+}
+
+// The name font (ocw_core::kit::newkit::NAME_GLYPHS): 4 x 7 pixels, bit
+// row * 4 + col.
+fn nk_name_glyph(c: u32) -> u32 {
+    var g = array<u32, 40>(0u, 161085846u, 127498647u, 235999518u, 127506839u, 252801311u, 17920287u, 244961566u, 161085849u, 119677479u, 110659724u, 160772953u, 252776721u, 161062905u, 161340345u, 110729622u, 17922455u, 177576342u, 160790935u, 126378270u, 35791399u, 110729625u, 107583897u, 167745945u, 160851609u, 35792213u, 252781711u, 110861718u, 119677490u, 252856470u, 126380167u, 143194521u, 110659359u, 110719254u, 35792015u, 110717334u, 109635990u, 28672u, 33554432u, 34u);
+    return g[min(c, 39u)];
+}
+
+// Ink of the packed name at (u, v) in its spot (centred, u to the reader's
+// right): ocw_core::kit::newkit::name_ink.
+fn nk_name_ink(name: vec4<u32>, u: f32, v: f32, h_max: f32, w_max: f32) -> f32 {
+    let n = min(name.w, NK_NAME_MAX);
+    if n == 0u {
+        return 0.0;
+    }
+    let px = min(h_max / 7.0, w_max / f32(6u * n - 2u));
+    let h = px * 7.0;
+    let width = f32(6u * n - 2u) * px;
+    let gx = (u + 0.5 * width) / px;
+    let gy = (0.5 * h - v) / px;
+    if gx < 0.0 || gy < 0.0 || gx >= width / px || gy >= 7.0 {
+        return 0.0;
+    }
+    let cell = u32(floor(gx / 6.0));
+    let col = u32(floor(gx)) - cell * 6u;
+    if col >= 4u || cell >= n {
+        return 0.0;
+    }
+    var words = array<u32, 3>(name.x, name.y, name.z);
+    let code = (words[cell / 5u] >> (6u * (cell % 5u))) & 63u;
+    let row = u32(floor(gy));
+    return f32((nk_name_glyph(code) >> (row * 4u + col)) & 1u);
+}
+
+// Where the name sits at p (xy: the spot's coordinates, z: the largest
+// letter height, 0 = none; w: the widest line).
+fn nk_name_spot(garment: u32, region: u32, p: vec3<f32>) -> vec4<f32> {
+    if garment == 1u && region == 0u && p.z < NK_AXIS_Z && (p.y < NK_COLLAR || abs(p.x) >= NK_COLLAR_X) {
+        let c = NK_CHEST_NAME;
+        return vec4<f32>(c.x - nk_around(p), p.y - c.y, c.z, c.w);
+    }
+    if garment == 1u && region == 1u && p.x < 0.0 {
+        let dx = -(p.x + NK_SLEEVE_AXIS.x);
+        let dz = p.z - NK_SLEEVE_AXIS.y;
+        if dx > 0.0 {
+            let c = NK_SLEEVE_NAME;
+            return vec4<f32>(atan2(dz, dx) * NK_SLEEVE_R - c.x, p.y - c.y, c.z, c.w);
+        }
+    }
+    if garment == 2u && region == 0u && p.z > NK_SHORTS_BACK_Z {
+        let c = NK_SHORTS_NAME;
+        return vec4<f32>(p.x - c.x, p.y - c.y, c.z, c.w);
+    }
+    return vec4<f32>(0.0);
+}
+
+// The name's ink, box-filtered over the pixel (four taps).
+fn nk_name_cover(name: vec4<u32>, s: vec4<f32>, aa: f32) -> f32 {
+    if s.z <= 0.0 {
+        return 0.0;
+    }
+    let o = 0.5 * aa;
+    return 0.25 * (nk_name_ink(name, s.x - o, s.y - o, s.z, s.w) + nk_name_ink(name, s.x + o, s.y - o, s.z, s.w)
+        + nk_name_ink(name, s.x - o, s.y + o, s.z, s.w) + nk_name_ink(name, s.x + o, s.y + o, s.z, s.w));
 }
 
 // The rest-to-world frame of the surface from screen derivatives: the
@@ -669,6 +1003,13 @@ fn fragment(
         rough = 0.85;
         dhx = 0.0;
         dhy = 0.0;
+    }
+
+    // The rider's own name on the newk.it kit: the left chest and sleeve,
+    // the shorts' back, in the third colour (pink).
+    if pattern == 6u && look.name.w > 0u && (garment == 1u || garment == 2u) {
+        let ink = nk_name_cover(look.name, nk_name_spot(garment, region, p), aa);
+        albedo = mix(albedo, look.third.rgb, ink);
     }
 
     if dhx != 0.0 || dhy != 0.0 {
