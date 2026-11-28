@@ -43,6 +43,7 @@ pub mod plan;
 pub mod plantings;
 pub mod recipe;
 pub mod region;
+pub mod road_clear;
 pub mod road_condition;
 pub mod road_dress;
 pub mod road_feel;

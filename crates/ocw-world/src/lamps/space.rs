@@ -572,7 +572,7 @@ impl<'a> LampSpace<'a> {
 }
 
 /// The edge's road heights at its points (empty without a profile).
-fn edge_heights(e: &crate::graph::Edge) -> Vec<f64> {
+pub(crate) fn edge_heights(e: &crate::graph::Edge) -> Vec<f64> {
     use crate::graph::PROFILE_STEP_M;
     let p = &e.profile;
     if p.is_empty() {

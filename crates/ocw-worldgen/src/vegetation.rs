@@ -500,6 +500,10 @@ pub struct VegetationStats {
     pub cells: BTreeMap<FieldCrop, usize>,
     pub trees: BTreeMap<Species, usize>,
     pub tree_rows: usize,
+    /// Mapped trees left out because they stand on a road (the rule of
+    /// 2026-11-28, `ocw_world::road_clear`: OSM maps street trees at the
+    /// kerb, tree rows across roads).
+    pub on_roads: usize,
 }
 
 impl VegetationStats {
@@ -518,14 +522,15 @@ impl VegetationStats {
             .map(|(s, n)| format!("{n} {}", s.name()))
             .collect();
         format!(
-            "{} fields and plantations ({} with an OSM crop, {} cells from a crop map): {}; {} mapped trees ({} tree rows): {}",
+            "{} fields and plantations ({} with an OSM crop, {} cells from a crop map): {}; {} mapped trees ({} tree rows): {}; {} on roads left out",
             self.fields,
             self.tagged,
             self.measured_cells,
             crops.join(", "),
             self.trees.values().sum::<usize>(),
             self.tree_rows,
-            trees.join(", ")
+            trees.join(", "),
+            self.on_roads
         )
     }
 }
@@ -724,6 +729,29 @@ pub fn build_vegetation(
                 .total_cmp(&b.pos[0])
                 .then(a.pos[1].total_cmp(&b.pos[1]))
         });
+    }
+    // No tree on a road (the rule of 2026-11-28): the same test as the
+    // placement's ([`ocw_world::plantings::mapped_trees`]), so the section
+    // holds only the trees that are drawn.
+    for (key, t) in tiles.iter_mut() {
+        if t.trees.is_empty() {
+            continue;
+        }
+        let roads = ocw_world::road_clear::RoadSpace::for_tile(pkg, *key);
+        let gt = ocw_world::flora::GridTrees::of_tile(pkg, *key);
+        let before = t.trees.len();
+        t.trees.retain(|tr| {
+            let Some(y) = pkg.height(f64::from(tr.pos[0]), f64::from(tr.pos[1])) else {
+                return true;
+            };
+            let foot = [tr.pos[0], y as f32 - 0.3, tr.pos[1]];
+            let (sp, scale) = gt.mapped(pkg, foot, tr);
+            roads.clear(
+                foot.map(f64::from),
+                &ocw_world::road_clear::PlantShape::of(sp, scale),
+            )
+        });
+        st.on_roads += before - t.trees.len();
     }
     tiles.retain(|_, t| !t.is_empty());
     (

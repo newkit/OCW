@@ -37,6 +37,9 @@ for p in "${pkgs[@]}"; do
   grep -E "^clean: terrain smoothed" "$OUT/$p.smooth.log" || tail -3 "$OUT/$p.smooth.log"
   "$WB" street-lamps --world "$OUT/$p.ocwpkg" --out "$OUT/$p.ocwpkg" "${pbf[@]}" > "$OUT/$p.lamps.log" 2>&1
   grep -E "street lamps|mapped street lamps" "$OUT/$p.lamps.log" || tail -3 "$OUT/$p.lamps.log"
+  # No plant on a road (the world-building rule of 2026-11-28): fails the
+  # build with the first cases.
+  "$WB" plants-check --world "$OUT/$p.ocwpkg" --list 10
   end=$(date +%s.%N)
   echo "build $(echo "$end - $start" | bc) s"
   ls -l "$D/$p.ocwpkg" "$OUT/$p.ocwpkg" | awk '{print $5, $9}'

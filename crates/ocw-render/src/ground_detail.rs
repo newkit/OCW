@@ -725,6 +725,10 @@ pub struct Ctx<'a> {
     /// Whether a point (package x, z) belongs to this member of the world
     /// set.
     pub keep: &'a dyn Fn(f64, f64) -> bool,
+    /// Every road surface near the tile (`ocw_world::road_clear`): no bit
+    /// but the edge gravel lies on another road's carriageway or on a
+    /// junction surface either (`None`: only the strips' own test).
+    pub roads: Option<&'a ocw_world::road_clear::RoadSpace>,
 }
 
 /// How much is drawn.
@@ -803,6 +807,7 @@ pub fn bits_in(ctx: &Ctx, rect: [f64; 4], p: &Params) -> Vec<Bit> {
         return out;
     }
     let inside = |x: f64, z: f64| x >= rect[0] && x < rect[2] && z >= rect[1] && z < rect[3];
+    let on_surface = ocw_world::road_clear::PlantShape::hedge(0.5, 0.0);
     let overlaps = |lo: [f64; 2], hi: [f64; 2], m: f64| {
         lo[0] - m < rect[2] && hi[0] + m > rect[0] && lo[1] - m < rect[3] && hi[1] + m > rect[1]
     };
@@ -953,6 +958,16 @@ pub fn bits_in(ctx: &Ctx, rect: [f64; 4], p: &Params) -> Vec<Bit> {
                             let on_road = road_y(&segs, x, z);
                             let on_edge = kind == Kind::Gravel && dist < 0.0;
                             if on_road.is_some() && !on_edge {
+                                continue;
+                            }
+                            // Nor on any other road's carriageway or a
+                            // junction surface (the rule of 2026-11-28).
+                            if !on_edge
+                                && ctx.roads.is_some_and(|r| {
+                                    r.conflict([x, f64::from(q.y), z], &on_surface)
+                                        .is_some_and(|c| c.edge_m < -ocw_world::road_clear::EDGE_M)
+                                })
+                            {
                                 continue;
                             }
                             if ctx.solid.top_at(x, z).is_some() {
@@ -1450,6 +1465,8 @@ pub struct TileGroundDetail {
     pub solid: SolidFootprints,
     pub season: Option<Arc<SeasonDay>>,
     pub chunks: Vec<DetailChunk>,
+    /// The road surfaces round the tile (the rule of 2026-11-28).
+    pub roads: Option<Arc<ocw_world::road_clear::RoadSpace>>,
 }
 
 impl Default for TileGroundDetail {
@@ -1460,6 +1477,7 @@ impl Default for TileGroundDetail {
             solid: SolidFootprints::default(),
             season: None,
             chunks: Vec::new(),
+            roads: None,
         }
     }
 }
@@ -1578,6 +1596,9 @@ pub fn tile_detail(
         solid: solid.clone(),
         season,
         chunks,
+        roads: Some(Arc::new(ocw_world::road_clear::RoadSpace::for_tile(
+            pkg, key,
+        ))),
     }
 }
 
@@ -1629,6 +1650,7 @@ impl DetailSource {
             solid: &self.tile.solid,
             season: self.tile.season.as_deref(),
             keep: &keep,
+            roads: self.tile.roads.as_deref(),
         };
         bits_in(&ctx, rect, p)
     }

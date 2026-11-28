@@ -60,6 +60,10 @@ The Mac's login shell is **zsh**: commands sent with `remote.sh MACHINE ssh` mus
 
 **Model files are in Git LFS** (`artwork/3dmodels/`, Phase 15 M1, v4.24): this checkout downloads them (`git config --local filter.lfs.smudge "git-lfs smudge -- %f"` and `filter.lfs.process "git-lfs filter-process"`; the user's global config skips LFS for OCW-ART). **A new agent worktree runs `git lfs pull` before its first remote build** – otherwise `remote.sh` copies pointer files and the ocw-assets tests and the browser app fail (`head -c 4 artwork/3dmodels/riders/rider-body.glb` must print `glTF`). Start OCW agents only while the shell is in this checkout (an isolated worktree is made from the current directory's repository). After merging or abandoning an agent branch, run `scripts/remote-gc.sh --branch <branch>` (`make remote-gc-branch BRANCH=…`): it deletes that checkout's `target/` on every reachable build machine (the dashboard's janitor cleans up the rest when a disk fills up). Commit only the files you changed (`git commit FILES`, never `-a`) while agents work in the main checkout. Before committing a merge, check that no conflict markers are left (`git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- SPECIFICATION.md CLAUDE.md README.md` and the code) – a spec with leftover markers was pushed once (2026-11-14).
 
+## World building rules
+
+- **No tree or plant ever stands on a road surface in any world – the build fails if one does** (user, 2026-11-28: "tree on road – this should never happen, in no world"): every plant source places through `ocw_world::road_clear` (trunk off the surface, no crown low over the lane), `world-builder plants-check` (also run by `check`, `verify`, `publish` and the build scripts) refuses a package with any plant on a road, and the renderer skips (debug: asserts) any that slips through (spec 4.6.1 *Rule: no plant on a road*).
+
 ## Code map
 
 - `apps/bot` (`ocw-bot`): Bevy-free headless bot clients (`NetClient`, `Predictor`, pacing with `--follow`) and `ocw-bot verdict` for the multiplayer test (`scripts/test-multiplayer.sh`).

@@ -109,6 +109,7 @@ fn bits_with(
         solid,
         season,
         keep: &keep,
+        roads: None,
     };
     tile_bits(&ctx, p)
 }
