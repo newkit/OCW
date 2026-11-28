@@ -117,6 +117,8 @@ pub struct TunnelMeasure {
     pub worst_at: [f64; 2],
     /// The tunnel's direction there (x, z unit).
     pub worst_dir: [f64; 2],
+    /// The road's height there (m; for cameras looking at it).
+    pub worst_y: f64,
     /// The least and the median cover over the shell along the tunnel (m).
     pub min_cover_m: f64,
     pub median_cover_m: f64,
@@ -163,7 +165,8 @@ pub fn measure(pkg: &WorldPackage, tags: &TunnelTags) -> Vec<TunnelMeasure> {
         let covered: Vec<bool> = samples.iter().map(|x| x.centre > 0.5).collect();
         let covered_m = covered.iter().filter(|c| **c).count() as f64 * step;
         let mut old_exposed_m = 0.0;
-        let (mut worst_m, mut worst_at, mut worst_dir) = (0.0, samples[0].p, samples[0].dir);
+        let (mut worst_m, mut worst_at, mut worst_dir, mut worst_y) =
+            (0.0, samples[0].p, samples[0].dir, samples[0].road_y);
         // Runs of covered samples, 8 m inside each end left out.
         let mut i = 0;
         while i < samples.len() {
@@ -187,6 +190,7 @@ pub fn measure(pkg: &WorldPackage, tags: &TunnelTags) -> Vec<TunnelMeasure> {
                         worst_m = ex;
                         worst_at = x.p;
                         worst_dir = x.dir;
+                        worst_y = x.road_y;
                     }
                 }
             }
@@ -208,6 +212,7 @@ pub fn measure(pkg: &WorldPackage, tags: &TunnelTags) -> Vec<TunnelMeasure> {
             worst_m,
             worst_at,
             worst_dir,
+            worst_y,
             min_cover_m: covers[0],
             median_cover_m: covers[covers.len() / 2],
             floating_m,
@@ -672,7 +677,7 @@ pub fn format_report(
             .collect();
         let _ = writeln!(
             s,
-            "tunnel way {} {:?} {}: {:.0} m, old tube {:.0} m exposed {:.0} m worst {:.1} m at {} dir {:.2},{:.2}; cover min {:.1} median {:.1} m; floating {:.0} m; [{}]; still exposed {:.0} m ({:.1} m)",
+            "tunnel way {} {:?} {}: {:.0} m, old tube {:.0} m exposed {:.0} m worst {:.1} m at {} road y {:.0} dir {:.2},{:.2}; cover min {:.1} median {:.1} m; floating {:.0} m; [{}]; still exposed {:.0} m ({:.1} m)",
             t.osm_way,
             t.name.as_deref().unwrap_or(""),
             t.tag,
@@ -681,6 +686,7 @@ pub fn format_report(
             t.old_exposed_m,
             t.worst_m,
             ll(t.worst_at),
+            t.worst_y,
             t.worst_dir[0],
             t.worst_dir[1],
             t.min_cover_m,
