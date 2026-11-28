@@ -710,10 +710,20 @@ fn retention(p: &mut Parts, skull: Vec3) {
 }
 
 /// The straps: in front of and behind each ear down to the splitter
-/// under it, on to the buckle under the chin – a flat buckle in front of
-/// the neck, behind and under every beard (bug 2026-11-25: the old, 14 mm
-/// deep buckle sat 7 mm in the neck).
+/// under it, on along the jaw's underside to the buckle under the chin.
+/// From the splitter on they follow the face's skin as drawn at
+/// [`STRAP_OUT`] (v3, the user's decision of 2026-11-28: the jaw's
+/// underside slopes into the throat, so the straps are refitted to it;
+/// before they were fixed points fitted to the level jaw), over every
+/// beard – pressed to at most `faces::UNDER_STRAPS` there – and the buckle
+/// lies flat on the skin under the chin.
 fn straps(p: &mut Parts, skull: Vec3) {
+    let f = crate::faces::Face::get();
+    let shift = skull - f.skull();
+    let on = |deg: f32, h: f32, out: f32| {
+        let (at, d) = f.surface(deg.to_radians(), h);
+        (at + shift + d * out, d)
+    };
     for s in [-1.0f32, 1.0] {
         let v = |x: f32, y: f32, z: f32| skull + Vec3::new(s * x, y, z);
         let split = v(0.077, -0.056, -0.004);
@@ -721,19 +731,38 @@ fn straps(p: &mut Parts, skull: Vec3) {
             .tube(v(0.085, 0.014, -0.04), split, 0.0035, 0.0035, 3, false);
         p.slot(DETAIL)
             .tube(v(0.083, -0.01, 0.05), split, 0.0035, 0.0035, 3, false);
-        p.slot(DETAIL).sweep(
-            &[split, v(0.062, -0.086, -0.026), v(0.018, -0.11, -0.043)],
-            &[0.0035; 3],
-            3,
-            false,
+        let mut path = vec![split];
+        path.extend(
+            STRAP_PATH
+                .iter()
+                .map(|(deg, h)| on(s * deg, *h, STRAP_OUT).0),
         );
+        p.slot(DETAIL)
+            .sweep(&path, &vec![0.0035; path.len()], 3, false);
     }
-    p.slot(DETAIL).cuboid(
-        skull + Vec3::new(0.0, -0.112, -0.043),
-        Vec3::new(0.021, 0.004, 0.0028),
-        Quat::IDENTITY,
-    );
+    let (at, d) = on(0.0, BUCKLE_H, BUCKLE_OUT);
+    // Flat on the skin: its thin side along the skin's normal.
+    let rot = Quat::from_rotation_arc(Vec3::NEG_Z, d);
+    p.slot(DETAIL)
+        .cuboid(at, Vec3::new(0.021, 0.004, 0.0028), rot);
 }
+
+/// The straps' path from the splitter to the buckle: (the face grid's
+/// column angle in degrees, its row height; `faces::Face::surface`) – from
+/// under the ear along the jaw's underside to beside the buckle.
+pub const STRAP_PATH: [(f32, f32); 4] = [
+    (74.0, -0.084),
+    (61.0, -0.092),
+    (45.0, -0.101),
+    (17.0, -0.105),
+];
+/// The straps' and the buckle's centre over the skin (m): a beard pressed
+/// flat under them, the strap's radius and a little air.
+pub const STRAP_OUT: f32 = crate::faces::UNDER_STRAPS + 0.0035 + 0.0008;
+/// Where the buckle sits (the face grid's row height at its middle) and
+/// how far its centre lies over the skin.
+pub const BUCKLE_H: f32 = -0.104;
+pub const BUCKLE_OUT: f32 = 0.0028 + 0.0012;
 
 /// Adds helmet `h` on a head whose skull is centred at `skull` (rest-pose
 /// model coordinates).
@@ -905,52 +934,59 @@ mod tests {
         assert!(clips.is_empty(), "{clips:#?}");
     }
 
-    /// The buckle sits under the chin (bug 2026-11-25): for every helmet
-    /// the straps' lowest part is the buckle, centred, its top 2 – 18 mm
-    /// under the jaw right above it and in front of the neck.
+    /// The buckle sits under the chin (bug 2026-11-25; v3 2026-11-28: on
+    /// the sloped jaw): for every helmet the buckle is centred, lies on
+    /// the skin under the chin – every corner 0.3 – 15 mm out of it – in
+    /// front of the throat; and the straps from the splitters to it follow
+    /// the skin: every vertex of their lower part 0.5 – 10 mm out of it.
     #[test]
     fn the_buckle_sits_under_the_chin() {
         let m = rider::build(Detail::High);
         let skull = rider::skull_centre();
-        let (c, r, tilt) = rider::face::JAW;
-        let rot = Quat::from_rotation_x(tilt);
-        // The jaw's ellipsoid, sampled.
-        let jaw: Vec<Vec3> = (0..=64)
-            .flat_map(|i| (0..64).map(move |j| (i, j)))
-            .map(|(i, j)| {
-                let (a, b) = (
-                    std::f32::consts::PI * i as f32 / 64.0,
-                    std::f32::consts::TAU * j as f32 / 64.0,
-                );
-                skull
-                    + Vec3::from(c)
-                    + rot
-                        * (Vec3::from(r)
-                            * Vec3::new(a.sin() * b.cos(), -a.cos(), a.sin() * b.sin()))
-            })
-            .collect();
+        let f = crate::faces::Face::get();
+        assert!(skull.distance(f.skull()) < 1e-6);
         for h in Helmet::ALL {
             let pts: Vec<Vec3> = node_tris(&m, h.node(), Some(DETAIL))
                 .into_iter()
                 .flatten()
                 .collect();
-            let low = pts.iter().map(|p| p.y).fold(f32::MAX, f32::min);
-            // The buckle is 8 mm high.
-            let buckle: Vec<Vec3> = pts.into_iter().filter(|p| p.y < low + 0.0081).collect();
-            let top = buckle.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+            // The buckle: the points of the cuboid round its centre.
+            let (at, d) = f.surface(0.0, BUCKLE_H);
+            let centre = at + d * BUCKLE_OUT;
+            let buckle: Vec<Vec3> = pts
+                .iter()
+                .copied()
+                .filter(|p| p.distance(centre) < 0.0225)
+                .filter(|p| p.x.abs() < 0.0211 + 1e-4)
+                .collect();
+            assert!(buckle.len() >= 8, "{h:?}");
             let mid = buckle.iter().sum::<Vec3>() / buckle.len() as f32;
             assert!(mid.x.abs() < 1e-3, "{h:?}: {mid}");
-            // The jaw's lowest point over the buckle.
-            let above = jaw
+            for p in &buckle {
+                let over = f.over(*p);
+                assert!(
+                    (0.0003..0.015).contains(&over),
+                    "{h:?}: buckle {over} at {}",
+                    *p - skull
+                );
+            }
+            // Under the chin, in front of the throat.
+            let q = mid - skull;
+            assert!(q.y < -0.09 && q.z < -0.05, "{h:?}: {q}");
+            // The straps' lower part (below the splitters, in front of
+            // the ears) on the skin.
+            for p in pts
                 .iter()
-                .filter(|p| (p.x - mid.x).abs() < 0.02 && (p.z - mid.z).abs() < 0.007)
-                .map(|p| p.y)
-                .fold(f32::MAX, f32::min);
-            let gap = above - top;
-            assert!((0.002..0.018).contains(&gap), "{h:?}: {gap}");
-            // In front of the neck (its front at the buckle's height is
-            // about 4 cm in front of the skull's centre).
-            assert!(mid.z - skull.z < -0.04, "{h:?}: {}", mid - skull);
+                .filter(|p| p.y - skull.y < -0.07 && p.z - skull.z < -0.01)
+                .filter(|p| !buckle.contains(p))
+            {
+                let over = f.over(*p);
+                assert!(
+                    (0.0005..0.010).contains(&over),
+                    "{h:?}: strap {over} at {}",
+                    *p - skull
+                );
+            }
         }
     }
 
@@ -973,7 +1009,8 @@ mod tests {
                 opt::FACE_JAW,
                 HEAD,
             ]) {
-                let hits = node_tris(&m, item, None)
+                let skull = rider::skull_centre();
+                let hits: Vec<Vec3> = node_tris(&m, item, None)
                     .iter()
                     .flat_map(|t| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])])
                     .filter(|(a, b)| {
@@ -981,9 +1018,10 @@ mod tests {
                             crossing(*a, *b, s).is_some_and(|k| (1e-4..1.0 - 1e-4).contains(&k))
                         })
                     })
-                    .count();
-                if hits > 0 {
-                    clips.push(format!("{h:?} x {item}: {hits} edges"));
+                    .map(|(a, _)| a - skull)
+                    .collect();
+                if let Some(at) = hits.first() {
+                    clips.push(format!("{h:?} x {item}: {} edges, at {at}", hits.len()));
                 }
             }
         }

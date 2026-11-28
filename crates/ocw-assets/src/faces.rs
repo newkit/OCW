@@ -143,12 +143,16 @@ fn forms(s: Vec3) -> Vec<Blob> {
         0.020,
         false,
     );
-    // The neck under the jaw (so the jaw's underside runs into it).
+    // The neck under the jaw, leaning forward at its top like the neck
+    // as drawn, so the jaw's underside slopes down into the throat (v3,
+    // the user's decision of 2026-11-28: it ran level back to the neck and
+    // the chin read as a box from the side; the helmets' straps follow
+    // the new underside).
     add(
-        [0.0, -0.115, -0.002],
+        [0.0, -0.115, -0.006],
         [0.043, 0.07, 0.043],
-        0.0,
-        0.008,
+        -0.30,
+        0.014,
         false,
     );
     // The brow ridge and the cheekbones.
@@ -215,10 +219,11 @@ fn forms(s: Vec3) -> Vec<Blob> {
 /// from the axis at [`PIVOT`] tilted down by `(PIVOT − h) / TURN` rad –
 /// round the chin and under the jaw to the neck. Denser round the chin's
 /// lower edge (v2: the corner from the chin's front to its underside read
-/// as a box from the side).
+/// as a box from the side); the last rows reach down the throat (v3: the
+/// jaw's underside slopes into it, the user's decision of 2026-11-28).
 const ROWS: [f32; 24] = [
     0.052, 0.043, 0.035, 0.029, 0.023, 0.017, 0.011, 0.005, -0.001, -0.007, -0.014, -0.021, -0.028,
-    -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.087, -0.095, -0.105, -0.118,
+    -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.087, -0.096, -0.110, -0.135,
 ];
 /// The grid's columns: the angle round the head's axis (degrees, 0 the
 /// middle of the face; mirrored).
@@ -445,6 +450,14 @@ impl Face {
     /// How far `p` lies out of the face's surface, along the grid's ray
     /// through it (m; negative: under the skin).
     pub fn over(&self, p: Vec3) -> f32 {
+        let (a, h, reach) = self.param(p);
+        let on = self.surface(a, h).0;
+        reach - (on - self.ray(a, h).0).length()
+    }
+
+    /// The grid's column angle `a`, row height `h` of the ray through `p`
+    /// and how far along it `p` is.
+    pub fn param(&self, p: Vec3) -> (f32, f32, f32) {
         let q = p - self.skull - Vec3::new(0.0, 0.0, AXIS_Z);
         let flat = (q.x * q.x + q.z * q.z).sqrt();
         let below = q.y - PIVOT;
@@ -456,9 +469,7 @@ impl Face {
                 (flat * flat + below * below).sqrt(),
             )
         };
-        let a = q.x.atan2(-q.z);
-        let on = self.surface(a, h).0;
-        reach - (on - self.ray(a, h).0).length()
+        (q.x.atan2(-q.z), h, reach)
     }
 }
 
@@ -1128,13 +1139,13 @@ pub const BARE_OVER: f32 = 0.00012;
 /// beside the face, where they come down in front of the ears, and under
 /// the jaw, where they meet at the buckle, a beard is at most this long
 /// (m) – pressed flat under them.
-pub const UNDER_STRAPS: f32 = 0.0025;
+pub const UNDER_STRAPS: f32 = 0.0015;
 
 /// The share of its length a beard keeps at column angle `a`, row `h`:
 /// 1 on the front of the face, 0 where the straps lie.
 fn off_straps(a: f32, h: f32) -> f32 {
     (1.0 - smooth((a.abs() - 28f32.to_radians()) / 22f32.to_radians()))
-        * smooth((h + 0.104) / 0.012)
+        * smooth((h + 0.094) / 0.010)
 }
 
 /// The beards of `ocw_core::character::BEARDS` after "None", in
