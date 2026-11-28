@@ -2069,7 +2069,8 @@ mod tests {
             ocw_assets::livery::FRAME_VARIANT
         );
         // Another aero frame keeps the profile's name and no paint.
-        w.buy_bike(cat(), "Ann", "frame.road-aero.top", &[]).unwrap();
+        w.buy_bike(cat(), "Ann", "frame.road-aero.top", &[])
+            .unwrap();
         let g = w.get("Ann").unwrap();
         let other = g.bike("road-aero-3").unwrap();
         assert_eq!(other.paint(), None);

@@ -418,7 +418,11 @@ pub fn surface(
         (lin(first), lin(kit.second), lin(kit.third))
     } else if kind == GearKind::Flake {
         // The fade's colour and where it runs (`gear.wesl`, KIND_FLAKE).
-        (lin(Color::srgb_u8(0x5E, 0x0F, 0x4C)), FLAKE_FADE, Vec4::ZERO)
+        (
+            lin(Color::srgb_u8(0x5E, 0x0F, 0x4C)),
+            FLAKE_FADE,
+            Vec4::ZERO,
+        )
     } else {
         (Vec4::ZERO, Vec4::ZERO, Vec4::ZERO)
     };
@@ -725,7 +729,11 @@ mod tests {
         for s in ["livery_pink", "livery_light", "livery_ink", "livery_white"] {
             assert_eq!(kind_of(s, "bike"), GearKind::Paint, "{s}");
         }
-        assert_eq!(kind_of("livery", "bike"), GearKind::Plain, "the bus's livery");
+        assert_eq!(
+            kind_of("livery", "bike"),
+            GearKind::Plain,
+            "the bus's livery"
+        );
         assert_eq!(kind_of("anodised_green", "wheel_front"), GearKind::Metal);
         assert_eq!(kind_of("bar_tape_pink", "handlebar"), GearKind::Grip);
         assert_eq!(kind_of("bottle_black", "bike"), GearKind::Plastic);

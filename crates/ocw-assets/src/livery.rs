@@ -201,8 +201,7 @@ impl Flat {
     fn add(&mut self, pts: &[Vec2], tris: &[[u32; 3]]) {
         let base = self.pts.len() as u32;
         self.pts.extend_from_slice(pts);
-        self.tris
-            .extend(tris.iter().map(|t| t.map(|i| base + i)));
+        self.tris.extend(tris.iter().map(|t| t.map(|i| base + i)));
     }
 
     pub fn triangles(&self) -> usize {
@@ -825,7 +824,11 @@ mod tests {
     fn strokes_and_splits_keep_the_area() {
         let mut f = Flat::default();
         f.stroke(
-            &[Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0)],
+            &[
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1.0, 0.0),
+                Vec2::new(1.0, 1.0),
+            ],
             0.1,
             Ends::Square,
             0.25,
@@ -889,7 +892,10 @@ mod tests {
             with_paint(none.clone(), Some(ocw_core::bike::NEWKIT_LIVERY)),
             vec![PAINT_VARIANT.to_string()]
         );
-        assert_eq!(with_paint(none.clone(), Some(ocw_core::Rgb(0xFF0000))), none);
+        assert_eq!(
+            with_paint(none.clone(), Some(ocw_core::Rgb(0xFF0000))),
+            none
+        );
         let frame = vec![FRAME_VARIANT.to_string()];
         assert_eq!(
             with_paint(frame.clone(), Some(ocw_core::Rgb(0xFF0000))),

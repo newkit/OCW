@@ -896,14 +896,7 @@ fn wheel(
         crate::livery::green_hub(p, hub, d.disc_brakes);
     }
     if kit.rim_livery && matches!(kind, Wheel::Spoked(_)) && d.rim_depth >= 0.04 {
-        crate::livery::rim(
-            p,
-            hub,
-            d.rim_width * 0.5,
-            rim_in,
-            r - d.tyre - 0.002,
-            rear,
-        );
+        crate::livery::rim(p, hub, d.rim_width * 0.5, rim_in, r - d.tyre - 0.002, rear);
     }
 }
 
@@ -2424,7 +2417,11 @@ mod tests {
         let m = build_with(ProfileId::RoadAero, &r, &low, &[FRAME_VARIANT]);
         let rig = BikeRig::from_model(&m).unwrap();
         assert!(rig.saddle.distance(aero.saddle) < 1e-6);
-        for (a, b) in [(rig.hoods, aero.hoods), (rig.tops, aero.tops), (rig.drops, aero.drops)] {
+        for (a, b) in [
+            (rig.hoods, aero.hoods),
+            (rig.tops, aero.tops),
+            (rig.drops, aero.drops),
+        ] {
             assert!(a[0].distance(b[0]) < 1e-6 && a[1].distance(b[1]) < 1e-6);
         }
         assert!(rig.crank.distance(aero.crank) < 1e-6);
@@ -2433,7 +2430,17 @@ mod tests {
             (aero.wheel_radius, aero.wheelbase, aero.crank_length)
         );
         let frame = slot_names(&m, ROOT);
-        for s in [FLAKE, PINK, LIGHT, YELLOW, BLUE, GREEN, WHITE, INK, BOTTLE_BLACK] {
+        for s in [
+            FLAKE,
+            PINK,
+            LIGHT,
+            YELLOW,
+            BLUE,
+            GREEN,
+            WHITE,
+            INK,
+            BOTTLE_BLACK,
+        ] {
             assert!(frame.iter().any(|n| n == s), "frame: {s} in {frame:?}");
         }
         assert!(!frame.iter().any(|n| n == "frame"), "{frame:?}");
@@ -2461,21 +2468,36 @@ mod tests {
     fn the_newkit_livery_paints_road_frames_and_comes_off_with_parts() {
         use crate::livery::*;
         let (r, low) = riders();
-        for p in [ProfileId::Road, ProfileId::RoadAero, ProfileId::RoadClimbing] {
+        for p in [
+            ProfileId::Road,
+            ProfileId::RoadAero,
+            ProfileId::RoadClimbing,
+        ] {
             let stock = BikeRig::from_model(&build(p, &r, &low)).unwrap();
             let m = build_with(p, &r, &low, &[PAINT_VARIANT]);
             let names = slot_names(&m, ROOT);
             for s in [FLAKE, PINK, LIGHT, WHITE, INK] {
                 assert!(names.iter().any(|n| n == s), "{p:?}: {s}");
             }
-            assert!(BikeRig::from_model(&m).unwrap().saddle.distance(stock.saddle) < 1e-6);
+            assert!(
+                BikeRig::from_model(&m)
+                    .unwrap()
+                    .saddle
+                    .distance(stock.saddle)
+                    < 1e-6
+            );
             // Not the frame's stock build: only the paint.
             assert!(!slot_names(&m, HANDLEBAR).iter().any(|n| n == TAPE_PINK));
         }
         // Not on the other bike types.
         let tt = crate::glb::write(&build(ProfileId::TimeTrial, &r, &low));
         assert_eq!(
-            crate::glb::write(&build_with(ProfileId::TimeTrial, &r, &low, &[PAINT_VARIANT])),
+            crate::glb::write(&build_with(
+                ProfileId::TimeTrial,
+                &r,
+                &low,
+                &[PAINT_VARIANT]
+            )),
             tt
         );
         let plain = build_with(ProfileId::RoadAero, &r, &low, &[FRAME_VARIANT, PAINT_PLAIN]);
@@ -2510,7 +2532,12 @@ mod tests {
     #[test]
     fn the_rider_clears_the_newkit_frame() {
         let (r, low) = riders();
-        let m = build_with(ProfileId::RoadAero, &r, &low, &[crate::livery::FRAME_VARIANT]);
+        let m = build_with(
+            ProfileId::RoadAero,
+            &r,
+            &low,
+            &[crate::livery::FRAME_VARIANT],
+        );
         let bike = BikeRig::from_model(&m).unwrap();
         let rider = RiderRig::from_model(&r).unwrap();
         let (d, _) = configure(ProfileId::RoadAero, &[crate::livery::FRAME_VARIANT]);
@@ -2520,12 +2547,19 @@ mod tests {
         let tubes = [
             (cluster, f.head_top, t * 0.9, 1.6f32),
             (f.bb, f.head_bottom, t * 1.15, d.aero),
-            (f.head_bottom, f.head_top, t * 1.3, 1.0 + (d.aero - 1.0) * 0.5),
+            (
+                f.head_bottom,
+                f.head_top,
+                t * 1.3,
+                1.0 + (d.aero - 1.0) * 0.5,
+            ),
         ];
         let fit = Fit::new(&rider, &bike);
         // The rider sits on this bike: the knees pass the top tube close.
         let mut nearest = f32::MAX;
-        let turns = [0.0f32, 1.0].into_iter().flat_map(|dr| (0..8).map(move |k| (dr, k)));
+        let turns = [0.0f32, 1.0]
+            .into_iter()
+            .flat_map(|dr| (0..8).map(move |k| (dr, k)));
         for (drops, k) in turns {
             let params = PoseParams {
                 crank: k as f32 / 8.0 * TAU,
