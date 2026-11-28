@@ -41,6 +41,10 @@ pub struct KeepTiles(pub Arc<KeepFn>);
 pub type KeepFn =
     dyn Fn(&ocw_world::WorldPackage) -> Option<std::collections::BTreeSet<TileKey>> + Send + Sync;
 
+/// The base chunks [`StreamConfig::slice_bytes`] may fetch in slices: the
+/// sections `ocw_world::package::BaseDecoder` reads as they come.
+pub const SLICED_SECTIONS: &[&str] = &["section LUSE", "section SEAS", "section WATR"];
+
 /// The base is fetched and decoded in batches of about this many bytes
 /// (a section larger than this comes alone).
 pub const BASE_BATCH_BYTES: u64 = 8 << 20;
@@ -86,6 +90,14 @@ pub struct StreamConfig {
     pub skip_sections: Vec<[u8; 4]>,
     /// Told of each stage of the base's load (`None`: silent).
     pub log: Option<StageLog>,
+    /// A base chunk of a section the decoder reads as it comes
+    /// ([`SLICED_SECTIONS`]: the land use) larger than this is fetched in
+    /// range requests of this size, hashed as it comes and each slice
+    /// decoded and dropped at once – never held whole – and not cached
+    /// (`None`: whole chunks; spec 14 Phase 10, 10G: Tenerife's land use is
+    /// one 75 MB chunk, and a phone that held it closed the page). The
+    /// browser's phone memory modes.
+    pub slice_bytes: Option<u64>,
 }
 
 impl StreamConfig {
@@ -443,7 +455,62 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
         let mut decode = Some(&mut decode);
         let mut stats = LoadStats::default();
         let mut loaded = 0u64;
-        for batch in base_batches(&file, &wanted, BASE_BATCH_BYTES) {
+        // A chunk to fetch in slices comes alone (between the batches).
+        let sliced = |i: usize| {
+            config.slice_bytes.is_some_and(|s| {
+                file.chunks[i].size > s && SLICED_SECTIONS.contains(&file.chunks[i].name.as_str())
+            })
+        };
+        let batches: Vec<Vec<usize>> = base_batches(&file, &wanted, BASE_BATCH_BYTES)
+            .into_iter()
+            .flat_map(|b| {
+                let mut out: Vec<Vec<usize>> = vec![Vec::new()];
+                for i in b {
+                    if sliced(i) {
+                        out.push(vec![i]);
+                        out.push(Vec::new());
+                    } else {
+                        out.last_mut().expect("one").push(i);
+                    }
+                }
+                out.into_iter().filter(|b| !b.is_empty())
+            })
+            .collect();
+        for batch in batches {
+            if let (Some(slice), [i]) = (config.slice_bytes, batch.as_slice())
+                && sliced(*i)
+                && let Some(d) = decoder.as_mut()
+            {
+                let c = &file.chunks[*i];
+                let st = super::load::stream_chunk(
+                    &self.fetch,
+                    &m,
+                    &file,
+                    &file_url,
+                    *i,
+                    slice,
+                    &mut |part| {
+                        shared.lock().expect("not poisoned").progress.base_done +=
+                            part.len() as u64;
+                        d.push(part.to_vec())
+                    },
+                )
+                .await?;
+                stats.add(&st);
+                loaded += c.size;
+                config.say(&format!(
+                    "base: {} ({:.1} MB) fetched in slices of {:.1} MB, verified and decoded as it came (not cached)",
+                    c.name,
+                    c.size as f64 / 1e6,
+                    slice as f64 / 1e6
+                ));
+                config.say(&format!(
+                    "base: {:.1} of {:.1} MB loaded and decoded",
+                    loaded as f64 / 1e6,
+                    size as f64 / 1e6
+                ));
+                continue;
+            }
             let (chunks, st) = load_chunks_logged(
                 &self.fetch,
                 self.cache.as_ref(),
@@ -596,6 +663,7 @@ mod tests {
             keep: None,
             skip_sections: Vec::new(),
             log: None,
+            slice_bytes: None,
         }
     }
 
@@ -771,6 +839,126 @@ mod tests {
             "{lines:?}"
         );
         assert!(!lines.iter().any(|l| l.contains("TRFC")), "{lines:?}");
+    }
+
+    /// A phone's big land-use chunk (10G: Tenerife's is 75 MB) comes in
+    /// range requests of `slice_bytes`, is verified over its slices and
+    /// indexed as it comes – the same land use as a whole chunk – and is
+    /// not cached; a damaged byte fails the load.
+    #[test]
+    fn a_big_land_use_chunk_comes_in_slices() {
+        use ocw_world::landuse::{LandClass, LandUse, LandUseTile};
+        let base = crate::stream::load::tests::package();
+        let classes = [LandClass::Forest, LandClass::Meadow, LandClass::Water];
+        let landuse = LandUse {
+            cells: 4,
+            tiles: base
+                .tiles
+                .keys()
+                .enumerate()
+                .map(|(i, &k)| {
+                    let t = LandUseTile {
+                        classes: (0..16).map(|j| classes[(i + j) % 3]).collect(),
+                        water: if i == 5 {
+                            vec![(1, 0.0)]
+                        } else {
+                            vec![(2, 4.5)]
+                        },
+                    };
+                    (k, t)
+                })
+                .collect(),
+        };
+        let pkg = ocw_world::WorldPackage {
+            landuse: Some(landuse.clone()),
+            ..base
+        };
+        let bytes = pkg.to_bytes();
+        let mut m = Manifest::new("test/mini", "Mini", 3, 0, "test", vec![]).unwrap();
+        m.add_file("mini.ocwpkg", &bytes).unwrap();
+        let dir = format!("{BASE}test/mini/3/");
+        let serve = |bytes: Vec<u8>| {
+            MemoryFetch::with([
+                (format!("{BASE}test/mini/latest"), b"3\n".to_vec()),
+                (
+                    format!("{dir}manifest.json"),
+                    SignedManifest::unsigned(&m).to_json().into_bytes(),
+                ),
+                (format!("{dir}mini.ocwpkg"), bytes),
+            ])
+        };
+        let file = m.package_file().unwrap().clone();
+        let luse = file
+            .chunks
+            .iter()
+            .find(|c| c.name == "section LUSE")
+            .expect("the land-use section")
+            .clone();
+        assert!(luse.size > 200, "{}", luse.size);
+        let load = |fetch: &MemoryFetch, slice: Option<u64>| {
+            let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+            let sink = lines.clone();
+            let mut config = config(UnsignedPolicy::Warn);
+            config.slice_bytes = slice;
+            config.log = Some(StageLog(Arc::new(move |l| {
+                sink.lock().unwrap().push(l.to_string())
+            })));
+            let store = MemoryStore::default();
+            let shared = Mutex::new(StreamShared::default());
+            let mut d = StreamDriver::new(fetch, Some(&store), config, clock());
+            run(&mut d, &shared);
+            let s = shared.lock().unwrap();
+            let lines = lines.lock().unwrap().clone();
+            (
+                s.base.as_ref().map(|b| b.package.clone()),
+                s.progress.error.clone(),
+                store.names(),
+                lines,
+            )
+        };
+        let fetch = serve(bytes.clone());
+        let (whole, ..) = load(&fetch, None);
+        let whole = whole.expect("loaded whole");
+        let fetch = serve(bytes.clone());
+        let (sliced, err, cached, lines) = load(&fetch, Some(64));
+        let sliced = sliced.unwrap_or_else(|| panic!("loaded in slices: {err:?}"));
+        let (a, b) = (whole.land_use().unwrap(), sliced.land_use().unwrap());
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a.sea_tile, b.sea_tile);
+        for (k, t) in &landuse.tiles {
+            assert_eq!(b.tile(*k).as_ref(), Some(t));
+        }
+        // Only requests of at most 64 bytes touched the land use.
+        let pkg_url = format!("{dir}mini.ocwpkg");
+        let parts: Vec<_> = fetch
+            .requests()
+            .into_iter()
+            .filter(|(u, r)| {
+                *u == pkg_url
+                    && r.as_ref()
+                        .is_some_and(|r| r.start < luse.offset + luse.size && r.end > luse.offset)
+            })
+            .map(|(_, r)| r.unwrap())
+            .collect();
+        assert_eq!(parts.len() as u64, luse.size.div_ceil(64), "{parts:?}");
+        assert!(parts.iter().all(|r| r.end - r.start <= 64));
+        assert!(!cached.iter().any(|n| n.contains("LUSE")), "{cached:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("section LUSE") && l.contains("in slices")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("decoded as it came")),
+            "{lines:?}"
+        );
+        // A damaged byte in the land use: the load fails at its end.
+        let mut bad = bytes.clone();
+        bad[(luse.offset + luse.size - 3) as usize] ^= 0x55;
+        let (pkg, err, ..) = load(&serve(bad), Some(64));
+        assert!(pkg.is_none());
+        assert!(err.is_some_and(|e| e.contains("LUSE")));
     }
 
     /// The second visit loads the base and the tiles from the cache: only

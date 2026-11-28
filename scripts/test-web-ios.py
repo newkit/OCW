@@ -305,6 +305,10 @@ def main():
                    help="WxH of the phone instead of the iPhone 15's (the reporting iPhone of 10G: 430x932)")
     p.add_argument("--stage-budget-mb", type=float, default=0.0,
                    help="the wasm memory a world's load may reach up to the ride's start (MB; 0: no check)")
+    p.add_argument("--console", action="append", default=[],
+                   help="a console command to run once the ride runs (repeatable; e.g. 'time 13:00')")
+    p.add_argument("--gpu-budget-mb", type=float, default=0.0,
+                   help="the mesh buffers a world may hold on the GPU at the ride's end (MB; 0: no check)")
     p.add_argument("--python", default=None)
     a = p.parse_args()
     if not in_venv():
@@ -536,6 +540,10 @@ def main():
             except Exception as e:  # noqa: BLE001
                 lines.append(f"wait: {e}")
             ready_t = time.time()
+            for cmd in a.console:
+                # Console commands once the ride runs (e.g. `time 13:00` for
+                # daylight screenshots).
+                pg.evaluate("c => window.ocw && window.ocw.console && window.ocw.console(c)", cmd)
             sampling["on"] = False
             st = sample("ready")
             if a.world:
@@ -638,6 +646,22 @@ def main():
                     next_shot += 60
             st = sample("end")
             summary["heap_end"] = st.get("heap")
+            # The meshes on the GPU by kind (10G *The first tiles' GPU
+            # memory*: terrain, roads, houses, plants, …).
+            kinds = (st.get("heap") or {}).get("gpu_kinds") or []
+            if kinds:
+                print("  gpu meshes by kind at the end (MB, vertices, bytes a vertex, meshes):")
+                for k in kinds:
+                    b = k["vertex_bytes"] + k["index_bytes"]
+                    if b >= 100_000:
+                        print(f"    {b / 1e6:7.1f}  {k['vertices']:>9}  {k['vertex_bytes'] // max(k['vertices'], 1):>3} B  "
+                              f"{k['meshes']:>5}  {k['kind']}", flush=True)
+            steady_gpu = round(max((st.get("heap") or {}).get("gpu_buffers") or 0,
+                                             (st.get("heap") or {}).get("gpu_meshes") or 0) / 1048576, 1)
+            summary["end_gpu_meshes_mb"] = steady_gpu
+            if a.gpu_budget_mb > 0:
+                check(f"the world's mesh buffers stay under {a.gpu_budget_mb:g} MB of GPU memory at the end",
+                      0 < steady_gpu <= a.gpu_budget_mb, f"{steady_gpu} MB")
             summary["gl_log"] = pg.evaluate("window.__glMem ? window.__glMem.log.slice(0, 200) : null")
             steady = timeline[-1]
             ride_peak = max((s["phone_peak_mb"] for s in timeline), default=0)

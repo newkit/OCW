@@ -385,6 +385,125 @@ impl LandUseIndex {
     }
 }
 
+/// The bytes of the land-use record at the start of `b` (a tile written
+/// by [`write_landuse`]), without decoding it; `None` while `b` holds less
+/// than the whole record.
+fn record_len(b: &[u8]) -> Option<usize> {
+    let u32_at = |at: usize| -> Option<u32> {
+        b.get(at..at + 4)
+            .map(|s| u32::from_le_bytes(s.try_into().expect("4 bytes")))
+    };
+    // Key (x, z), the number of class runs, each run (count u32, class u8).
+    let runs = u32_at(8)? as usize;
+    let water_at = 12usize.checked_add(runs.checked_mul(5)?)?;
+    let waters = u32_at(water_at)? as usize;
+    let end = water_at
+        .checked_add(4)?
+        .checked_add(waters.checked_mul(8)?)?;
+    (b.len() >= end).then_some(end)
+}
+
+/// A land-use section indexed as its bytes come, a slice at a time (spec
+/// 14 Phase 10, 10G: Tenerife's `LUSE` is one 75 MB chunk – a phone that
+/// held it whole, then the kept records, closed the page). Each tile's
+/// record is checked like [`LandUseIndex::new_kept`] does and kept (the
+/// tiles of `keep` and the first sea tile; `None`: all) or dropped as soon
+/// as it is complete, so no more than one record and one slice are held
+/// beyond what is kept. [`LandUseStream::finish`] gives the same index as
+/// [`LandUseIndex::new_kept`] over the whole payload.
+pub struct LandUseStream {
+    samples: u32,
+    keep: Option<std::collections::BTreeSet<TileKey>>,
+    pending: Vec<u8>,
+    /// Cells per side and the number of records, once read.
+    head: Option<(u32, u32)>,
+    seen: u32,
+    bytes: Vec<u8>,
+    tiles: BTreeMap<TileKey, usize>,
+    sea_tile: Option<TileKey>,
+}
+
+impl LandUseStream {
+    pub fn new(samples: u32, keep: Option<std::collections::BTreeSet<TileKey>>) -> Self {
+        Self {
+            samples,
+            keep,
+            pending: Vec::new(),
+            head: None,
+            seen: 0,
+            bytes: Vec::new(),
+            tiles: BTreeMap::new(),
+            sea_tile: None,
+        }
+    }
+
+    /// The next bytes of the section's payload.
+    pub fn push(&mut self, data: &[u8]) -> Result<(), String> {
+        self.pending.extend_from_slice(data);
+        let mut pos = 0;
+        if self.head.is_none() {
+            if self.pending.len() < 12 {
+                return Ok(());
+            }
+            let mut r = Bytes::new(&self.pending[..12]);
+            let version = r.u32()?;
+            if version != LANDUSE_VERSION {
+                return Err(format!("land-use layout {version} is not supported"));
+            }
+            let cells = r.u32()?;
+            if cells == 0 || cells > 4096 {
+                return Err(format!("land-use grid of {cells} cells is not supported"));
+            }
+            self.head = Some((cells, r.u32()?));
+            pos = 12;
+        }
+        let (cells, count) = self.head.expect("read above");
+        while self.seen < count {
+            let Some(n) = record_len(&self.pending[pos..]) else {
+                break;
+            };
+            let rec = &self.pending[pos..pos + n];
+            let mut r = Bytes::new(rec);
+            let (key, t) = read_tile(&mut r, cells, self.samples)?;
+            r.finish("land-use record")?;
+            let sea = self.sea_tile.is_none() && t.water.iter().any(|&(_, level)| level == 0.0);
+            if sea {
+                self.sea_tile = Some(key);
+            }
+            if sea || self.keep.as_ref().is_none_or(|k| k.contains(&key)) {
+                self.tiles.insert(key, self.bytes.len());
+                self.bytes.extend_from_slice(rec);
+            }
+            pos += n;
+            self.seen += 1;
+        }
+        self.pending.drain(..pos);
+        if self.seen == count && !self.pending.is_empty() {
+            return Err("trailing bytes in the land-use section".into());
+        }
+        Ok(())
+    }
+
+    /// The index, once the whole payload was pushed.
+    pub fn finish(self) -> Result<LandUseIndex, String> {
+        let Some((cells, count)) = self.head else {
+            return Err("land-use section truncated".into());
+        };
+        if self.seen != count || !self.pending.is_empty() {
+            return Err("land-use section truncated".into());
+        }
+        let mut bytes = self.bytes;
+        bytes.shrink_to_fit();
+        Ok(LandUseIndex {
+            cells,
+            samples: self.samples,
+            bytes,
+            tiles: self.tiles,
+            sea_tile: self.sea_tile,
+        })
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -499,5 +618,34 @@ pub(crate) mod tests {
         assert_eq!(at_once.tile(k), want);
         assert_eq!((at_once.len(), at_once.sea_tile), (2, Some(far)));
         assert_eq!(at_once.bytes(), ix.bytes());
+        // … and streamed a few bytes at a time (10G: Tenerife's 75 MB
+        // chunk): the same tiles, never more than a record pending.
+        for step in [1, 3, 7, 64, b.len()] {
+            for keep in [None, Some(std::collections::BTreeSet::from([k]))] {
+                let mut st = LandUseStream::new(3, keep.clone());
+                for part in b.chunks(step) {
+                    st.push(part).unwrap();
+                    assert!(st.pending.len() < 60 + step, "{}", st.pending.len());
+                }
+                let streamed = st.finish().unwrap();
+                let whole = LandUseIndex::new_kept(&b, 3, keep.as_ref()).unwrap();
+                assert_eq!(streamed.len(), whole.len());
+                assert_eq!(streamed.sea_tile, whole.sea_tile);
+                assert_eq!(streamed.cells, whole.cells);
+                for key in whole.keys() {
+                    assert_eq!(streamed.tile(key), whole.tile(key));
+                }
+            }
+        }
+        // Damaged or cut payloads fail as in the whole index.
+        let mut st = LandUseStream::new(3, None);
+        st.push(&b[..b.len() - 1]).unwrap();
+        assert!(st.finish().is_err());
+        let mut st = LandUseStream::new(2, None);
+        assert!(st.push(&b).unwrap_err().contains("water vertex"));
+        let mut st = LandUseStream::new(3, None);
+        let mut long = b.clone();
+        long.push(0);
+        assert!(st.push(&long).is_err());
     }
 }
