@@ -115,6 +115,10 @@ pub struct Rider {
     pub moustache: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beard: Option<String>,
+    /// The eye colour's id (4N *Faces*: "brown", "dark-brown", "hazel",
+    /// "amber", "green", "blue", "grey"; absent: brown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eyes: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facial_hair_color: Option<String>,
     /// The skin tone in the 16-step palette (spec §14 Phase 4, 4N, v4.51);
@@ -172,6 +176,7 @@ impl Default for Rider {
             greying: None,
             moustache: None,
             beard: None,
+            eyes: None,
             facial_hair_color: None,
             skin_tone: None,
             kit_second: None,
@@ -334,6 +339,11 @@ impl Rider {
             beard,
             facial_hair_colour: self.facial_hair_color.as_deref().and_then(Rgb::parse),
             glasses: self.glasses.unwrap_or(d.glasses),
+            eyes: self
+                .eyes
+                .as_deref()
+                .and_then(|s| ch::list_parse(&ch::EYES, s))
+                .unwrap_or(d.eyes),
         }
         .with_height(self.height_cm)
     }
@@ -357,6 +367,7 @@ impl Rider {
         self.greying = (!c.greying).then_some(false);
         self.moustache = Some(ch::list_id(&MOUSTACHES, c.moustache));
         self.beard = Some(ch::list_id(&BEARDS, c.beard));
+        self.eyes = (c.eyes != 0).then(|| ch::list_id(&ch::EYES, c.eyes));
         self.facial_hair_color = c.facial_hair_colour.map(|c| c.to_string());
         // For older apps (N11).
         self.body_build = Some(c.shape.nearest_build().id().into());
@@ -489,6 +500,9 @@ impl Rider {
             });
             check(&mut self.beard, "beard", &|v| {
                 ch::list_parse(&BEARDS, v).map(|i| ch::list_id(&BEARDS, i))
+            });
+            check(&mut self.eyes, "eye colour", &|v| {
+                ch::list_parse(&ch::EYES, v).map(|i| ch::list_id(&ch::EYES, i))
             });
         }
         for (field, what) in [
@@ -1208,5 +1222,37 @@ ftp_w = 5000
         r.save(&path).unwrap();
         assert_eq!(Riders::load(&path).unwrap().0, r);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The eye colour (4N *Faces*) is kept in the profile as `eyes`; a
+    /// rider saved before has none and loads with brown eyes and the rest
+    /// of the look as it was; brown is not written.
+    #[test]
+    fn the_eye_colour_is_saved_and_older_riders_load_with_brown() {
+        let mut r = rider("Ada Rider", 62.0);
+        let before = Character {
+            beard: 4,
+            moustache: 2,
+            hair: 7,
+            glasses: 2,
+            ..r.character()
+        };
+        r.set_character(before);
+        assert_eq!(r.eyes, None);
+        let saved = toml::to_string(&r).unwrap();
+        assert!(!saved.contains("eyes"), "{saved}");
+        let old: Rider = toml::from_str(&saved).unwrap();
+        assert_eq!(old.character(), before, "a rider saved before loads the same");
+        r.set_character(Character { eyes: 5, ..before });
+        assert_eq!(r.eyes.as_deref(), Some("blue"));
+        let saved = toml::to_string(&r).unwrap();
+        let back: Rider = toml::from_str(&saved).unwrap();
+        assert_eq!(back.character(), Character { eyes: 5, ..before });
+        // A hand-edited file: any spelling of the list, anything else brown.
+        let mut odd = back;
+        odd.eyes = Some("Dark Brown".into());
+        assert_eq!(odd.character().eyes, 1);
+        odd.eyes = Some("purple".into());
+        assert_eq!(odd.character().eyes, 0);
     }
 }

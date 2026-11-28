@@ -6439,3 +6439,314 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 6
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud.profile off", "1.5=character --body a --shape super-skinny --age 30s --hair short --hair-colour #1E1E1E --skin 3", "1.6=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "6=camera.orbit 150 10 5"]
 shot = 12
 pick = false
+
+# Faces (4N Faces, 2026-11-28: eyes, lips and beards): the same looks before
+# and after, front / three-quarter / side, the editor's bare-head close-up
+# and a group at riding distance. Made-up rider names only.
+# Written by scripts/face-scenes.py.
+
+[[scene]]
+name = "face-a-front"
+description = "Faces (4N): Ada Rider, from the front - base body B, 20s, fair skin, long auburn hair, clean-shaven, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 58.0\nheight_cm = 168.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape skinny --age 20s --hair long --hair-colour auburn --skin 1 --glasses 1", "1.6=kit.design --pattern plain --jersey #1E88E5 --second #F2F2EE --helmet #E53935", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-a-threeq"
+description = "Faces (4N): Ada Rider, three-quarter - base body B, 20s, fair skin, long auburn hair, clean-shaven, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 58.0\nheight_cm = 168.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape skinny --age 20s --hair long --hair-colour auburn --skin 1 --glasses 1", "1.6=kit.design --pattern plain --jersey #1E88E5 --second #F2F2EE --helmet #E53935", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-a-side"
+description = "Faces (4N): Ada Rider, from the side - base body B, 20s, fair skin, long auburn hair, clean-shaven, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 58.0\nheight_cm = 168.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape skinny --age 20s --hair long --hair-colour auburn --skin 1 --glasses 1", "1.6=kit.design --pattern plain --jersey #1E88E5 --second #F2F2EE --helmet #E53935", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-b-front"
+description = "Faces (4N): Cyd Sprinter, from the front - base body C, 40s, brown skin, crew cut, short boxed beard, sport sunglasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --glasses 2", "1.6=kit.design --pattern stripes --jersey #43A047 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-b-threeq"
+description = "Faces (4N): Cyd Sprinter, three-quarter - base body C, 40s, brown skin, crew cut, short boxed beard, sport sunglasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --glasses 2", "1.6=kit.design --pattern stripes --jersey #43A047 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-b-side"
+description = "Faces (4N): Cyd Sprinter, from the side - base body C, 40s, brown skin, crew cut, short boxed beard, sport sunglasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --glasses 2", "1.6=kit.design --pattern stripes --jersey #43A047 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-c-front"
+description = "Faces (4N): Dag Tourer, from the front - base body A, 70+, light skin, bald, grey full beard and classic moustache, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "140"]
+riders = "active = \"Dag Tourer\"\n[[rider]]\nname = \"Dag Tourer\"\nweight_kg = 96.0\nheight_cm = 176.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape ample --age 70+ --hair bald --skin 5 --beard full --moustache classic --glasses 3", "1.6=kit.design --pattern sash --jersey #FB8C00 --second #3949AB --helmet #3949AB", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-c-threeq"
+description = "Faces (4N): Dag Tourer, three-quarter - base body A, 70+, light skin, bald, grey full beard and classic moustache, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "140"]
+riders = "active = \"Dag Tourer\"\n[[rider]]\nname = \"Dag Tourer\"\nweight_kg = 96.0\nheight_cm = 176.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape ample --age 70+ --hair bald --skin 5 --beard full --moustache classic --glasses 3", "1.6=kit.design --pattern sash --jersey #FB8C00 --second #3949AB --helmet #3949AB", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-c-side"
+description = "Faces (4N): Dag Tourer, from the side - base body A, 70+, light skin, bald, grey full beard and classic moustache, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "140"]
+riders = "active = \"Dag Tourer\"\n[[rider]]\nname = \"Dag Tourer\"\nweight_kg = 96.0\nheight_cm = 176.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape ample --age 70+ --hair bald --skin 5 --beard full --moustache classic --glasses 3", "1.6=kit.design --pattern sash --jersey #FB8C00 --second #3949AB --helmet #3949AB", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-d-front"
+description = "Faces (4N): Eve Tourer, from the front - base body B, 60s, dark skin, greying low bun, clean-shaven, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Eve Tourer\"\n[[rider]]\nname = \"Eve Tourer\"\nweight_kg = 70.0\nheight_cm = 170.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape normal --age 60s --hair low-bun --hair-colour black --skin 14 --glasses 3", "1.6=kit.design --pattern chevrons --jersey #7E57C2 --second #FDD835 --helmet #F2F2EE", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-d-threeq"
+description = "Faces (4N): Eve Tourer, three-quarter - base body B, 60s, dark skin, greying low bun, clean-shaven, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Eve Tourer\"\n[[rider]]\nname = \"Eve Tourer\"\nweight_kg = 70.0\nheight_cm = 170.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape normal --age 60s --hair low-bun --hair-colour black --skin 14 --glasses 3", "1.6=kit.design --pattern chevrons --jersey #7E57C2 --second #FDD835 --helmet #F2F2EE", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-d-side"
+description = "Faces (4N): Eve Tourer, from the side - base body B, 60s, dark skin, greying low bun, clean-shaven, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Eve Tourer\"\n[[rider]]\nname = \"Eve Tourer\"\nweight_kg = 70.0\nheight_cm = 170.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape normal --age 60s --hair low-bun --hair-colour black --skin 14 --glasses 3", "1.6=kit.design --pattern chevrons --jersey #7E57C2 --second #FDD835 --helmet #F2F2EE", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-e-front"
+description = "Faces (4N): Finn Gravel, from the front - base body A, 30s, tan skin, short textured hair, stubble, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Finn Gravel\"\n[[rider]]\nname = \"Finn Gravel\"\nweight_kg = 72.0\nheight_cm = 180.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape normal --age 30s --hair short-textured --hair-colour brown --skin 8 --beard stubble --glasses 1", "1.6=kit.design --pattern plain --jersey #00897B --second #F2F2EE --helmet #212121", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-e-threeq"
+description = "Faces (4N): Finn Gravel, three-quarter - base body A, 30s, tan skin, short textured hair, stubble, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Finn Gravel\"\n[[rider]]\nname = \"Finn Gravel\"\nweight_kg = 72.0\nheight_cm = 180.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape normal --age 30s --hair short-textured --hair-colour brown --skin 8 --beard stubble --glasses 1", "1.6=kit.design --pattern plain --jersey #00897B --second #F2F2EE --helmet #212121", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-e-side"
+description = "Faces (4N): Finn Gravel, from the side - base body A, 30s, tan skin, short textured hair, stubble, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Finn Gravel\"\n[[rider]]\nname = \"Finn Gravel\"\nweight_kg = 72.0\nheight_cm = 180.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape normal --age 30s --hair short-textured --hair-colour brown --skin 8 --beard stubble --glasses 1", "1.6=kit.design --pattern plain --jersey #00897B --second #F2F2EE --helmet #212121", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-f-front"
+description = "Faces (4N): Gus Climber, from the front - base body C, 50s, light skin, side part, chin-strap beard and pencil moustache, sport sunglasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Gus Climber\"\n[[rider]]\nname = \"Gus Climber\"\nweight_kg = 64.0\nheight_cm = 174.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape skinny --age 50s --hair side-part --hair-colour light-brown --skin 3 --beard chin-strap --moustache pencil --glasses 2", "1.6=kit.design --pattern stripes --jersey #D81B60 --second #212121 --helmet #D81B60", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-f-threeq"
+description = "Faces (4N): Gus Climber, three-quarter - base body C, 50s, light skin, side part, chin-strap beard and pencil moustache, sport sunglasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Gus Climber\"\n[[rider]]\nname = \"Gus Climber\"\nweight_kg = 64.0\nheight_cm = 174.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape skinny --age 50s --hair side-part --hair-colour light-brown --skin 3 --beard chin-strap --moustache pencil --glasses 2", "1.6=kit.design --pattern stripes --jersey #D81B60 --second #212121 --helmet #D81B60", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-f-side"
+description = "Faces (4N): Gus Climber, from the side - base body C, 50s, light skin, side part, chin-strap beard and pencil moustache, sport sunglasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Gus Climber\"\n[[rider]]\nname = \"Gus Climber\"\nweight_kg = 64.0\nheight_cm = 174.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape skinny --age 50s --hair side-part --hair-colour light-brown --skin 3 --beard chin-strap --moustache pencil --glasses 2", "1.6=kit.design --pattern stripes --jersey #D81B60 --second #212121 --helmet #D81B60", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-g-front"
+description = "Faces (4N): Hal Rouleur, from the front - base body A, 30s, olive-brown skin, buzz cut, goatee and handlebar moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Hal Rouleur\"\n[[rider]]\nname = \"Hal Rouleur\"\nweight_kg = 77.0\nheight_cm = 184.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape normal --age 30s --hair buzz-cut --hair-colour black --skin 9 --beard goatee --moustache handlebar --glasses 1", "1.6=kit.design --pattern sash --jersey #FDD835 --second #212121 --helmet #212121", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-g-threeq"
+description = "Faces (4N): Hal Rouleur, three-quarter - base body A, 30s, olive-brown skin, buzz cut, goatee and handlebar moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Hal Rouleur\"\n[[rider]]\nname = \"Hal Rouleur\"\nweight_kg = 77.0\nheight_cm = 184.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape normal --age 30s --hair buzz-cut --hair-colour black --skin 9 --beard goatee --moustache handlebar --glasses 1", "1.6=kit.design --pattern sash --jersey #FDD835 --second #212121 --helmet #212121", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-g-side"
+description = "Faces (4N): Hal Rouleur, from the side - base body A, 30s, olive-brown skin, buzz cut, goatee and handlebar moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Hal Rouleur\"\n[[rider]]\nname = \"Hal Rouleur\"\nweight_kg = 77.0\nheight_cm = 184.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body a --shape normal --age 30s --hair buzz-cut --hair-colour black --skin 9 --beard goatee --moustache handlebar --glasses 1", "1.6=kit.design --pattern sash --jersey #FDD835 --second #212121 --helmet #212121", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-h-front"
+description = "Faces (4N): Ike Puncheur, from the front - base body C, 40s, light-tan skin, shaved head, long red beard and chevron moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Ike Puncheur\"\n[[rider]]\nname = \"Ike Puncheur\"\nweight_kg = 84.0\nheight_cm = 178.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape ample --age 40s --hair shaved --hair-colour red --skin 6 --beard long --moustache chevron --glasses 1", "1.6=kit.design --pattern plain --jersey #5D4037 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-h-threeq"
+description = "Faces (4N): Ike Puncheur, three-quarter - base body C, 40s, light-tan skin, shaved head, long red beard and chevron moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Ike Puncheur\"\n[[rider]]\nname = \"Ike Puncheur\"\nweight_kg = 84.0\nheight_cm = 178.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape ample --age 40s --hair shaved --hair-colour red --skin 6 --beard long --moustache chevron --glasses 1", "1.6=kit.design --pattern plain --jersey #5D4037 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-h-side"
+description = "Faces (4N): Ike Puncheur, from the side - base body C, 40s, light-tan skin, shaved head, long red beard and chevron moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Ike Puncheur\"\n[[rider]]\nname = \"Ike Puncheur\"\nweight_kg = 84.0\nheight_cm = 178.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape ample --age 40s --hair shaved --hair-colour red --skin 6 --beard long --moustache chevron --glasses 1", "1.6=kit.design --pattern plain --jersey #5D4037 --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-i-front"
+description = "Faces (4N): Jo Baroudeur, from the front - base body B, 20s, very dark skin, afro, short stubble beard and horseshoe moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Jo Baroudeur\"\n[[rider]]\nname = \"Jo Baroudeur\"\nweight_kg = 62.0\nheight_cm = 172.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape skinny --age 20s --hair afro --hair-colour black --skin 15 --beard short-stubble-beard --moustache horseshoe --glasses 1", "1.6=kit.design --pattern chevrons --jersey #F4511E --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 180 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-i-threeq"
+description = "Faces (4N): Jo Baroudeur, three-quarter - base body B, 20s, very dark skin, afro, short stubble beard and horseshoe moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Jo Baroudeur\"\n[[rider]]\nname = \"Jo Baroudeur\"\nweight_kg = 62.0\nheight_cm = 172.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape skinny --age 20s --hair afro --hair-colour black --skin 15 --beard short-stubble-beard --moustache horseshoe --glasses 1", "1.6=kit.design --pattern chevrons --jersey #F4511E --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 140 -4 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-i-side"
+description = "Faces (4N): Jo Baroudeur, from the side - base body B, 20s, very dark skin, afro, short stubble beard and horseshoe moustache, no glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "150"]
+riders = "active = \"Jo Baroudeur\"\n[[rider]]\nname = \"Jo Baroudeur\"\nweight_kg = 62.0\nheight_cm = 172.0\nbike = \"road\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body b --shape skinny --age 20s --hair afro --hair-colour black --skin 15 --beard short-stubble-beard --moustache horseshoe --glasses 1", "1.6=kit.design --pattern chevrons --jersey #F4511E --second #F2F2EE --helmet #F2F2EE", "4=camera.closeup face 90 0 0.38"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-a-bare"
+description = "Faces (4N): Ada Rider, the helmet off in the character editor's face close-up - base body B, 20s, fair skin, long auburn hair, clean-shaven, no glasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 58.0\nheight_cm = 168.0\nbike = \"road\"\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body b --shape skinny --age 20s --hair long --hair-colour auburn --skin 1 --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-b-bare"
+description = "Faces (4N): Cyd Sprinter, the helmet off in the character editor's face close-up - base body C, 40s, brown skin, crew cut, short boxed beard, sport sunglasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --glasses 2", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-c-bare"
+description = "Faces (4N): Dag Tourer, the helmet off in the character editor's face close-up - base body A, 70+, light skin, bald, grey full beard and classic moustache, round glasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Dag Tourer\"\n[[rider]]\nname = \"Dag Tourer\"\nweight_kg = 96.0\nheight_cm = 176.0\nbike = \"gravel\"\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body a --shape ample --age 70+ --hair bald --skin 5 --beard full --moustache classic --glasses 3", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-d-bare"
+description = "Faces (4N): Eve Tourer, the helmet off in the character editor's face close-up - base body B, 60s, dark skin, greying low bun, clean-shaven, round glasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Eve Tourer\"\n[[rider]]\nname = \"Eve Tourer\"\nweight_kg = 70.0\nheight_cm = 170.0\nbike = \"road\"\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body b --shape normal --age 60s --hair low-bun --hair-colour black --skin 14 --glasses 3", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-e-bare"
+description = "Faces (4N): Finn Gravel, the helmet off in the character editor's face close-up - base body A, 30s, tan skin, short textured hair, stubble, no glasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Finn Gravel\"\n[[rider]]\nname = \"Finn Gravel\"\nweight_kg = 72.0\nheight_cm = 180.0\nbike = \"gravel\"\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body a --shape normal --age 30s --hair short-textured --hair-colour brown --skin 8 --beard stubble --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-f-bare"
+description = "Faces (4N): Gus Climber, the helmet off in the character editor's face close-up - base body C, 50s, light skin, side part, chin-strap beard and pencil moustache, sport sunglasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Gus Climber\"\n[[rider]]\nname = \"Gus Climber\"\nweight_kg = 64.0\nheight_cm = 174.0\nbike = \"road\"\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body c --shape skinny --age 50s --hair side-part --hair-colour light-brown --skin 3 --beard chin-strap --moustache pencil --glasses 2", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "face-ride"
+description = "Faces (4N): riding distance - Cyd Sprinter on the Hills route with six bots in their own looks (orbit camera 4 m in front): the faces at the distance of a ride, the frame-rate overlay on"
+args = ["--route", "hills", "--bots", "6", "--power", "220"]
+riders = "active = \"Cyd Sprinter\"\n[[rider]]\nname = \"Cyd Sprinter\"\nweight_kg = 80.0\nheight_cm = 182.0\nbike = \"road-aero\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=character --body c --shape normal --age 40s --hair crew-cut --hair-colour #3B2A20 --skin 11 --beard short-boxed --glasses 2", "1.6=kit.design --pattern stripes --jersey #43A047 --second #F2F2EE --helmet #F2F2EE", "4=camera.orbit 160 8 4"]
+shot = 12
+pick = false

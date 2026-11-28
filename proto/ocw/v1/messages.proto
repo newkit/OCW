@@ -653,6 +653,9 @@ message RiderLook {
   // 27 is kept for the hair's roots colour (N5).
   // Greying with the age (false: Keep my hair colour).
   optional bool greying = 28;
+  // The eye colour (4N N7 / Faces): 0 brown, 1 dark brown, 2 hazel,
+  // 3 amber, 4 green, 5 blue, 6 grey; absent: brown.
+  optional uint32 eye_colour = 30;
   // The body shape (Q6, Q7): 0 super skinny, 1 skinny, 2 slim, 3 normal,
   // 4 ample, 5 fat, 6 obese (N12 planned a 0-100 build slider here;
   // the decided seven steps take its number).

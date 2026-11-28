@@ -130,6 +130,11 @@ pub fn command() -> Command {
                 }),
         )
         .arg(index_arg("glasses", GLASSES.len()))
+        .arg(Arg::new("eyes").long("eyes").value_parser(|s: &str| {
+            ch::list_parse(&ch::EYES, s).ok_or_else(|| {
+                format!("no eye colour {s:?}: brown, dark-brown, hazel, amber, green, blue or grey")
+            })
+        }))
 }
 
 /// Applies the options to `c` for a rider of `weight_kg` and
@@ -186,6 +191,9 @@ pub fn apply(
     }
     if let Some(v) = idx("glasses") {
         c.glasses = v;
+    }
+    if let Some(v) = m.get_one::<u8>("eyes") {
+        c.eyes = *v;
     }
     *c = c.validated();
     Ok(())

@@ -15,6 +15,11 @@ pub struct Shape {
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub indices: Vec<u32>,
+    /// Vertex colours (linear RGBA, [`Primitive::colors`]) of the first
+    /// `colors.len()` vertices; the others are white. Empty: none. The
+    /// faces use them (spec 14 Phase 4, 4N *Faces*): a shade on skin, eyes
+    /// and lips, the hair's density on brows, moustaches and beards.
+    pub colors: Vec<[f32; 4]>,
 }
 
 /// One ring of a [`Shape::loft`]: the points `centre + u cos t + v sin t`.
@@ -67,6 +72,24 @@ pub enum Cap {
 impl Shape {
     fn base(&self) -> u32 {
         self.positions.len() as u32
+    }
+
+    /// Gives every vertex added since `from` (a [`Shape::positions`]
+    /// length) the colour `f` returns for its index from there.
+    pub fn colour_from(&mut self, from: usize, f: impl Fn(usize) -> [f32; 4]) {
+        self.colors.resize(from, [1.0; 4]);
+        self.colors
+            .extend((0..self.positions.len() - from).map(f));
+    }
+
+    /// The vertex colours for a primitive: none, or one per vertex.
+    pub fn colours(&self) -> Vec<[f32; 4]> {
+        if self.colors.is_empty() {
+            return Vec::new();
+        }
+        let mut c = self.colors.clone();
+        c.resize(self.positions.len(), [1.0; 4]);
+        c
     }
 
     /// Adds triangles with area-weighted smooth vertex normals.
@@ -446,6 +469,11 @@ impl Parts {
         self.by_slot.values().map(Shape::triangles).sum()
     }
 
+    /// The shapes with their paint slots.
+    pub fn shapes(&self) -> impl Iterator<Item = (&'static str, &Shape)> {
+        self.by_slot.iter().map(|(slot, shape)| (*slot, shape))
+    }
+
     /// The same shapes with their slots mapped by `f` (shapes that land
     /// on one slot are merged: fewer draw calls).
     pub fn remap(self, f: impl Fn(&str) -> &'static str) -> Parts {
@@ -453,6 +481,10 @@ impl Parts {
         for (slot, shape) in self.by_slot {
             let to = out.slot(f(slot));
             let base = to.positions.len() as u32;
+            if !shape.colors.is_empty() || !to.colors.is_empty() {
+                to.colors.resize(base as usize, [1.0; 4]);
+                to.colors.extend(shape.colours());
+            }
             to.positions.extend(shape.positions);
             to.normals.extend(shape.normals);
             to.indices
@@ -470,8 +502,10 @@ impl Parts {
                 continue;
             }
             let material = model.material_or_add(slots::material(slot));
+            let colors = shape.colours();
             model.nodes[node].primitives.push(Primitive {
                 material,
+                colors,
                 positions: shape
                     .positions
                     .iter()

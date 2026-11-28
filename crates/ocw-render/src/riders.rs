@@ -371,6 +371,8 @@ pub struct AvatarColours {
     pub facial_hair: Color,
     pub skin_line: Color,
     pub lips: Color,
+    /// The iris (4N *Faces*: the character's eye colour).
+    pub eye: Color,
     /// Full or winter gloves: the fingertips in the gloves' colour, else
     /// the skin (fingerless mitts; spec §14 Phase 4, 4N, the hands).
     pub gloved_tips: bool,
@@ -474,6 +476,7 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
         facial_hair: rgb(character.facial_hair_shown()),
         skin_line: rgb(character.skin_line_colour()),
         lips: rgb(character.lip_colour()),
+        eye: rgb(character.eye_colour()),
         gloved_tips: false,
         kit,
         far_jersey,
@@ -505,6 +508,7 @@ pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) ->
         Tint::FacialHair => colours.facial_hair,
         Tint::SkinLine => colours.skin_line,
         Tint::Lips => colours.lips,
+        Tint::Eye => colours.eye,
         Tint::FingerTip if colours.gloved_tips => colours.kit.gloves.unwrap_or(model),
         Tint::FingerTip => colours.skin,
     }

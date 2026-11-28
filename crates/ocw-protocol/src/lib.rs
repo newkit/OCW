@@ -107,6 +107,7 @@ impl From<ocw_core::RiderLook> for v1::RiderLook {
             hair: Some(u32::from(c.hair)),
             hair_rgb: Some(c.hair_colour.0),
             glasses: Some(u32::from(c.glasses)),
+            eye_colour: (c.eyes != 0).then_some(u32::from(c.eyes)),
             body_type: Some(c.base.wire()),
             appearance_age: Some(c.age.wire()),
             moustache: Some(u32::from(c.moustache)),
@@ -208,6 +209,7 @@ pub fn character(l: &v1::RiderLook) -> ocw_core::Character {
         beard,
         facial_hair_colour: l.facial_hair_rgb.map(ocw_core::Rgb::from_wire),
         glasses: small(l.glasses, d.glasses),
+        eyes: small(l.eye_colour, d.eyes),
     }
     .validated()
 }
@@ -2692,5 +2694,37 @@ mod tests {
             v1::DevCommand::decode(encode(&dev).as_slice()).unwrap(),
             dev
         );
+    }
+
+    /// The eye colour (4N *Faces*) crosses the wire in `eye_colour` (30);
+    /// brown is not sent, a look without the field (an older app) has
+    /// brown eyes, a number past the list reads as brown.
+    #[test]
+    fn the_eye_colour_round_trips_and_older_looks_are_brown() {
+        for eyes in 0..ocw_core::character::EYE_COLOURS.len() as u8 {
+            let look = ocw_core::RiderLook {
+                character: ocw_core::Character {
+                    eyes,
+                    beard: 3,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let wire: v1::RiderLook = look.into();
+            assert_eq!(wire.eye_colour, (eyes != 0).then_some(u32::from(eyes)));
+            assert_eq!(character(&wire).eyes, eyes);
+            assert!(prost::Message::encoded_len(&wire) <= MAX_LOOK_BYTES);
+        }
+        let old = v1::RiderLook {
+            hair: Some(2),
+            glasses: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(character(&old).eyes, 0);
+        let odd = v1::RiderLook {
+            eye_colour: Some(77),
+            ..Default::default()
+        };
+        assert_eq!(character(&odd).eyes, 0);
     }
 }

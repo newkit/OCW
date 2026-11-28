@@ -66,6 +66,10 @@ pub enum GearKind {
     Plastic,
     /// The padded palm of gel gloves.
     Pad,
+    /// Hair, eyebrows, moustaches and beards (4N *Faces*): fine strands,
+    /// and where the mesh carries a density (vertex colours) the hair
+    /// thins into the skin's colour.
+    Hair,
 }
 
 impl GearKind {
@@ -90,9 +94,13 @@ pub fn kind_of(slot: &str, node: &str) -> GearKind {
         "shorts" | "overshoe" | "glove" => GearKind::Lycra,
         "glove_pad" => GearKind::Pad,
         "helmet" | "shoe" | "shoe_race" | "bottle" => GearKind::Plastic,
+        "hair" | "facial_hair" => GearKind::Hair,
         _ => GearKind::Plain,
     }
 }
+
+/// How much a clear lens covers what is behind it (its alpha).
+pub const CLEAR_LENS_COVER: f32 = 0.16;
 
 /// Bare carbon's share of the ambient light (`gear.wesl`'s
 /// `CARBON_AMBIENT`): with all of the warm ambient light its specular on
@@ -255,6 +263,9 @@ pub struct GearSurface {
     pub clearcoat_roughness: f32,
     /// The base layer's specular (StandardMaterial `reflectance`, 0.5 = 4 %).
     pub reflectance: f32,
+    /// See-through (the round glasses' clear lenses, 4N *Faces*): drawn
+    /// blended, the base colour's alpha its cover.
+    pub clear: bool,
     pub look: GearLook,
 }
 
@@ -357,6 +368,10 @@ pub fn surface(
                 metallic = 0.0;
             }
         }
+        GearKind::Hair => {
+            // The strands' width (m).
+            (strength, size) = (1.0, 0.0012);
+        }
         GearKind::Plain => {}
     }
     let garment = garment_of(slot);
@@ -392,16 +407,25 @@ pub fn surface(
     // material per rider and part cost 10× the frame time with 30 riders).
     let (first, second, third) = if garment.is_some() {
         (lin(first), lin(kit.second), lin(kit.third))
+    } else if kind == GearKind::Hair {
+        // The skin the hair thins into at its edges.
+        (lin(colours.skin), Vec4::ZERO, Vec4::ZERO)
     } else {
         (Vec4::ZERO, Vec4::ZERO, Vec4::ZERO)
     };
     if kind == GearKind::Knit && garment == Some(Garment::Jersey) {
         flags |= FLAG_MESH_PANELS;
     }
+    // The round glasses' lenses: a faint tint over the eyes.
+    let clear = slot == "lens_clear";
+    if clear {
+        base = base.with_alpha(CLEAR_LENS_COVER);
+    }
     GearSurface {
         kind,
         garment,
         base,
+        clear,
         metallic,
         roughness,
         clearcoat,
@@ -441,6 +465,11 @@ impl GearSurface {
                 clearcoat: self.clearcoat,
                 clearcoat_perceptual_roughness: self.clearcoat_roughness,
                 reflectance: self.reflectance,
+                alpha_mode: if self.clear {
+                    AlphaMode::Blend
+                } else {
+                    AlphaMode::Opaque
+                },
                 // Turns on the anisotropic lighting; the shader sets the
                 // direction and strength.
                 anisotropy_strength: self.look.params.w,
@@ -479,6 +508,7 @@ impl GearSurface {
         );
         k.extend(lin(self.base).to_array().map(f32::to_bits));
         k.push(u32::from(glow));
+        k.push(u32::from(self.clear));
         k
     }
 
@@ -504,6 +534,11 @@ impl GearSurface {
             clearcoat: self.clearcoat,
             clearcoat_perceptual_roughness: self.clearcoat_roughness,
             reflectance: self.reflectance,
+            alpha_mode: if self.clear {
+                AlphaMode::Blend
+            } else {
+                AlphaMode::Opaque
+            },
             ..default()
         }
     }
@@ -560,6 +595,11 @@ pub fn gear_mesh(p: &Primitive, rest: Affine3A, region: u32) -> Mesh {
         Mesh::ATTRIBUTE_UV_1,
         r.iter().map(|v| [v.z, region as f32]).collect::<Vec<_>>(),
     );
+    // The faces' vertex colours (4N *Faces*): a shade on skin, eyes and
+    // lips, the hair's density on brows and beards (`gear.wesl`).
+    if p.colors.len() == p.positions.len() {
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, p.colors.clone());
+    }
     m.insert_indices(Indices::U32(p.indices.clone()));
     m
 }
@@ -676,7 +716,13 @@ mod tests {
             ("helmet", "helmet_road", Plastic),
             ("shoe_race", "shoe_race_l", Plastic),
             ("skin", "head", Plain),
+            ("hair", "hair_cap", Hair),
+            ("hair", "face_features", Hair),
+            ("facial_hair", "beard_full", Hair),
+            ("iris", "face_features", Plain),
+            ("lips", "face_lips", Plain),
             ("lens", "glasses_sport", Plain),
+            ("lens_clear", "glasses_round", Plain),
             ("light_front", "bike", Plain),
         ] {
             assert_eq!(kind_of(slot, node), want, "{slot} on {node}");
@@ -745,6 +791,24 @@ mod tests {
         assert!(h.clearcoat > 0.5 && h.roughness < 0.4);
         assert_eq!(h.look.mode.z, KitPattern::Chevrons.wire() as f32);
         assert_eq!(h.look.first, j.look.base, "the shell in the jersey colour");
+        // The face (4N *Faces*): hair and beards go through the shader
+        // with the skin they thin into; the iris has the eye's colour; the
+        // round glasses' lenses are see-through, everything else opaque.
+        let beard = surface("facial_hair", "beard_full", [1.0; 4], &c);
+        assert!(beard.needs_shader() && beard.kind == GearKind::Hair);
+        assert_eq!(beard.look.first, lin(c.skin), "the skin under the hair");
+        assert_eq!(beard.look.base, lin(c.facial_hair));
+        let brows = surface("hair", "face_features", [1.0; 4], &c);
+        assert_eq!(brows.look.first, lin(c.skin));
+        let iris = surface("iris", "face_features", [1.0; 4], &c);
+        assert_eq!(iris.base, c.eye);
+        assert!(!iris.needs_shader() && !iris.clear);
+        assert_eq!(iris.plain_material().alpha_mode, AlphaMode::Opaque);
+        let lens = surface("lens_clear", "glasses_round", [0.8, 0.9, 0.95, 1.0], &c);
+        assert!(lens.clear && !lens.needs_shader());
+        assert_eq!(lens.plain_material().alpha_mode, AlphaMode::Blend);
+        assert_eq!(lens.plain_material().base_color.alpha(), CLEAR_LENS_COVER);
+        assert_ne!(lens.key(false), surface("lens", "glasses_sport", [0.8, 0.9, 0.95, 1.0], &c).key(false));
         // Bike parts.
         let carbon = surface("carbon", "bike", [0.0, 0.0, 0.0, 1.0], &c);
         assert_eq!(carbon.clearcoat, 1.0);

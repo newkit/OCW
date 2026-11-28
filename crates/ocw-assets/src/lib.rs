@@ -36,6 +36,7 @@ pub mod convert;
 pub mod cow;
 pub mod diff;
 pub mod export;
+pub mod faces;
 #[cfg(feature = "tools")]
 pub mod fetch;
 pub mod glb;
@@ -384,6 +385,8 @@ mod tests {
                     })
                     .collect::<Vec<_>>()
             })
+            // As the renderer hangs it on the head.
+            .map(|p: glam::Vec3| p + glam::Vec3::from(rider::face::MOUTH_SIGN_SHIFT))
             .collect();
         let min = pts.iter().copied().reduce(glam::Vec3::min).unwrap();
         let max = pts.iter().copied().reduce(glam::Vec3::max).unwrap();

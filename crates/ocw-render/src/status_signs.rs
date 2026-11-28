@@ -196,7 +196,11 @@ pub fn spawn(
         one(head, Transform::IDENTITY, HEADSET, false),
         one(sway, far_head, HEADSET, true),
     ];
-    let mouth = one(head, Transform::IDENTITY, MOUTH, false);
+    // The X was modelled at the first face's mouth; the sculpted face's
+    // lies lower and further forward (4N *Faces*).
+    let over_mouth =
+        Transform::from_translation(Vec3::from(ocw_assets::rider::face::MOUTH_SIGN_SHIFT));
+    let mouth = one(head, over_mouth, MOUTH, false);
     let phone = [
         one(sway, Transform::IDENTITY, PHONE, false),
         one(sway, chest, PHONE, true),

@@ -193,6 +193,18 @@ fn category_rows(page: Page, rider: &Rider) -> Vec<Row> {
                     }))),
                 },
                 stepper(
+                    "Eye colour",
+                    ocw_core::character::EYES[c.eyes as usize].into(),
+                    c.eyes as usize,
+                    ocw_core::character::EYES.len(),
+                    |i| {
+                        format!(
+                            "--eyes {}",
+                            ocw_core::character::list_id(&ocw_core::character::EYES, i as u8)
+                        )
+                    },
+                ),
+                stepper(
                     "Glasses",
                     GLASSES[c.glasses as usize].into(),
                     c.glasses as usize,

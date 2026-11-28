@@ -28,6 +28,8 @@ pub enum Tint {
     SkinLine,
     /// The lips: the skin, redder and darker (4N, the face).
     Lips,
+    /// The iris: the character's eye colour (4N *Faces*).
+    Eye,
     /// The kit colours of the jersey designer (spec §14 Phase 8 T6; free):
     /// `KitDesign::{shorts, socks, shoes, gloves}`, the asset's colour
     /// when not chosen.
@@ -63,7 +65,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 105] = [
+pub const ALL: [Slot; 109] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -89,7 +91,15 @@ pub const ALL: [Slot; 105] = [
     // The face (2026-11-17, "give the rider a mouth … and ears, eyes"):
     // the eyes' dark shape and the lips.
     slot("eye", Tint::Fixed, 0x1E1814, 0.0, 0.3),
-    slot("lips", Tint::Lips, 0xB5786A, 0.0, 0.55),
+    slot("lips", Tint::Lips, 0xB5786A, 0.0, 0.42),
+    // The eyes of 4N *Faces*: the white (never pure white: a lit grey a
+    // little warm), the iris in the rider's eye colour (the pupil and the
+    // dark rim are vertex colours) and the glint on it.
+    slot("eye_white", Tint::Fixed, 0xDDD6CC, 0.0, 0.3),
+    slot("iris", Tint::Eye, 0x6B4426, 0.0, 0.18),
+    slot("eye_glint", Tint::Fixed, 0xFFFFFF, 0.0, 0.1),
+    // The round glasses' clear lenses (the renderer draws them see-through).
+    slot("lens_clear", Tint::Fixed, 0xDDE8EE, 0.0, 0.06),
     // The kit's variants (spec 4C): aero socks, race shoes, overshoes,
     // gloves and the padded back of gel gloves.
     slot("sock_aero", Tint::Socks, 0x1E1F22, 0.0, 0.75),
@@ -252,6 +262,7 @@ mod tests {
             Tint::FacialHair,
             Tint::SkinLine,
             Tint::Lips,
+            Tint::Eye,
             Tint::Shorts,
             Tint::Socks,
             Tint::Shoes,

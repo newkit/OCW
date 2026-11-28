@@ -630,6 +630,31 @@ pub fn legacy_face(face: u8) -> (u8, u8) {
     }
 }
 
+/// The eye colours (4N N7, built with the faces of v7.09): the iris'
+/// colour as painted. An index into this list is the wire's `eye_colour`
+/// and, as a lower-case id, the file's `eyes`; riders saved before have
+/// none and get the first, brown.
+pub const EYE_COLOURS: [(&str, Rgb); 7] = [
+    ("Brown", Rgb(0x6B4423)),
+    ("Dark brown", Rgb(0x3A2414)),
+    ("Hazel", Rgb(0x8A6A32)),
+    ("Amber", Rgb(0xA8742A)),
+    ("Green", Rgb(0x5F7F4A)),
+    ("Blue", Rgb(0x4F7FA8)),
+    ("Grey", Rgb(0x7E8A90)),
+];
+
+/// The eye colours' names, for the pickers and the console.
+pub const EYES: [&str; 7] = {
+    let mut out = [""; 7];
+    let mut i = 0;
+    while i < 7 {
+        out[i] = EYE_COLOURS[i].0;
+        i += 1;
+    }
+    out
+};
+
 /// The character part of a look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Character {
@@ -656,6 +681,8 @@ pub struct Character {
     pub facial_hair_colour: Option<Rgb>,
     /// Index into [`GLASSES`].
     pub glasses: u8,
+    /// Index into [`EYE_COLOURS`].
+    pub eyes: u8,
 }
 
 impl Default for Character {
@@ -677,6 +704,7 @@ impl Default for Character {
             beard: 0,
             facial_hair_colour: None,
             glasses: 1,
+            eyes: 0,
         }
     }
 }
@@ -714,6 +742,7 @@ impl Character {
             beard: pick(self.beard, BEARDS.len(), d.beard),
             facial_hair_colour: self.facial_hair_colour.map(|c| Rgb::from_wire(c.0)),
             glasses: pick(self.glasses, GLASSES.len(), d.glasses),
+            eyes: pick(self.eyes, EYE_COLOURS.len(), d.eyes),
         }
     }
 
@@ -737,10 +766,25 @@ impl Character {
         blend(tone, Rgb((l << 16) | (l << 8) | l), fade)
     }
 
-    /// The lips' colour: the skin as drawn (age included), redder and a
-    /// little darker.
+    /// The lips' colour, derived from the skin as drawn (age included;
+    /// 4N *Faces*): the skin's colour turned towards red at about the
+    /// same strength – a little darker than light and medium skin, as
+    /// light as or lighter than very dark skin (measured lips are redder
+    /// than the skin round them in every group, darker in all but the
+    /// darkest skins). Never a paint colour of its own.
     pub fn lip_colour(&self) -> Rgb {
-        blend(self.skin_colour(), Rgb(0x9A3F3A), 0.32)
+        let skin = self.skin_colour();
+        let [r, g, b] = skin.channels().map(f32::from);
+        let light = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
+        // Dark skin: a lighter rose-brown; light skin: a deeper red.
+        let dark = ((0.42 - light) / 0.3).clamp(0.0, 1.0);
+        let to = blend(Rgb(0x9C4440), Rgb(0xA85A56), dark);
+        blend(skin, to, 0.34 + 0.08 * dark)
+    }
+
+    /// The iris' colour ([`EYE_COLOURS`]).
+    pub fn eye_colour(&self) -> Rgb {
+        EYE_COLOURS[self.validated().eyes as usize].1
     }
 
     /// The colour of the face's lines (4N Q12): the skin, darker.
@@ -1146,5 +1190,70 @@ mod tests {
         assert!(!may_customize(true));
         assert!(may_customize(false));
         assert!(LOCKED_MIRROR.contains("log in to customize"));
+    }
+
+    /// The lips' colour comes from the skin (4N *Faces*): redder than the
+    /// skin for every tone and age, darker than light skin, as light as
+    /// or lighter than the darkest skins, and never far from the skin –
+    /// no paint.
+    #[test]
+    fn the_lips_colour_follows_the_skin() {
+        let light = |c: Rgb| {
+            let [r, g, b] = c.channels().map(f32::from);
+            0.2126 * r + 0.7152 * g + 0.0722 * b
+        };
+        let red = |c: Rgb| {
+            let [r, g, b] = c.channels().map(f32::from);
+            r / (r + g + b)
+        };
+        let (mut darker, mut lighter) = (0, 0);
+        for skin in 0..SKIN_TONES.len() as u8 {
+            for age in Age::ALL {
+                let c = Character {
+                    skin,
+                    age,
+                    ..Default::default()
+                };
+                let (s, l) = (c.skin_colour(), c.lip_colour());
+                assert!(red(l) > red(s) + 0.01, "tone {skin}, {age:?}: {l} on {s}");
+                let (ls, ll) = (light(s), light(l));
+                assert!((ll - ls).abs() < 60.0, "tone {skin}: {l} on {s}");
+                if ls > 150.0 {
+                    assert!(ll < ls - 8.0, "tone {skin}: darker than light skin");
+                    darker += 1;
+                }
+                if ls < 70.0 {
+                    assert!(ll >= ls, "tone {skin}: not darker than dark skin");
+                    lighter += 1;
+                }
+            }
+        }
+        assert!(darker > 0 && lighter > 0, "{darker} light, {lighter} dark tones");
+    }
+
+    /// The eye colours (4N *Faces*): seven, brown the default and what a
+    /// look without one gets; an index past the list becomes brown.
+    #[test]
+    fn the_eye_colours() {
+        assert_eq!(EYES.len(), EYE_COLOURS.len());
+        assert_eq!(EYES[0], "Brown");
+        assert_eq!(Character::default().eyes, 0);
+        assert_eq!(list_parse(&EYES, "dark-brown"), Some(1));
+        assert_eq!(list_id(&EYES, 5), "blue");
+        for (i, (name, colour)) in EYE_COLOURS.iter().enumerate() {
+            let c = Character {
+                eyes: i as u8,
+                ..Default::default()
+            };
+            assert_eq!(c.validated().eyes, i as u8, "{name}");
+            assert_eq!(c.eye_colour(), *colour);
+            assert!(EYE_COLOURS[i + 1..].iter().all(|o| o.1 != *colour));
+        }
+        let odd = Character {
+            eyes: 200,
+            ..Default::default()
+        };
+        assert_eq!(odd.validated().eyes, 0);
+        assert_eq!(odd.eye_colour(), EYE_COLOURS[0].1);
     }
 }

@@ -89,6 +89,7 @@ const KIND_KNIT: u32 = 7u;
 const KIND_LYCRA: u32 = 8u;
 const KIND_PLASTIC: u32 = 9u;
 const KIND_PAD: u32 = 10u;
+const KIND_HAIR: u32 = 11u;
 
 // Bare carbon's share of the ambient light (Rust: gear::CARBON_AMBIENT):
 // the warm ambient's specular on the dark base made it read grey-brown.
@@ -542,6 +543,27 @@ fn fragment(
         albedo = w.x * look.base.rgb + w.y * look.first.rgb + w.z * look.second.rgb + w.w * look.third.rgb;
     }
 
+    // Hair, eyebrows, moustaches and beards (spec 14 Phase 4, 4N Faces):
+    // fine strands, and where the mesh carries the hair's density (the
+    // vertex colour's red; 1 without one) less of it thins into the
+    // skin's colour (look.first) in dots the size of single hairs, from
+    // afar into an even mix. (Skin, eyes and lips are standard materials:
+    // Bevy multiplies their vertex colours, a shade, with the paint.)
+    var vc = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+@if(VERTEX_COLORS) {
+    vc = in.color;
+}
+    if kind == KIND_HAIR {
+        let close = 1.0 - smoothstep(0.0006, 0.0025, px);
+        let strand = noise3(vec3<f32>(p.x * 900.0, p.y * 110.0, p.z * 900.0));
+        let hair = mix(albedo, albedo * (0.72 + 0.56 * strand), close);
+        let dens = clamp(vc.r, 0.0, 1.0);
+        let dots = noise3(p * 1400.0) * 0.9;
+        let cover = mix(dens, smoothstep(dots, dots + 0.4, dens * 1.3), close);
+        albedo = mix(look.first.rgb, hair, cover);
+        rough = mix(0.65, rough, cover);
+    }
+
     // The detail of the material, fading out as the pixel grows: slopes
     // from the height one pixel over (rest coordinates).
     let fade = 1.0 - smoothstep(size * 0.15, size * 0.6, px);
@@ -675,7 +697,8 @@ fn fragment(
         n = bump(n, f, dhx, dhy);
     }
 
-    pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
+    // (The alpha is 1 but for the clear lenses, which are drawn blended.)
+    pbr_input.material.base_color = vec4<f32>(albedo, pbr_input.material.base_color.a);
     pbr_input.material.perceptual_roughness = clamp(rough, 0.04, 1.0);
     pbr_input.N = n;
 
