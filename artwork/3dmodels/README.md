@@ -17,7 +17,7 @@ share-alike, non-commercial or no-derivatives licences, never brands.
 
 | Folder | Kind | Contents |
 |---|---|---|
-| `bikes/` | `bike` | one bike per physics profile, with `lod1` |
+| `bikes/` | `bike` | one bike per physics profile, with `lod1`; named bikes on a profile's frame – `bike-road-aero-newkit`, the "newk it" bike (the user's own design and brand, used with permission; spec 14 Phase 15, 15Q) |
 | `riders/` | `rider` | the rider (`rider-body`) and its far model (`rider-body-low`) |
 | `wear/` | `wearable` | helmets, the status signs of spec §2.6 (headphones, VR headset, the X over a muted mouth), later glasses and caps, worn at an anchor |
 | `parts/<slot>/` | `part` | catalogue parts by workshop slot (later, M3) |

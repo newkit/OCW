@@ -126,7 +126,7 @@ fn the_menu_opens_the_scene_and_leaving_returns_to_it() {
     open_from_menu(&mut app);
     let v = view(&app);
     assert!(v.open, "the scene is open");
-    assert_eq!(v.bikes.len(), 6, "the six starter bikes");
+    assert_eq!(v.bikes.len(), 7, "the seven starter bikes");
     assert_eq!(
         v.hearts, "500 ♥ · local test wallet",
         "signed out: marked local"
@@ -595,17 +595,17 @@ fn bikes_are_bought_onto_the_plus_hook_and_sold() {
         "bikes.buy frame.road-aero.top --with groupset.road-electronic.mid --with wheels.road-alloy.mid",
     );
     frames(&mut app, 2);
-    assert_eq!(scene(&app).bikes.len(), 7);
-    assert_eq!(view(&app).bikes.len(), 7);
-    assert_eq!(view(&app).bikes[6].profile, ProfileId::RoadAero);
-    assert_eq!(view(&app).bikes[6].card[0], "Road - aero 2");
+    assert_eq!(scene(&app).bikes.len(), 8);
+    assert_eq!(view(&app).bikes.len(), 8);
+    assert_eq!(view(&app).bikes[7].profile, ProfileId::RoadAero);
+    assert_eq!(view(&app).bikes[7].card[0], "Road - aero 2");
     assert_eq!(balance(&app), 10_500 - 5_279 - 1_817 - 600);
     // A starter bike is never sold; the bought one is.
     run(&mut app, "bikes.sell road");
-    assert_eq!(scene(&app).bikes.len(), 7);
+    assert_eq!(scene(&app).bikes.len(), 8);
     run(&mut app, "bikes.sell road-aero-2");
     frames(&mut app, 2);
-    assert_eq!(view(&app).bikes.len(), 6);
+    assert_eq!(view(&app).bikes.len(), 7);
     assert!(balance(&app) > 10_500 - 5_279 - 1_817 - 600);
 }
 

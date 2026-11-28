@@ -263,7 +263,7 @@ pub fn row_text(
         (Kind::SellBike(id), _) => {
             let b = g.bike(id)?;
             (
-                b.label(),
+                g.label(cat, b),
                 format!("sells for {}", hearts(i64::from(g.bike_refund(b)))),
                 false,
             )
@@ -530,7 +530,12 @@ mod tests {
         let top = rows(cat(), g, BenchPage::Top);
         assert!(top.len() <= 6, "{top:?}");
         assert_eq!(top.len(), 6, "four bike types, the shelf, selling");
-        for t in BikeType::ALL {
+        // The folding bike (2.5.1) has only its starter frame: no page.
+        assert!(framesets(cat(), BikeType::Folding).is_empty());
+        for t in BikeType::ALL
+            .into_iter()
+            .filter(|t| *t != BikeType::Folding)
+        {
             let page = rows(cat(), g, BenchPage::Type(t));
             assert!(page.len() <= 6, "{t:?}: {}", page.len());
             let frames: Vec<&Part> = page
@@ -554,8 +559,9 @@ mod tests {
             let builds = rows(cat(), g, BenchPage::Builds(t));
             assert!(builds.len() <= 6 && !builds.is_empty());
         }
-        // Road: the alloy, carbon, climbing and aero framesets.
-        assert_eq!(framesets(cat(), BikeType::Road).len(), 4);
+        // Road: the alloy, carbon, climbing and aero framesets, and the
+        // "newk it" frameset (spec 14 Phase 15, 15Q).
+        assert_eq!(framesets(cat(), BikeType::Road).len(), 5);
         // Nothing to sell and nothing on the shelf at the start.
         assert!(rows(cat(), g, BenchPage::Sell).is_empty());
         assert!(rows(cat(), g, BenchPage::Spares).is_empty());

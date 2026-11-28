@@ -1017,7 +1017,7 @@ impl SectionReader {
                 Err(e) => return Err(e),
             }
         } else if &tag == crate::tunnels::TUNNELS_TAG {
-            // Optional (spec 4.3, v7.15): a newer layout is skipped (the
+            // Optional (spec 4.3, v7.18): a newer layout is skipped (the
             // renderer classifies the tunnels from the terrain). Small, so
             // also in skeletons and streamed bases.
             match crate::tunnels::read_tunnels(payload) {

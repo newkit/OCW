@@ -90,7 +90,7 @@ pub struct RegionLook {
     /// part of [`RegionLook::is_empty`].
     pub water_lines: Option<crate::water_lines::WaterLines>,
     /// The tunnels' sections as the world builder decided them (section
-    /// `TUNL`, spec 4.3 *Shaped round the tunnels*, v7.15; optional,
+    /// `TUNL`, spec 4.3 *Shaped round the tunnels*, v7.18; optional,
     /// package-wide). Not part of [`RegionLook::is_empty`].
     pub tunnels: Option<crate::tunnels::TunnelSections>,
 }

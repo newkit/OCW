@@ -2,7 +2,8 @@
 
 **Try it in your browser: <https://newkit.github.io/OCW/>** – ride solo on the
 test routes or in the worlds, or **ride together with everyone on the public
-server** (Liechtenstein, with voice chat), with virtual power or a smart
+server** on Fly.io (Liechtenstein, with voice chat and 10 bots; who is riding:
+<https://ocw-server.fly.dev/>), with virtual power or a smart
 trainer over Bluetooth in Chrome or Edge. It is a development build (spec 14
 Phase 10 B8a, 11.5 *Join info*); sign-in comes with the hosted version.
 
@@ -4440,7 +4441,7 @@ Three days before the certificate ends the server makes the next one and lists i
 
 **Options:** `OCW_SERVER_ARGS` in `fly.toml` (default `--bots 10 --echo-bot`: 10 server bots riding the roads day and night at different strengths, 85 – 280 W, so they spread out over the world – they start together at the session's start and part at the junctions and by speed; they keep riding when no person is on, are shown as bots on the status page and count against no limit – and the Echo rider for the voice echo test). `OCW_WORLD` names the package.
 
-**Size and costs.** Measured with Liechtenstein, 3 bots and the Echo rider: `ocw-server` holds 490 MB, `livekit-server` 80 MB, and a 50 Hz tick takes 0.06 ms of the 20 ms budget. So 1 GB of memory is the smallest size that fits, and one shared CPU is plenty. Fly's prices (November 2026, Frankfurt): the machine `shared-cpu-1x` with 1 GB about $7.73 a month, the dedicated IPv4 $2, the 1 GB volume $0.15, outbound traffic $0.02/GB (a rider uses a few MB an hour). That is about $10 a month, always on. TLS on 443 uses Fly's shared `*.fly.dev` certificate: no extra cost. **The Fly.io budget is at most $16 a month** (decided by the user, 2026-11-26). About $10 is for this game server. Managed Postgres (Developer) takes about $4 and the accounts service (auto-stop) $0 – 2; both come later. Nothing beyond that may be added without a new decision: a second game machine, a larger size, a second IPv4 or more volume. The machine does not stop by itself: Fly's proxy cannot wake a stopped machine for UDP, so a stopped server could not be joined.
+**Size and costs.** Measured with Liechtenstein, 3 bots and the Echo rider: `ocw-server` holds 490 MB, `livekit-server` 80 MB, and a 50 Hz tick takes 0.06 ms of the 20 ms budget. With 10 bots, the Echo rider and one person (release v12, 2026-11-28, five minutes after the start): `ocw-server` 439 MB, `livekit-server` 68 MB, 323 MB of the 965 MB still available, the tick 0.29 ms mean (0.45 ms p95) of the 20 ms – a bot costs a few kilobytes and next to no tick time. So 1 GB of memory is the smallest size that fits, and one shared CPU is plenty. Fly's prices (November 2026, Frankfurt): the machine `shared-cpu-1x` with 1 GB about $7.73 a month, the dedicated IPv4 $2, the 1 GB volume $0.15, outbound traffic $0.02/GB (a rider uses a few MB an hour). That is about $10 a month, always on. TLS on 443 uses Fly's shared `*.fly.dev` certificate: no extra cost. **The Fly.io budget is at most $16 a month** (decided by the user, 2026-11-26). About $10 is for this game server. Managed Postgres (Developer) takes about $4 and the accounts service (auto-stop) $0 – 2; both come later. Nothing beyond that may be added without a new decision: a second game machine, a larger size, a second IPv4 or more volume. The machine does not stop by itself: Fly's proxy cannot wake a stopped machine for UDP, so a stopped server could not be joined.
 
 ## Build infrastructure
 

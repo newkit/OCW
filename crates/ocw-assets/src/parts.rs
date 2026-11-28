@@ -280,8 +280,8 @@ pub struct Part {
     /// Groupsets: the crankset, cassette and chain fitted with it (spec
     /// 4B *Groupset and its parts*; free parts that are never sold alone).
     pub includes: Vec<String>,
-    /// Frames: `bike-<profile>`; base parts: `stock`; else a part variant
-    /// (kit: a rider variant).
+    /// Frames: `bike-<profile>` or a named frameset's frame variant;
+    /// base parts: `stock`; else a part variant (kit: a rider variant).
     pub model: String,
     /// Key into the sources file.
     pub sources: Option<String>,
@@ -1074,8 +1074,14 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
                             prof.bike().id()
                         ));
                     }
+                    // The profile's bike, or a named frameset: a frame
+                    // variant of the generator for its bike type (the
+                    // "newk it" frameset, spec 14 Phase 15); the base
+                    // frame is always the profile's bike.
                     let want = format!("bike-{}", prof.id());
-                    if p.model != want {
+                    let named = crate::bikes::variant(&p.model)
+                        .is_some_and(|v| v.slot == "frame" && v.fits.contains(&prof.bike()));
+                    if p.model != want && (p.is_base() || !named) {
                         err(format!("{at}: model {:?}, expected {want:?}", p.model));
                     }
                 }

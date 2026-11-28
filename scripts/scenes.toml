@@ -542,7 +542,7 @@ video = 8
 
 [[scene]]
 name = "tunnel-ceiling-day"
-description = "Inside the Steg tunnel (km 9.1) at noon: the sprayed-concrete vault, the light band at the foot of the walls, soot over the lanes, the cable tray with its lamps, reflectors and markings (spec 3.2, v7.15)"
+description = "Inside the Steg tunnel (km 9.1) at noon: the sprayed-concrete vault, the light band at the foot of the walls, soot over the lanes, the cable tray with its lamps, reflectors and markings (spec 3.2, v7.18)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
 riders = "active = \"Jo Climber\"\n[[rider]]\nname = \"Jo Climber\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#00838F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -551,7 +551,7 @@ shot = 9
 
 [[scene]]
 name = "tunnel-ceiling-night"
-description = "Inside the Steg tunnel (km 9.1) at night: the same view lit only by the tunnel lamps and the bike light (spec 3.2, v7.15)"
+description = "Inside the Steg tunnel (km 9.1) at night: the same view lit only by the tunnel lamps and the bike light (spec 3.2, v7.18)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
 riders = "active = \"Kai Descent\"\n[[rider]]\nname = \"Kai Descent\"\nweight_kg = 79.0\nheight_cm = 186.0\nbike = \"gravel\"\nframe_color = \"#455A64\"\njersey_color = \"#C0CA33\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -560,7 +560,7 @@ shot = 9
 
 [[scene]]
 name = "tunnel-portal-day"
-description = "The Steg tunnel's lower portal from outside (the rider waiting at route km 8.72, the portal at 8.79) on a summer afternoon: the concrete portal frame in the slope (spec 3.2, v7.15)"
+description = "The Steg tunnel's lower portal from outside (the rider waiting at route km 8.72, the portal at 8.79) on a summer afternoon: the concrete portal frame in the slope (spec 3.2, v7.18)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "0"]
 riders = "active = \"Lu Cadence\"\n[[rider]]\nname = \"Lu Cadence\"\nweight_kg = 57.0\nheight_cm = 162.0\nbike = \"road\"\nframe_color = \"#FBC02D\"\njersey_color = \"#3949AB\"\nhelmet_color = \"#3949AB\"\nkit = \"plain\"\n"
@@ -920,7 +920,7 @@ warmup = 4
 video = 13
 max_video_mb = 6
 
-# --- Andorra tunnels (spec 3.2, 4.3, v7.15) -------------------------------
+# --- Andorra tunnels (spec 3.2, 4.3, v7.18) -------------------------------
 # Before / after the same camera: OCW_TUNNELS=legacy with the live package,
 # then the shaped package (scripts/tunnels-build.sh) with the new look. Tunnel
 # km from the probes below: Ordino - Arcalís 13.05 - 13.23 (the CG-3 tunnel,
@@ -928,7 +928,7 @@ max_video_mb = 6
 
 [[scene]]
 name = "andorra-tunnel-arcalis-entry"
-description = "Ordino - Arcalís km 12.98: the CG-3 tunnel (km 13.05 - 13.23) ahead from behind and above the waiting rider; before (OCW_TUNNELS=legacy, live package) the tube stood out of the slope, after the portal is cut into the mound (spec 3.2, 4.3, v7.15)"
+description = "Ordino - Arcalís km 12.98: the CG-3 tunnel (km 13.05 - 13.23) ahead from behind and above the waiting rider; before (OCW_TUNNELS=legacy, live package) the tube stood out of the slope, after the portal is cut into the mound (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Mia Switchback\"\n[[rider]]\nname = \"Mia Switchback\"\nweight_kg = 63.0\nheight_cm = 169.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -937,7 +937,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-exit"
-description = "Ordino - Arcalís km 13.30: the CG-3 tunnel's upper portal (km 13.23) seen from the front of the waiting rider (spec 3.2, 4.3, v7.15)"
+description = "Ordino - Arcalís km 13.30: the CG-3 tunnel's upper portal (km 13.23) seen from the front of the waiting rider (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Noa Granfondo\"\n[[rider]]\nname = \"Noa Granfondo\"\nweight_kg = 77.0\nheight_cm = 183.0\nbike = \"gravel\"\nframe_color = \"#2E7D32\"\njersey_color = \"#ECEFF1\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
@@ -946,7 +946,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-gallery-arcalis-1175"
-description = "Ordino - Arcalís km 11.75: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.15)"
+description = "Ordino - Arcalís km 11.75: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Oli Echelon\"\n[[rider]]\nname = \"Oli Echelon\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#E65100\"\njersey_color = \"#1E88E5\"\nhelmet_color = \"#E65100\"\nkit = \"plain\"\n"
@@ -955,7 +955,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-gallery-arcalis-1195"
-description = "Ordino - Arcalís km 11.95: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.15)"
+description = "Ordino - Arcalís km 11.95: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Pia Bergpreis\"\n[[rider]]\nname = \"Pia Bergpreis\"\nweight_kg = 56.0\nheight_cm = 161.0\nbike = \"road\"\nframe_color = \"#D81B60\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#FFFFFF\"\nkit = \"band\"\n"
@@ -964,7 +964,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-gallery-arcalis-1215"
-description = "Ordino - Arcalís km 12.15: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.15)"
+description = "Ordino - Arcalís km 12.15: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Quin Rouleur\"\n[[rider]]\nname = \"Quin Rouleur\"\nweight_kg = 85.0\nheight_cm = 190.0\nbike = \"mtb\"\nframe_color = \"#37474F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FDD835\"\nkit = \"sash\"\n"
@@ -973,7 +973,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-envalira-entry"
-description = "Andorra la Vella - Envalira km 5.06: the CG-2 tunnel (km 5.13 - 5.26) ahead from behind and above (spec 3.2, 4.3, v7.15)"
+description = "Andorra la Vella - Envalira km 5.06: the CG-2 tunnel (km 5.13 - 5.26) ahead from behind and above (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/andorra-envalira.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Rae Tempo\"\n[[rider]]\nname = \"Rae Tempo\"\nweight_kg = 68.0\nheight_cm = 174.0\nbike = \"road\"\nframe_color = \"#C62828\"\njersey_color = \"#FAFAFA\"\nhelmet_color = \"#C62828\"\nkit = \"band\"\n"
@@ -982,7 +982,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-inside-day"
-description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at noon: the new vault, light band, lamp tray, reflectors and markings (spec 3.2, v7.15)"
+description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at noon: the new vault, light band, lamp tray, reflectors and markings (spec 3.2, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Sol Climber\"\n[[rider]]\nname = \"Sol Climber\"\nweight_kg = 80.0\nheight_cm = 187.0\nbike = \"gravel\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -991,7 +991,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-inside-night"
-description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at night: its lamps (denser in the entrance zones) and the bike light (spec 3.2, v7.15)"
+description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at night: its lamps (denser in the entrance zones) and the bike light (spec 3.2, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Tia Watts\"\n[[rider]]\nname = \"Tia Watts\"\nweight_kg = 59.0\nheight_cm = 165.0\nbike = \"road\"\nframe_color = \"#00897B\"\njersey_color = \"#F06292\"\nhelmet_color = \"#FAFAFA\"\nkit = \"plain\"\n"
@@ -1000,7 +1000,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-video"
-description = "Video: riding through the CG-3 tunnel on the Arcalís climb (km 12.96 - 13.25) at 900 W: the portal in the slope, the tunnel camera, the lamps, out into the light (spec 3.2, v7.15)"
+description = "Video: riding through the CG-3 tunnel on the Arcalís climb (km 12.96 - 13.25) at 900 W: the portal in the slope, the tunnel camera, the lamps, out into the light (spec 3.2, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "900", "--window", "1920x1080"]
 riders = "active = \"Mia Switchback\"\n[[rider]]\nname = \"Mia Switchback\"\nweight_kg = 63.0\nheight_cm = 169.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -1027,7 +1027,7 @@ at = ["0.5=hud off", "2.0=teleport 0", "3.5=teleport 1", "5.0=teleport 2", "6.5=
 shot = 47
 pick = false
 
-# --- Andorra tunnels from outside, the same fixed camera before / after (spec 3.2, 4.3, v7.15)
+# --- Andorra tunnels from outside, the same fixed camera before / after (spec 3.2, 4.3, v7.18)
 # A guided camera (camera.path, two equal keys) 80 m to each side of the worst exposed point of each
 # tunnel and 35 m above its road (world-builder tunnels --report-only: "at ... road y ... dir ...",
 # test-output/tunnels/), looking at the road. Before: OCW_TUNNELS=legacy with the live package;
@@ -1035,7 +1035,7 @@ pick = false
 
 [[scene]]
 name = "andorra-tunnel-outside-sant-antoni-right"
-description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Túnel de Sant Antoni (CG-1, way 173168838; before: 54 m of tube out of the terrain, up to 11.9 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Túnel de Sant Antoni (CG-1, way 173168838; before: 54 m of tube out of the terrain, up to 11.9 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-6527,1361", "--bots", "0", "--power", "0"]
 riders = "active = \"Ana Pedal\"\n[[rider]]\nname = \"Ana Pedal\"\nweight_kg = 62.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -1044,7 +1044,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-sant-antoni-left"
-description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Sant Antoni (CG-1, way 173168838; before: 54 m of tube out of the terrain, up to 11.9 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Sant Antoni (CG-1, way 173168838; before: 54 m of tube out of the terrain, up to 11.9 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-6527,1361", "--bots", "0", "--power", "0"]
 riders = "active = \"Ben Gradient\"\n[[rider]]\nname = \"Ben Gradient\"\nweight_kg = 78.0\nheight_cm = 184.0\nbike = \"gravel\"\nframe_color = \"#2E7D32\"\njersey_color = \"#ECEFF1\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
@@ -1053,7 +1053,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-cg3-gallery-right"
-description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: the CG-3 avalanche gallery below Arcalís (tunnel=avalanche_protector, way 997957646; before: a tube, 26 m out of the slope, up to 6.5 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: the CG-3 avalanche gallery below Arcalís (tunnel=avalanche_protector, way 997957646; before: a tube, 26 m out of the slope, up to 6.5 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-6660,-10113", "--bots", "0", "--power", "0"]
 riders = "active = \"Ben Gradient\"\n[[rider]]\nname = \"Ben Gradient\"\nweight_kg = 78.0\nheight_cm = 184.0\nbike = \"gravel\"\nframe_color = \"#2E7D32\"\njersey_color = \"#ECEFF1\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
@@ -1062,7 +1062,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-cg3-gallery-left"
-description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: the CG-3 avalanche gallery below Arcalís (tunnel=avalanche_protector, way 997957646; before: a tube, 26 m out of the slope, up to 6.5 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: the CG-3 avalanche gallery below Arcalís (tunnel=avalanche_protector, way 997957646; before: a tube, 26 m out of the slope, up to 6.5 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-6660,-10113", "--bots", "0", "--power", "0"]
 riders = "active = \"Cleo Spin\"\n[[rider]]\nname = \"Cleo Spin\"\nweight_kg = 55.0\nheight_cm = 160.0\nbike = \"road\"\nframe_color = \"#D81B60\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#FFFFFF\"\nkit = \"plain\"\n"
@@ -1071,7 +1071,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-cg3-tunnel-right"
-description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: the CG-3 tunnel below Arcalís (way 6227097; before: 26 m out, up to 4.4 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: the CG-3 tunnel below Arcalís (way 6227097; before: 26 m out, up to 4.4 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-7783,-10224", "--bots", "0", "--power", "0"]
 riders = "active = \"Cleo Spin\"\n[[rider]]\nname = \"Cleo Spin\"\nweight_kg = 55.0\nheight_cm = 160.0\nbike = \"road\"\nframe_color = \"#D81B60\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#FFFFFF\"\nkit = \"plain\"\n"
@@ -1080,7 +1080,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-cg3-tunnel-left"
-description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: the CG-3 tunnel below Arcalís (way 6227097; before: 26 m out, up to 4.4 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: the CG-3 tunnel below Arcalís (way 6227097; before: 26 m out, up to 4.4 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-7783,-10224", "--bots", "0", "--power", "0"]
 riders = "active = \"Dev Cadence\"\n[[rider]]\nname = \"Dev Cadence\"\nweight_kg = 84.0\nheight_cm = 189.0\nbike = \"mtb\"\nframe_color = \"#37474F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FDD835\"\nkit = \"band\"\n"
@@ -1089,7 +1089,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-prat-del-ruiders-right"
-description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-9846,-4439", "--bots", "0", "--power", "0"]
 riders = "active = \"Dev Cadence\"\n[[rider]]\nname = \"Dev Cadence\"\nweight_kg = 84.0\nheight_cm = 189.0\nbike = \"mtb\"\nframe_color = \"#37474F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FDD835\"\nkit = \"band\"\n"
@@ -1098,7 +1098,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-prat-del-ruiders-left"
-description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-9846,-4439", "--bots", "0", "--power", "0"]
 riders = "active = \"Eli Tempo\"\n[[rider]]\nname = \"Eli Tempo\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -1107,7 +1107,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-radio-andorra-right"
-description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-2404,1247", "--bots", "0", "--power", "0"]
 riders = "active = \"Eli Tempo\"\n[[rider]]\nname = \"Eli Tempo\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -1116,7 +1116,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-radio-andorra-left"
-description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.15)"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-2404,1247", "--bots", "0", "--power", "0"]
 riders = "active = \"Ana Pedal\"\n[[rider]]\nname = \"Ana Pedal\"\nweight_kg = 62.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -1125,7 +1125,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-prat-del-ruiders-left-night"
-description = "At night (22:45), from outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.15)"
+description = "At night (22:45), from outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-9846,-4439", "--bots", "0", "--power", "0"]
 riders = "active = \"Eli Tempo\"\n[[rider]]\nname = \"Eli Tempo\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -1134,7 +1134,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-outside-radio-andorra-left-night"
-description = "At night (22:45), from outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.15)"
+description = "At night (22:45), from outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.18)"
 world = "andorra"
 args = ["--world", "{world}", "--free-ride", "--start", "-2404,1247", "--bots", "0", "--power", "0"]
 riders = "active = \"Ana Pedal\"\n[[rider]]\nname = \"Ana Pedal\"\nweight_kg = 62.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -6607,4 +6607,127 @@ world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-25712,-7061", "--bots", "0", "--power", "150"]
 at = ["0.3=time 2026-11-28 12:00", "0.3=weather clear", "0.5=character --body a --hair ponytail --hair-colour #8D5524 --skin 4", "0.6=set --temp traffic.live_road on", "2=camera.orbit 20 30 25", "4=traffic road busy"]
 shot = 30
+pick = false
+
+# --- The "newk it" bike (spec 14 Phase 15, *The "newk it" bike*) --------------
+# The user's own bike design and brand, used with permission: the frameset
+# bought at the bench (it comes in its livery) and ridden; made-up riders in
+# varied looks. OCW Studio's views of the file: scripts/newkit-shots.sh.
+
+[[scene]]
+name = "newkit-workshop-stand"
+description = "The \"newk it\" bike on the workshop's repair stand (bought at the bench, in its livery): the black flake frame with its holographic glints fading to magenta, \"newk it\" in pink along the down tube, the unicorn on the head tube, pink inner fork and bar tape, the rims' letters"
+args = ["--route", "hills", "--bots", "0", "--power", "0"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2=workshop open", "3=workshop select", "4.5=workshop orbit -35", "5=workshop zoom 2"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "newkit-kaiserstuhl-vineyards"
+description = "A made-up rider (Mira Valley: ponytail, pink sash kit) on the \"newk it\" bike between the vineyards of the Kaiserstuhl on a September morning, side camera close (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0", "--power", "210"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-12 10:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2A20 --skin 4 --glasses 1", "0.7=kit.design --pattern sash --jersey #FF2A93 --second #1E1E22 --shorts #1E1E22 --socks #F2F2EE", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2.5=camera.orbit 140 8 6"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "newkit-kaiserstuhl-vineyards-video"
+description = "Video: the \"newk it\" bike riding through the Kaiserstuhl vineyards, the camera from the front quarter (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0", "--power", "230"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-12 10:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2A20 --skin 4 --glasses 1", "0.7=kit.design --pattern sash --jersey #FF2A93 --second #1E1E22 --shorts #1E1E22 --socks #F2F2EE", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2=camera.orbit 140 8 6"]
+video = 6
+pick = false
+
+[[scene]]
+name = "newkit-freiburg-dreisam"
+description = "Another made-up rider (Theo Brook: short hair and beard, yellow stripes kit) on the \"newk it\" bike on the bridge over the Dreisam at the Schwabentor in Freiburg, the river and the town behind (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-7639,-7817", "--bots", "0", "--power", "40"]
+riders = "active = \"Theo Brook\"\n[[rider]]\nname = \"Theo Brook\"\nweight_kg = 78.0\nheight_cm = 184.0\nbike = \"road-aero\"\njersey_color = \"#FDD835\"\nhelmet_color = \"#1E1E22\"\nkit = \"stripes\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-03-21 11:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #5A3825 --skin 10 --beard 2", "0.7=kit.design --pattern stripes --jersey #FDD835 --second #1E1E22 --shorts #1E1E22", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2.5=camera.orbit 100 16 16"]
+shot = 7
+pick = false
+
+# --- The folding bike (spec 2.5, 2026-11-28, after the user's photo) -------
+# A 20-inch city folding bike in sky blue with hot pink tyres, grips and
+# pedals; made-up riders with different looks; never the unicorn here.
+
+[[scene]]
+name = "folding-freiburg-autumn"
+description = "The folding bike (spec 2.5, 2026-11-28): Fenna Faltrad (made-up) rides the sky-blue 20-inch folding bike with hot pink tyres, chrome fenders and rack upright through Freiburg's old town on an autumn afternoon (no HUD), the camera beside her"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "2", "--power", "150"]
+riders = """
+active = "Fenna Faltrad"
+
+[[rider]]
+name = "Fenna Faltrad"
+weight_kg = 61.0
+height_cm = 168.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#F4E3C1"
+helmet_color = "#2E7D32"
+kit = "plain"
+"""
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-22 15:30", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair ponytail --hair-colour auburn --skin 3 --glasses 1", "2.5=camera.orbit 120 8 4.5"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "folding-freiburg-front"
+description = "The folding bike from the front (spec 2.5): Milo Klapp (made-up) sits upright on it, the hands on the swept-back bar's pink grips, in Freiburg's old town in autumn (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "0", "--power", "130"]
+riders = """
+active = "Milo Klapp"
+
+[[rider]]
+name = "Milo Klapp"
+weight_kg = 82.0
+height_cm = 184.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#37474F"
+helmet_color = "#F2F2EE"
+kit = "band"
+"""
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-22 16:10", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --age 50s --shape normal --hair short --hair-colour #4A4A4A --skin 9 --beard short-boxed", "2.5=camera.orbit 160 6 4"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "folding-freiburg-video"
+description = "Video: the folding bike (spec 2.5) in Freiburg's old town in autumn – Fenna Faltrad (made-up) pedalling upright, the small 20-inch wheels turning, two bots on road bikes"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "2", "--power", "160"]
+riders = """
+active = "Fenna Faltrad"
+
+[[rider]]
+name = "Fenna Faltrad"
+weight_kg = 61.0
+height_cm = 168.0
+bike = "folding"
+frame_color = "#6FB3E0"
+jersey_color = "#F4E3C1"
+helmet_color = "#2E7D32"
+kit = "plain"
+"""
+at = ["0.5=set display.quality high", "0.5=time 2026-10-22 15:30", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair ponytail --hair-colour auburn --skin 3 --glasses 1", "1=camera.orbit 100 10 5"]
+video = 6
+pick = false
+
+[[scene]]
+name = "folding-workshop-stand"
+description = "The workshop (spec 14 Phase 4): the folding bike on the repair stand in its sky blue, the garage's other bikes on the wall; Rosa Pedal (made-up)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Rosa Pedal\"\n[[rider]]\nname = \"Rosa Pedal\"\nweight_kg = 70.0\nheight_cm = 175.0\nbike = \"folding\"\n"
+at = ["2.2=workshop open"]
+shot = 10
 pick = false
