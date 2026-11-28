@@ -1123,6 +1123,24 @@ riders = "active = \"Ana Pedal\"\n[[rider]]\nname = \"Ana Pedal\"\nweight_kg = 6
 at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "1=camera.path key -2332 1265 1289 300 -22", "1=camera.path key -2332 1265 1289 300 -22", "1.5=camera.path play --seconds 100000"]
 shot = 12
 
+[[scene]]
+name = "andorra-tunnel-outside-prat-del-ruiders-left-night"
+description = "At night (22:45), from outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.15)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-9846,-4439", "--bots", "0", "--power", "0"]
+riders = "active = \"Eli Tempo\"\n[[rider]]\nname = \"Eli Tempo\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 22:45", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #5D4037 --skin 7", "1=camera.path key -9827 1630 -4521 193 -21", "1=camera.path key -9827 1630 -4521 193 -21", "1.5=camera.path play --seconds 100000"]
+shot = 12
+
+[[scene]]
+name = "andorra-tunnel-outside-radio-andorra-left-night"
+description = "At night (22:45), from outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.15)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-2404,1247", "--bots", "0", "--power", "0"]
+riders = "active = \"Ana Pedal\"\n[[rider]]\nname = \"Ana Pedal\"\nweight_kg = 62.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 22:45", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "1=camera.path key -2332 1265 1289 300 -22", "1=camera.path key -2332 1265 1289 300 -22", "1.5=camera.path play --seconds 100000"]
+shot = 12
+
 # --- Black Forest world package (world = "blackforest") ---------------------
 # scripts/fetch-pilot.sh blackforest && scripts/build-blackforest.sh
 # (data/blackforest/blackforest.ocwpkg, the southern Black Forest, spec §4.7).

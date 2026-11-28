@@ -334,17 +334,22 @@ fn vault_colour(l: f32, h: f32, half: f32, road_half: f32) -> [f32; 4] {
 /// Builds the meshes of one tunnel: its axis points (every
 /// [`tn::STEP_M`], from the edge's start) and its sections.
 pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) -> TunnelMeshes {
-    tunnel_meshes_with(axis, sections, seed, [true, true])
+    tunnel_meshes_with(axis, sections, seed, [true, true], false)
 }
 
 /// [`tunnel_meshes`]; `portals` says whether each end of the axis is a
 /// portal (false where the tunnel goes on in the next edge of the graph:
-/// no frame inside the hill).
+/// no frame inside the hill). `roads_drawn`: the package draws the road
+/// of the open and gallery stretches as road strips
+/// (`ocw_world::tunnels::surface_strips`, with the road meshes and
+/// materials of the road they continue): no road surface of our own there,
+/// only the gallery's structure.
 pub fn tunnel_meshes_with(
     axis: &[AxisPoint],
     sections: &[tn::Section],
     seed: u64,
     portals: [bool; 2],
+    roads_drawn: bool,
 ) -> TunnelMeshes {
     let mut out = TunnelMeshes::default();
     if axis.len() < 2 {
@@ -388,8 +393,9 @@ pub fn tunnel_meshes_with(
         } else {
             match kind_at(mid) {
                 SectionKind::Gallery { hill_right } => {
-                    gallery_segment(&mut out, a, b, hill_right, seed);
+                    gallery_segment(&mut out, a, b, hill_right, seed, !roads_drawn);
                 }
+                _ if roads_drawn => {}
                 _ => open_segment(&mut out, a, b),
             }
         }
@@ -657,20 +663,31 @@ fn tube_segment(
     }
 }
 
+/// The galleries' concrete (vertex colour, linear, times the texture's
+/// grain): as light as the tube's painted lower band.
+pub const GALLERY_CONCRETE: f32 = 0.76;
+/// The soot near the slab's valley edge and on its edge face (factor).
+pub const GALLERY_EDGE_SOOT: f32 = 0.66;
+
 fn gallery_segment(
     out: &mut TunnelMeshes,
     a: AxisPoint,
     b: AxisPoint,
     hill_right: bool,
     seed: u64,
+    road: bool,
 ) {
     let half = a.half();
-    road_surface(&mut out.lit, a, b, half, [1.0, 1.0], true, true);
+    if road {
+        road_surface(&mut out.lit, a, b, half, [1.0, 1.0], true, true);
+    }
     let sg: f32 = if hill_right { 1.0 } else { -1.0 };
     let roof = GALLERY_ROOF_M as f32;
     let slab = GALLERY_SLAB_M as f32;
+    // Light weathered concrete like the tube's painted band (it was a dark
+    // grey slab from above), soot only near the slab's edges.
     let concrete = |s: f64| {
-        let v = 0.58 * (0.9 + 0.1 * noise1(s / 9.0, seed));
+        let v = GALLERY_CONCRETE * (0.9 + 0.1 * noise1(s / 9.0, seed));
         [v * 1.02, v, v * 0.95, 1.0]
     };
     let (ca, cb) = (concrete(a.s), concrete(b.s));
@@ -691,16 +708,53 @@ fn gallery_segment(
     let wall = sg * half;
     let valley = -sg * (half + 0.6);
     // Inner faces run from the road side outwards so the normal faces in.
+    // The wall's foot: on the walkway, or into the ground beside the
+    // package's road strip.
+    let foot = if road { WALKWAY_M } else { -0.3 };
     if hill_right {
-        face(&mut bl, wall, WALKWAY_M, wall, roof, 0.95);
+        face(&mut bl, wall, foot, wall, roof, 0.95);
         face(&mut bl, wall, roof, valley, roof, 0.7);
-        face(&mut bl, valley, roof, valley, roof + slab, 0.9);
-        face(&mut bl, valley, roof + slab, wall + 0.4, roof + slab, 1.0);
+        face(
+            &mut bl,
+            valley,
+            roof,
+            valley,
+            roof + slab,
+            GALLERY_EDGE_SOOT,
+        );
+        let (t0, t1) = (valley, wall + 0.4);
+        face(
+            &mut bl,
+            t0,
+            roof + slab,
+            t0 + 0.5,
+            roof + slab,
+            GALLERY_EDGE_SOOT,
+        );
+        face(&mut bl, t0 + 0.5, roof + slab, t1 - 0.4, roof + slab, 1.0);
+        face(&mut bl, t1 - 0.4, roof + slab, t1, roof + slab, 0.85);
     } else {
-        face(&mut bl, wall, roof, wall, WALKWAY_M, 0.95);
+        face(&mut bl, wall, roof, wall, foot, 0.95);
         face(&mut bl, valley, roof, wall, roof, 0.7);
-        face(&mut bl, valley, roof + slab, valley, roof, 0.9);
-        face(&mut bl, wall - 0.4, roof + slab, valley, roof + slab, 1.0);
+        face(
+            &mut bl,
+            valley,
+            roof + slab,
+            valley,
+            roof,
+            GALLERY_EDGE_SOOT,
+        );
+        let (t0, t1) = (wall - 0.4, valley);
+        face(&mut bl, t0, roof + slab, t0 + 0.4, roof + slab, 0.85);
+        face(&mut bl, t0 + 0.4, roof + slab, t1 - 0.5, roof + slab, 1.0);
+        face(
+            &mut bl,
+            t1 - 0.5,
+            roof + slab,
+            t1,
+            roof + slab,
+            GALLERY_EDGE_SOOT,
+        );
     }
     // Pillars and the parapet on the valley side.
     let pl = -sg * (half - 0.1);
@@ -744,6 +798,58 @@ fn gallery_segment(
 fn open_segment(out: &mut TunnelMeshes, a: AxisPoint, b: AxisPoint) {
     road_surface(&mut out.lit, a, b, a.half(), [1.0, 1.0], false, true);
 }
+
+/// A small concrete deck under a road crossing over an open stretch in a
+/// cutting (`ocw_world::tunnels::over_crossings`): a slab under the
+/// crossing road's surface at `p` (its height), spanning the cutting along
+/// the crossing road's direction `dir`, with an abutment at each end down
+/// to the open road's level `road_y`. `road_dir`: the open road's
+/// direction, `road_width` its width, `width` the crossing road's.
+pub fn crossing_deck(
+    m: &mut MeshArrays,
+    p: Vec3,
+    dir: Vec2,
+    width: f32,
+    road_y: f32,
+    road_dir: Vec2,
+    road_width: f32,
+) {
+    let sin = (dir.x * road_dir.y - dir.y * road_dir.x).abs().max(0.3);
+    let span = (road_width + 2.0 * DECK_MARGIN_M) / sin;
+    let along = Vec3::new(dir.x, 0.0, dir.y);
+    let across = Vec3::new(-dir.y, 0.0, dir.x);
+    let c = grey(GALLERY_CONCRETE * 0.95);
+    let half_w = width / 2.0 + 0.5;
+    let mut bl = Builder { m };
+    // The slab, its top just under the crossing road's surface.
+    bl.cuboid(
+        p - Vec3::Y * (0.05 + DECK_SLAB_M / 2.0),
+        along * (span / 2.0 + 0.6),
+        Vec3::Y * (DECK_SLAB_M / 2.0),
+        across * half_w,
+        c,
+    );
+    // The abutments, from below the open road's level up to the slab.
+    let bottom = road_y - 0.3;
+    let top = p.y - 0.05 - DECK_SLAB_M;
+    if top > bottom {
+        for side in [-1.0f32, 1.0] {
+            let at = p + along * side * (span / 2.0 + 0.3);
+            bl.cuboid(
+                Vec3::new(at.x, (top + bottom) / 2.0, at.z),
+                along * 0.3,
+                Vec3::Y * ((top - bottom) / 2.0),
+                across * half_w,
+                scale(c, 0.9),
+            );
+        }
+    }
+}
+
+/// The margin on each side of the open road under a crossing deck (m).
+pub const DECK_MARGIN_M: f32 = 1.5;
+/// The deck slab's thickness (m).
+pub const DECK_SLAB_M: f32 = 0.7;
 
 /// A concrete frame round the tube's mouth at `p`, facing `out_dir`
 /// along the axis (−1 at the start, +1 at the end).
@@ -1110,6 +1216,71 @@ mod tests {
         let pillars = (60.0 / GALLERY_PILLAR_STEP_M) as usize;
         // Only the pillars' faces reach from the road to the roof on the left.
         assert!(wall_left <= pillars * 6, "{wall_left}");
+    }
+
+    #[test]
+    fn the_gallery_is_light_concrete_with_soot_only_at_the_edges() {
+        let secs = [Section {
+            from: 0.0,
+            to: 60.0,
+            kind: SectionKind::Gallery { hill_right: true },
+        }];
+        let m = tunnel_meshes_with(&axis(60.0), &secs, 4, [true, true], true);
+        // No road of its own (the package's strip), only the structure.
+        let low = m.lit.positions.iter().filter(|p| p[1] < 100.1).count();
+        let up = m.lit.positions.iter().filter(|p| p[1] > 105.0).count();
+        assert!(up > 0);
+        // The slab's top (normal up, over the roof): light, darker only in
+        // the strips at its edges.
+        let top: Vec<f32> = m
+            .lit
+            .positions
+            .iter()
+            .zip(&m.lit.normals)
+            .zip(&m.lit.colors)
+            .filter(|((p, n), _)| p[1] > 100.0 + GALLERY_ROOF_M as f32 + 0.3 && n[1].abs() > 0.9)
+            .map(|(_, c)| c[1])
+            .collect();
+        let max = top.iter().copied().fold(0.0, f32::max);
+        assert!(max > 0.65, "{max}");
+        let dark = top.iter().filter(|&&c| c < max * 0.8).count();
+        assert!(dark > 0 && dark < top.len() / 2, "{dark} of {}", top.len());
+        // The wall reaches into the ground beside the road strip.
+        assert!(m.lit.positions.iter().any(|p| p[1] < 99.9), "{low}");
+    }
+
+    #[test]
+    fn a_crossing_deck_spans_the_cutting_from_the_road_up_to_the_crossing_road() {
+        let mut m = MeshArrays::default();
+        // A path 7 m over a 7 m road, crossing at right angles.
+        crossing_deck(
+            &mut m,
+            Vec3::new(50.0, 107.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            3.0,
+            100.0,
+            Vec2::new(1.0, 0.0),
+            7.0,
+        );
+        let (lo, hi) = bounds(&m);
+        // Under the path's surface, down below the road's level.
+        assert!(hi.y <= 107.0 && hi.y > 106.8, "{hi}");
+        assert!(lo.y < 100.0, "{lo}");
+        // Across the whole cutting (7 m + margins) along the path.
+        assert!(hi.z - lo.z >= 7.0 + 2.0 * DECK_MARGIN_M, "{lo} {hi}");
+        // As wide as the path and a little more.
+        assert!(hi.x - lo.x >= 3.0 && hi.x - lo.x < 5.0, "{lo} {hi}");
+    }
+
+    #[test]
+    fn with_the_package_drawing_the_road_an_open_section_draws_nothing() {
+        let secs = [Section {
+            from: 0.0,
+            to: 40.0,
+            kind: SectionKind::Open,
+        }];
+        let m = tunnel_meshes_with(&axis(40.0), &secs, 1, [true, true], true);
+        assert!(m.is_empty());
     }
 
     #[test]

@@ -313,6 +313,18 @@ pub struct MeshArrays {
 }
 
 impl MeshArrays {
+    /// Appends `other` (its indices shifted).
+    pub fn append(&mut self, other: MeshArrays) {
+        let base = self.positions.len() as u32;
+        self.positions.extend(other.positions);
+        self.normals.extend(other.normals);
+        self.colors.extend(other.colors);
+        self.uvs.extend(other.uvs);
+        self.uvs_b.extend(other.uvs_b);
+        self.indices
+            .extend(other.indices.into_iter().map(|i| i + base));
+    }
+
     /// The material layer of the first vertex (roads; tests).
     pub fn roads_layer(&self) -> Option<f32> {
         self.uvs_b
@@ -937,7 +949,7 @@ pub fn tile_road_meshes(
         deck: &deck,
         style,
     };
-    match (junctions, pkg.graph.as_ref()) {
+    let mut meshes = match (junctions, pkg.graph.as_ref()) {
         (Some(pj), Some(g)) => {
             let shaped = crate::junction_mesh::shape_tile(
                 g,
@@ -950,7 +962,25 @@ pub fn tile_road_meshes(
             crate::junction_mesh::shaped_meshes(&shaped, &ctx)
         }
         _ => crate::road_mesh::road_meshes(&tile.roads, &ctx),
+    };
+    // The open and gallery stretches of the tunnels (spec 3.2): road strips
+    // like any other, the same meshes and materials as the road they
+    // continue (the tunnel drawing adds only the gallery's structure).
+    if let (Some(g), Some(t)) = (pkg.graph.as_ref(), pkg.look.tunnels.as_ref()) {
+        let open = ocw_world::tunnels::surface_strips(
+            g,
+            t,
+            tile.key,
+            f64::from(pkg.tile_size_m),
+            &tile.roads,
+        );
+        if !open.is_empty() {
+            let m = crate::road_mesh::road_meshes(&open, &ctx);
+            meshes.roads.append(m.roads);
+            meshes.overlays.append(m.overlays);
+        }
     }
+    meshes
 }
 
 use ocw_world::trees::hash;

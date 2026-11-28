@@ -160,6 +160,26 @@ pub fn tunnel_eye(track: &dyn Track, distance: f64, lateral: f64) -> (Vec3, Vec3
     (eye, target)
 }
 
+/// The camera's eye while it blends into or out of the tunnel camera:
+/// `eye` as blended, unless it is in the terrain (`ground` at it higher
+/// than the eye) – then it is pulled in along the road to the tunnel eye
+/// `tunnel_eye`, no higher than a metre under the tube's crown, so it never
+/// shows the hill from inside (the Arcalís portal, 2026-11-28).
+pub fn envelope_eye(eye: Vec3, tunnel_eye: Vec3, ground: Option<f32>) -> Vec3 {
+    match ground {
+        Some(g) if g > eye.y - 0.3 => {
+            let road = tunnel_eye.y - TUNNEL_CAM_HEIGHT_M;
+            let roof = road + ocw_world::tunnels::CROWN_M as f32 - 1.0;
+            Vec3::new(
+                tunnel_eye.x,
+                eye.y.min(roof).max(tunnel_eye.y),
+                tunnel_eye.z,
+            )
+        }
+        _ => eye,
+    }
+}
+
 /// Moves `blend` (0 chase … 1 tunnel camera) towards `wanted` over
 /// [`BLEND_S`].
 pub fn smooth_blend(blend: f32, wanted: bool, dt: f32) -> f32 {
@@ -506,6 +526,11 @@ type NearTunnel = (
     (usize, usize),
     Vec<ocw_world::tunnels::AxisSample>,
     Vec<ocw_world::tunnels::Section>,
+    // The package draws the open and gallery stretches' road as strips
+    // (stored sections, `ocw_world::tunnels::surface_strips`).
+    bool,
+    // Roads crossing over its open stretches (home metres): decks.
+    Vec<ocw_world::tunnels::OverCrossing>,
 );
 
 /// The package's tunnels near `at` (home metres): (member, edge index)
@@ -555,7 +580,22 @@ fn package_tunnels_near(
             for x in &mut samples {
                 x.p = m.frame.apply(x.p);
             }
-            out.push(((mi, ei), samples, sections));
+            let roads_drawn = pkg
+                .look
+                .tunnels
+                .as_ref()
+                .is_some_and(|t| t.edges.contains_key(&e.id.0));
+            let decks = ocw_world::tunnels::over_crossings(g, e, &sections)
+                .into_iter()
+                .map(|mut c| {
+                    let p = m.frame.apply(c.p);
+                    let q = m.frame.apply([c.p[0] + c.dir[0], c.p[1] + c.dir[1]]);
+                    c.p = p;
+                    c.dir = [q[0] - p[0], q[1] - p[1]];
+                    c
+                })
+                .collect();
+            out.push(((mi, ei), samples, sections, roads_drawn, decks));
         }
     }
     out
@@ -671,7 +711,7 @@ fn update_tunnels(
             }
             keep
         });
-        for (key, samples, sections) in
+        for (key, samples, sections, roads_drawn, decks) in
             package_tunnels_near(&pkg.set, here2, NEAR_M, &tunnels.structures)
         {
             let width = samples
@@ -688,7 +728,28 @@ fn update_tunnels(
             let open_end =
                 |x: Option<&ocw_world::tunnels::AxisSample>| x.is_none_or(|x| x.roof_cover() < 1.0);
             let portals = [open_end(samples.first()), open_end(samples.last())];
-            let m = crate::tunnel_mesh::tunnel_meshes_with(&axis, &sections, seed, portals);
+            let mut m = crate::tunnel_mesh::tunnel_meshes_with(
+                &axis,
+                &sections,
+                seed,
+                portals,
+                roads_drawn,
+            );
+            for c in &decks {
+                let i = samples
+                    .partition_point(|x| x.s < c.s)
+                    .min(samples.len() - 1);
+                let road_dir = Vec2::new(samples[i].dir[0] as f32, samples[i].dir[1] as f32);
+                crate::tunnel_mesh::crossing_deck(
+                    &mut m.lit,
+                    Vec3::new(c.p[0] as f32, c.y as f32, c.p[1] as f32),
+                    Vec2::new(c.dir[0] as f32, c.dir[1] as f32),
+                    c.width as f32,
+                    c.road_y as f32,
+                    road_dir,
+                    width as f32,
+                );
+            }
             let entities = spawn_meshes(&mut commands, &mut meshes, &mats, m);
             tunnels.structures.insert(
                 key,
@@ -894,6 +955,22 @@ mod tests {
             assert!(v <= last);
             last = v;
         }
+    }
+
+    #[test]
+    fn a_blending_eye_in_the_hill_is_pulled_into_the_tube() {
+        let tunnel = Vec3::new(10.0, 102.2, 0.0); // road at 100
+        // Over the terrain: as blended.
+        let free = Vec3::new(5.0, 108.0, 0.0);
+        assert_eq!(envelope_eye(free, tunnel, Some(104.0)), free);
+        assert_eq!(envelope_eye(free, tunnel, None), free);
+        // In the hill (terrain at 112 over an eye at 108): along the road
+        // to the tunnel eye, under the crown.
+        let e = envelope_eye(free, tunnel, Some(112.0));
+        assert_eq!((e.x, e.z), (tunnel.x, tunnel.z));
+        assert!(e.y >= tunnel.y && e.y <= 100.0 + ocw_world::tunnels::CROWN_M as f32 - 1.0 + 1e-4);
+        // The tunnel eye itself (under the hill) stays where it is.
+        assert_eq!(envelope_eye(tunnel, tunnel, Some(140.0)), tunnel);
     }
 
     #[test]

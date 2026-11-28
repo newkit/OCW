@@ -1125,7 +1125,15 @@ pub(crate) fn follow(
         tilt.tunnel_eye = Some(eye);
         // Smoothstep: no jerk where the blend starts and ends.
         let u = tilt.tunnel * tilt.tunnel * (3.0 - 2.0 * tilt.tunnel);
-        cam.translation = cam.translation.lerp(eye, u);
+        let blended = cam.translation.lerp(eye, u);
+        // Never in the hill beside or over the tube while blending at a
+        // portal (the chase eye behind and above the rider lies in the
+        // slope there): pulled into the tube's envelope along the road.
+        let g = ground
+            .as_deref()
+            .and_then(|g| (g.0)(f64::from(blended.x), f64::from(blended.z)))
+            .map(|h| h as f32);
+        cam.translation = crate::tunnel::envelope_eye(blended, eye, g);
         target.lerp(inside, u)
     } else {
         tilt.outside_eye = None;

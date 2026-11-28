@@ -263,3 +263,126 @@ fn a_city_tunnel_under_a_street_becomes_a_box() {
     let h = pkg.surface_height(500.0, 500.0).expect("ground");
     assert!((h - ridge(5.8)(500.0, 500.0)).abs() < 1e-3, "{h}");
 }
+
+/// A road A (x 0 … 120), a tunnel T (x 120 … 420: open, bored, open) and a
+/// road B (x 420 … 600) along z 500, climbing 4 %, crossing a tile border
+/// at x 400 (tiles of 400 m) in the gallery.
+fn chain() -> (
+    ocw_world::graph::RoadGraph,
+    ocw_world::tunnels::TunnelSections,
+) {
+    use ocw_world::graph::{Edge, EdgeId, Oneway, RoadGraph, VertexId};
+    let xs = [0.0, 120.0, 420.0, 600.0];
+    let h = |x: f64| 100.0 + 0.04 * x;
+    let edge = |i: usize, tunnel: bool| {
+        let (a, b) = (xs[i], xs[i + 1]);
+        let n = ((b - a) / ocw_world::graph::PROFILE_STEP_M).ceil() as usize;
+        Edge {
+            id: EdgeId(10 + i as u64),
+            from: VertexId(i as u32),
+            to: VertexId(i as u32 + 1),
+            points: vec![[a, 500.0], [b, 500.0]],
+            class: RoadClass::Secondary,
+            name: None,
+            width_m: 7.0,
+            bridge: false,
+            tunnel,
+            dead_end_m: None,
+            boundary: false,
+            oneway: Oneway::No,
+            osm_way: 1 + i as i64,
+            profile: (0..=n)
+                .map(|k| h((a + k as f64 * ocw_world::graph::PROFILE_STEP_M).min(b)))
+                .collect(),
+        }
+    };
+    let g = RoadGraph {
+        vertices: xs.iter().map(|&x| [x, 500.0]).collect(),
+        edges: vec![edge(0, false), edge(1, true), edge(2, false)],
+        boundary_vertices: Default::default(),
+    };
+    let mut t = ocw_world::tunnels::TunnelSections::default();
+    t.edges.insert(
+        11,
+        vec![
+            Section {
+                from: 0.0,
+                to: 60.0,
+                kind: SectionKind::Open,
+            },
+            Section {
+                from: 60.0,
+                to: 220.0,
+                kind: SectionKind::Bored,
+            },
+            Section {
+                from: 220.0,
+                to: 300.0,
+                kind: SectionKind::Gallery { hill_right: true },
+            },
+        ],
+    );
+    (g, t)
+}
+
+#[test]
+fn open_stretches_are_road_strips_joining_the_adjoining_roads_without_a_seam() {
+    let (g, t) = chain();
+    let tile = 400.0;
+    let roads = crate::package::road_strips(&g, tile);
+    let mut ends: Vec<[f32; 3]> = Vec::new();
+    let mut open: Vec<ocw_world::RoadStrip> = Vec::new();
+    for key in [TileKey { x: 0, z: 1 }, TileKey { x: 1, z: 1 }] {
+        let normal: Vec<ocw_world::RoadStrip> = roads
+            .get(&key)
+            .map(|v| v.iter().map(|(_, s)| s.clone()).collect())
+            .unwrap_or_default();
+        for s in &normal {
+            ends.extend([s.points[0], s.points[s.points.len() - 1]]);
+        }
+        open.extend(ocw_world::tunnels::surface_strips(
+            &g, &t, key, tile, &normal,
+        ));
+    }
+    // Open 0 … 60 and the gallery 220 … 300 (it crosses the tile border at
+    // x 400: two pieces overlapping by a point), nothing for the bore.
+    assert_eq!(open.len(), 3, "{open:?}");
+    for s in &open {
+        assert_eq!(s.width_m, 7.0);
+        assert!(
+            s.points.iter().all(|p| p[0] <= 180.5 || p[0] >= 339.5),
+            "{s:?}"
+        );
+        // On the edge's profile everywhere.
+        for p in &s.points {
+            let want = 100.0 + 0.04 * p[0];
+            assert!((p[1] - want).abs() < 0.01, "{p:?}");
+        }
+    }
+    // The seams: an open strip's end at the vertex is the adjoining
+    // strip's end, same place and height (no gap, no step).
+    for x in [120.0f32, 420.0] {
+        let a = ends
+            .iter()
+            .find(|p| (p[0] - x).abs() < 0.01)
+            .expect("road end");
+        let b = open
+            .iter()
+            .flat_map(|s| [s.points[0], s.points[s.points.len() - 1]])
+            .find(|p| (p[0] - x).abs() < 0.01)
+            .expect("open end");
+        assert!(
+            (a[1] - b[1]).abs() < 0.01 && (a[2] - b[2]).abs() < 0.01,
+            "{a:?} {b:?}"
+        );
+    }
+    // The look is the adjoining road's.
+    assert!(
+        open.iter()
+            .all(|s| s.surface == ocw_world::RoadSurface::of_class(RoadClass::Secondary))
+    );
+    // Tile pieces overlap by one point (as the builder's strips).
+    let gal: Vec<_> = open.iter().filter(|s| s.points[0][0] > 300.0).collect();
+    assert_eq!(gal.len(), 2);
+    assert!(gal[0].points.last().unwrap()[0] >= 400.0 && gal[1].points[0][0] <= 400.0);
+}

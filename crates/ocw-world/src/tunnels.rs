@@ -453,6 +453,240 @@ impl TunnelSections {
     }
 }
 
+/// The road strips of the open and gallery stretches of every tunnel edge
+/// of `graph` that lie in tile `key` (world metres, like the package's
+/// strips): the client draws them with the package's road meshes and
+/// materials ([`TunnelSections::surface_spans`]), so an open stretch looks
+/// exactly like the road it continues, by day and at night, and joins it
+/// without a seam – its ends are the edge's vertices at the edge's profile
+/// heights, where the adjoining strips end too. Sampled every
+/// [`crate::graph::PROFILE_STEP_M`] along the edge (its vertices kept),
+/// split into tiles with one point of overlap as the world builder splits
+/// its strips. The look (surface, dress, lighting, condition) is that of a
+/// strip in `neighbours` ending at the stretch's end (the road it
+/// continues), else the class default.
+pub fn surface_strips(
+    graph: &crate::graph::RoadGraph,
+    t: &TunnelSections,
+    key: crate::package::TileKey,
+    tile_size: f64,
+    neighbours: &[crate::package::RoadStrip],
+) -> Vec<crate::package::RoadStrip> {
+    use crate::package::{RoadStrip, TileKey};
+    let mut out = Vec::new();
+    for e in graph
+        .edges
+        .iter()
+        .filter(|e| e.tunnel && e.points.len() >= 2)
+    {
+        let spans = t.surface_spans(e.id.0);
+        if spans.is_empty() {
+            continue;
+        }
+        let len = e.length_m();
+        // The edge's polyline with its arc length, every ≤ 5 m.
+        let mut along: Vec<([f64; 2], f64)> = vec![(e.points[0], 0.0)];
+        let mut acc = 0.0;
+        for w in e.points.windows(2) {
+            let d = ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt();
+            let n = (d / crate::graph::PROFILE_STEP_M).ceil().max(1.0) as usize;
+            for k in 1..=n {
+                let f = k as f64 / n as f64;
+                along.push((
+                    [
+                        w[0][0] + (w[1][0] - w[0][0]) * f,
+                        w[0][1] + (w[1][1] - w[0][1]) * f,
+                    ],
+                    acc + d * f,
+                ));
+            }
+            acc += d;
+        }
+        let at = |s: f64| -> [f64; 3] {
+            let i = along.partition_point(|q| q.1 < s).clamp(1, along.len() - 1);
+            let (a, b) = (along[i - 1], along[i]);
+            let f = ((s - a.1) / (b.1 - a.1).max(1e-9)).clamp(0.0, 1.0);
+            let p = [
+                a.0[0] + (b.0[0] - a.0[0]) * f,
+                a.0[1] + (b.0[1] - a.0[1]) * f,
+            ];
+            [p[0], e.height_at(s).unwrap_or(0.0), p[1]]
+        };
+        for (from, to) in spans {
+            let (from, to) = (from.clamp(0.0, len), to.clamp(0.0, len));
+            if to - from < 0.5 {
+                continue;
+            }
+            let mut pts: Vec<(f64, [f64; 3])> = vec![(from, at(from))];
+            for q in along
+                .iter()
+                .filter(|q| q.1 > from + 0.05 && q.1 < to - 0.05)
+            {
+                pts.push((q.1, [q.0[0], e.height_at(q.1).unwrap_or(0.0), q.0[1]]));
+            }
+            pts.push((to, at(to)));
+            // Runs in this tile, one point of overlap into the neighbours.
+            let inside: Vec<bool> = pts
+                .iter()
+                .map(|(_, p)| TileKey::containing([p[0], p[2]], tile_size) == key)
+                .collect();
+            let mut i = 0;
+            while i < pts.len() {
+                if !inside[i] {
+                    i += 1;
+                    continue;
+                }
+                let mut j = i;
+                while j + 1 < pts.len() && inside[j + 1] {
+                    j += 1;
+                }
+                let (a, b) = (i.saturating_sub(1), (j + 1).min(pts.len() - 1));
+                let run = &pts[a..=b];
+                i = j + 1;
+                if run.len() < 2 {
+                    continue;
+                }
+                let near = |q: [f64; 3]| {
+                    neighbours.iter().find(|n| {
+                        [n.points.first(), n.points.last()]
+                            .into_iter()
+                            .flatten()
+                            .any(|p| (f64::from(p[0]) - q[0]).hypot(f64::from(p[2]) - q[2]) < 0.75)
+                    })
+                };
+                let like = near(pts[0].1).or_else(|| near(pts[pts.len() - 1].1));
+                let mut dress = like.map_or_else(
+                    || crate::RoadDress::of_class(e.class, e.width_m as f32),
+                    |n| crate::RoadDress {
+                        crossings: Vec::new(),
+                        junction_m: [0.0; 2],
+                        ..n.dress.clone()
+                    },
+                );
+                dress.start_m = run[0].0 as f32;
+                dress.edge_m = len as f32;
+                out.push(RoadStrip {
+                    class: e.class,
+                    width_m: e.width_m as f32,
+                    points: run
+                        .iter()
+                        .map(|(_, p)| [p[0] as f32, p[1] as f32, p[2] as f32])
+                        .collect(),
+                    surface: like.map_or(crate::RoadSurface::of_class(e.class), |n| n.surface),
+                    dress,
+                    lit: like.map_or(crate::RoadLit::Unknown, |n| n.lit),
+                    condition: like.map(|n| n.condition).unwrap_or_default(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// A road crossing over an open stretch of a tunnel edge in a cutting
+/// (spec 3.2): where it crosses, its height, direction and width – the
+/// renderer puts a small deck with abutments under it, since the cutting
+/// took the terrain from under it (Radio Andorra, 2026-11-28: a path as a
+/// ribbon floating over the cutting).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverCrossing {
+    /// Distance along the tunnel edge.
+    pub s: f64,
+    /// Where (x, z) and the crossing road's height there.
+    pub p: [f64; 2],
+    pub y: f64,
+    /// The tunnel road's height there.
+    pub road_y: f64,
+    /// The crossing road's direction (unit) and width.
+    pub dir: [f64; 2],
+    pub width: f64,
+}
+
+/// The crossing road must be this much over the open road to need a deck
+/// (m): lower, the two roads meet at a level crossing.
+pub const DECK_MIN_CLEARANCE_M: f64 = 3.5;
+
+/// The roads crossing over the open stretches of tunnel edge `edge` of
+/// `graph` at least [`DECK_MIN_CLEARANCE_M`] above it (bridges have their
+/// own decks, tunnels run under).
+pub fn over_crossings(
+    graph: &crate::graph::RoadGraph,
+    edge: &crate::graph::Edge,
+    sections: &[Section],
+) -> Vec<OverCrossing> {
+    let open = |s: f64| {
+        sections
+            .iter()
+            .any(|k| k.kind == SectionKind::Open && s >= k.from - 1.0 && s <= k.to + 1.0)
+    };
+    let seg = |a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]| -> Option<(f64, f64)> {
+        let r = [b[0] - a[0], b[1] - a[1]];
+        let q = [d[0] - c[0], d[1] - c[1]];
+        let den = r[0] * q[1] - r[1] * q[0];
+        if den.abs() < 1e-9 {
+            return None;
+        }
+        let w = [c[0] - a[0], c[1] - a[1]];
+        let t = (w[0] * q[1] - w[1] * q[0]) / den;
+        let u = (w[0] * r[1] - w[1] * r[0]) / den;
+        ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some((t, u))
+    };
+    let lo = edge
+        .points
+        .iter()
+        .fold([f64::INFINITY; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+    let hi = edge.points.iter().fold([f64::NEG_INFINITY; 2], |m, p| {
+        [m[0].max(p[0]), m[1].max(p[1])]
+    });
+    let mut out = Vec::new();
+    for o in &graph.edges {
+        if o.id == edge.id || o.tunnel || o.bridge || o.points.len() < 2 {
+            continue;
+        }
+        let away = o
+            .points
+            .iter()
+            .all(|p| p[0] < lo[0] - 50.0 || p[0] > hi[0] + 50.0)
+            || o.points
+                .iter()
+                .all(|p| p[1] < lo[1] - 50.0 || p[1] > hi[1] + 50.0);
+        if away {
+            continue;
+        }
+        let mut sa = 0.0;
+        for w in edge.points.windows(2) {
+            let la = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]);
+            let mut sb = 0.0;
+            for v in o.points.windows(2) {
+                let lb = (v[1][0] - v[0][0]).hypot(v[1][1] - v[0][1]);
+                if let Some((t, u)) = seg(w[0], w[1], v[0], v[1]) {
+                    let s = sa + t * la;
+                    let (Some(road_y), Some(y)) = (edge.height_at(s), o.height_at(sb + u * lb))
+                    else {
+                        continue;
+                    };
+                    if open(s) && y - road_y >= DECK_MIN_CLEARANCE_M && lb > 1e-9 {
+                        out.push(OverCrossing {
+                            s,
+                            p: [
+                                w[0][0] + (w[1][0] - w[0][0]) * t,
+                                w[0][1] + (w[1][1] - w[0][1]) * t,
+                            ],
+                            y,
+                            road_y,
+                            dir: [(v[1][0] - v[0][0]) / lb, (v[1][1] - v[0][1]) / lb],
+                            width: o.width_m,
+                        });
+                    }
+                }
+                sb += lb;
+            }
+            sa += la;
+        }
+    }
+    out
+}
+
 fn kind_code(k: SectionKind) -> u8 {
     match k {
         SectionKind::Bored => 0,
@@ -690,6 +924,46 @@ mod tests {
         let e = edge(300.0);
         let g = |x: f64, z: f64| Some(100.0 + (x * 0.05).sin() * 8.0 + z * 0.3);
         assert_eq!(edge_sections(&e, &g), edge_sections(&e, &g));
+    }
+
+    #[test]
+    fn a_road_over_an_open_cutting_is_found_for_its_deck() {
+        use crate::graph::{EdgeId, RoadGraph, VertexId};
+        let t = edge(100.0); // along x at z 0, road at 100
+        let mut over = edge(40.0);
+        over.id = EdgeId(2);
+        over.tunnel = false;
+        over.from = VertexId(2);
+        over.to = VertexId(3);
+        over.width_m = 3.0;
+        over.points = vec![[50.0, -20.0], [50.0, 20.0]];
+        over.profile = vec![107.0; 9];
+        let mut level = over.clone();
+        level.id = EdgeId(3);
+        level.points = vec![[70.0, -20.0], [70.0, 20.0]];
+        level.profile = vec![101.0; 9];
+        let g = RoadGraph {
+            vertices: vec![[0.0, 0.0]; 6],
+            edges: vec![t.clone(), over, level],
+            boundary_vertices: Default::default(),
+        };
+        let open = [Section {
+            from: 0.0,
+            to: 100.0,
+            kind: SectionKind::Open,
+        }];
+        let c = over_crossings(&g, &t, &open);
+        // The path 7 m up needs a deck; the level road at 1 m does not.
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert!((c[0].s - 50.0).abs() < 1e-6 && (c[0].y - 107.0).abs() < 1e-6);
+        assert!((c[0].dir[1] - 1.0).abs() < 1e-9 && c[0].width == 3.0);
+        // Over a bored stretch the hill carries it: no deck.
+        let bored = [Section {
+            from: 0.0,
+            to: 100.0,
+            kind: SectionKind::Bored,
+        }];
+        assert!(over_crossings(&g, &t, &bored).is_empty());
     }
 
     #[test]
