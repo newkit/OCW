@@ -246,6 +246,22 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::App,
     },
     SettingDef {
+        key: "controls.touch_controls",
+        kind: Kind::Choice(&["shown", "hidden"]),
+        default: "shown",
+        description: "The on-screen touch controls (the steering chevrons, the faster / slower marks, the tips): shown, or hidden – not drawn, but every touch area still works; the eye button beside the menu button switches it (spec §3.2.3)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "controls.touch_hidden_hint_seen",
+        kind: Kind::Bool,
+        default: "off",
+        description: "The hint \"Controls hidden – they still work\" was shown on this device (set when the touch controls are hidden the first time)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
         key: "trainer.difficulty",
         kind: Kind::Int {
             min: 0,

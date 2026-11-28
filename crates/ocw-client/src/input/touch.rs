@@ -182,6 +182,10 @@ pub struct TouchZones {
     pub zone_height: ZoneHeight,
     /// The HUD's tap targets: never a steer.
     pub excluded: Vec<Rect>,
+    /// The faster / slower zones are on (the virtual trainer, spec 3.2.3
+    /// *Faster / slower zones*): steering only between these two heights
+    /// (px from the top; `super::power_zones::PowerZones::band`).
+    pub band: Option<(f32, f32)>,
 }
 
 impl TouchZones {
@@ -192,6 +196,7 @@ impl TouchZones {
             insets: Insets::default(),
             zone_height: ZoneHeight::Full,
             excluded: Vec::new(),
+            band: None,
         }
     }
 
@@ -202,11 +207,19 @@ impl TouchZones {
 
     /// Where the zones start (px from the top).
     pub fn top(&self) -> f32 {
-        let band = (self.height * TOP_BAND_FRAC).max(self.insets.top + EDGE_PX);
+        let band = (self.height * TOP_BAND_FRAC)
+            .max(self.insets.top + EDGE_PX)
+            .max(self.band.map_or(0.0, |b| b.0));
         match self.zone_height {
             ZoneHeight::Full => band,
             ZoneHeight::Lower => band.max(self.height / 2.0),
         }
+    }
+
+    /// Where the zones end (px from the top).
+    pub fn bottom(&self) -> f32 {
+        let edge = self.height - EDGE_PX.max(self.insets.bottom);
+        self.band.map_or(edge, |b| edge.min(b.1))
     }
 
     /// The zone's rectangle of `side` (the dead band, edges and insets
@@ -214,7 +227,7 @@ impl TouchZones {
     pub fn rect(&self, side: Side) -> Rect {
         let mid = self.width / 2.0;
         let top = self.top();
-        let bottom = self.height - EDGE_PX.max(self.insets.bottom);
+        let bottom = self.bottom();
         match side {
             Side::Left => Rect::new(
                 EDGE_PX.max(self.insets.left),

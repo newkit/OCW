@@ -298,6 +298,68 @@ fn detect_swipe(
 #[derive(Resource, Debug, Default)]
 pub struct MenuPointer(pub Vec<MenuPointerEvent>);
 
+/// Where the open menu's tap targets are (window px, logical – CSS px in
+/// the browser: `[left, top, width, height]`): each item's row or cell by
+/// its index, and the ‹ / › arrows of the value rows (item, −1 / +1,
+/// box). For the touch tests (`window.ocw.menu()`: a tap needs a place)
+/// and the checks of the targets' sizes.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct MenuBoxes {
+    pub rows: Vec<Option<[f32; 4]>>,
+    pub arrows: Vec<(usize, i8, [f32; 4])>,
+}
+
+/// A value row's ‹ or › arrow (the item, −1 / +1).
+#[derive(Component)]
+struct MenuArrow(usize, i8);
+
+/// Measures [`MenuBoxes`] while the menu is open.
+#[allow(clippy::type_complexity)] // Bevy queries
+fn measure_menu(
+    view: Res<MenuView>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
+    scale: Option<Res<UiScale>>,
+    rows: Query<(&ComputedNode, &UiGlobalTransform, &MenuRow)>,
+    arrows: Query<(&ComputedNode, &UiGlobalTransform, &MenuArrow)>,
+    mut boxes: ResMut<MenuBoxes>,
+) {
+    if !view.open {
+        if *boxes != MenuBoxes::default() {
+            *boxes = MenuBoxes::default();
+        }
+        return;
+    }
+    let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
+    let k = scale.map_or(1.0, |s| s.0);
+    let rect = |c: &ComputedNode, t: &UiGlobalTransform| {
+        let inv = c.inverse_scale_factor();
+        let size = c.size() * inv * k;
+        let min = t.translation * inv * k - size * 0.5 + off;
+        [min.x, min.y, size.x, size.y]
+    };
+    let mut out = MenuBoxes {
+        rows: vec![None; view.items.len()],
+        arrows: Vec::new(),
+    };
+    for (c, t, r) in &rows {
+        if c.size().x > 0.0
+            && let Some(slot) = out.rows.get_mut(r.0)
+        {
+            *slot = Some(rect(c, t));
+        }
+    }
+    for (c, t, a) in &arrows {
+        if c.size().x > 0.0 {
+            out.arrows.push((a.0, a.1, rect(c, t)));
+        }
+    }
+    out.arrows.sort_by_key(|(i, d, _)| (*i, *d));
+    if *boxes != out {
+        *boxes = out;
+    }
+}
+
 /// Input context and menu resources, without drawing (headless tests).
 pub struct MenuCorePlugin;
 
@@ -342,8 +404,9 @@ impl Plugin for MenuPlugin {
         if !app.is_plugin_added::<crate::thumbs::ThumbnailPlugin>() {
             app.add_plugins(crate::thumbs::ThumbnailPlugin);
         }
-        app.add_systems(Startup, spawn_menu)
-            .add_systems(Update, (draw_menu, draw_chart));
+        app.init_resource::<MenuBoxes>()
+            .add_systems(Startup, spawn_menu)
+            .add_systems(Update, (draw_menu, draw_chart, measure_menu));
     }
 }
 
@@ -866,6 +929,7 @@ fn spawn_arrow(r: &mut ChildSpawnerCommands, i: usize, dir: i8) {
             padding: UiRect::horizontal(vh(0.4)),
             ..default()
         },
+        MenuArrow(i, dir),
         children![(
             Text::new(if dir < 0 { "<" } else { ">" }),
             font(ITEM_VH),

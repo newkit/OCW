@@ -102,7 +102,7 @@
     /* The screen tips (spec 3.2.3): full screen or Add to Home Screen with
        the first-ride tip, "turn your phone" once in portrait – a small
        banner, placed by the page (placeTip) where it covers neither the
-       first-ride tip nor the HUD, the chevrons or the power buttons: in
+       first-ride tip nor the HUD, the chevrons or the menu and hide buttons: in
        portrait in the app's slot above the first-ride tip, in landscape at
        the bottom between the height profile and the Devices button. */
     #ocw-screen-tip { position: fixed; top: calc(8px + var(--safe-top)); left: 50%; pointer-events: none;
@@ -158,6 +158,25 @@
     #ocw-devices-show { position: fixed; bottom: calc(28px + var(--safe-bottom));
       right: calc(12px + var(--safe-right)); max-width: 260px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* The touch controls hidden (spec 3.2.3, the eye button beside the
+       menu button): the page's own on-screen button is not drawn either –
+       it still works – and the screen tips stay away. */
+    html.ocw-controls-hidden #ocw-devices-show { opacity: 0; }
+    html.ocw-controls-hidden #ocw-screen-tip { display: none; }
+    /* The text bar (spec 3.2.3): while a text field of the in-game menu is
+       typed into on a touch device, a tap into this field raises the
+       on-screen keyboard; its keys go to the app. 16 px: iOS zooms the
+       page for smaller fields. */
+    #ocw-type-bar { position: fixed; top: calc(8px + var(--safe-top)); left: calc(8px + var(--safe-left));
+      right: calc(8px + var(--safe-right)); display: flex; gap: 6px; z-index: 15;
+      background: rgba(10, 13, 18, 0.9); border: 1px solid rgba(136, 192, 208, 0.6); border-radius: 8px;
+      padding: 6px; box-sizing: border-box; }
+    #ocw-type-bar[hidden] { display: none; }
+    #ocw-type-bar input { flex: 1; min-width: 0; font: 16px system-ui, sans-serif; color: #e5e9f0;
+      background: #1b222c; border: 1px solid rgba(98, 112, 132, 0.7); border-radius: 6px; padding: 8px 10px;
+      min-height: 44px; box-sizing: border-box; }
+    #ocw-type-bar button { font: 16px system-ui, sans-serif; color: #10141a; background: #88c0d0; border: 0;
+      border-radius: 6px; padding: 0 14px; min-height: 44px; min-width: 44px; cursor: pointer; }
     /* The sound's hint (B5): until the first click or key. The volumes and
        the voice switches are the menu's Audio and Voice pages (B6). */
     #ocw-sound-hint { position: fixed; top: calc(12px + var(--safe-top)); left: 50%; transform: translateX(-50%);
@@ -257,6 +276,11 @@
     <div id="ocw-devices-msg" class="note"></div>
   </section>
   <button id="ocw-devices-show" hidden>Devices</button>
+  <div id="ocw-type-bar" hidden>
+    <input id="ocw-type-input" type="text" placeholder="Tap here to type" aria-label="Text for the menu's field"
+      autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="done">
+    <button id="ocw-type-done">Done</button>
+  </div>
   <div id="ocw-sound-hint" hidden></div>
   <div id="ocw-gpu-note" hidden></div>
   <div id="ocw-preview-bar" hidden></div>
@@ -563,8 +587,8 @@
       };
       // The banner's place (spec 3.2.3): the first candidate on the screen
       // that covers none of the app's boxes (window.ocw.hudLayout(): the
-      // panels, the first-ride tip, the chevrons; the power buttons; the
-      // Devices button): the app's slot above the first-ride tip
+      // panels, the first-ride tip, the chevrons, the menu and hide
+      // buttons; the Devices button): the app's slot above the first-ride tip
       // (portrait), the bottom between the height profile and the Devices
       // button (landscape), below the first-ride tip, the top.
       const tipBoxes = () => {
@@ -575,7 +599,7 @@
         const boxes = [];
         for (const k of ["top_panel", "top_right", "profile", "touch_tip"]) if (hud[k]) boxes.push(hud[k]);
         for (const c of hud.chevrons || []) boxes.push(c);
-        for (const b of st.power_buttons || []) boxes.push([b[0], b[1], b[2] - b[0], b[3] - b[1]]);
+        for (const b of hud.buttons || []) boxes.push(b);
         if (mp.shown && mp.rect) boxes.push(mp.rect);
         for (const id of ["ocw-devices-show", "ocw-devices", "ocw-preview-bar"]) {
           const e = document.getElementById(id);
@@ -614,6 +638,64 @@
       const hideTip = () => { if (!tip.hidden && tipKind === "turn") mark("ocw.tip.turn"); tip.hidden = true; tipKind = ""; };
       const touchFirst = () => !!(window.matchMedia && matchMedia("(pointer: coarse)").matches) && navigator.maxTouchPoints > 0;
       const portrait = () => innerHeight > innerWidth;
+      // The text bar (spec 3.2.3): a phone raises its on-screen keyboard
+      // only for a real text field that the rider taps. While the app
+      // types into a field of its menu (window.ocw.steer().typing) the bar
+      // shows; what is typed there goes to the app as key events on the
+      // canvas (the field keeps one invisible character, so Backspace on
+      // an "empty" field is still an input event).
+      const typeBar = document.getElementById("ocw-type-bar");
+      const typeField = document.getElementById("ocw-type-input");
+      const KEEP = "\u200b";
+      let typed = 0;
+      const sendKey = (key) => {
+        typed++;
+        for (const t of ["keydown", "keyup"]) {
+          canvas.dispatchEvent(new KeyboardEvent(t, {key, code: key.length === 1 ? "" : key, bubbles: true, cancelable: true}));
+        }
+      };
+      const resetField = () => {
+        typeField.value = KEEP;
+        try { typeField.setSelectionRange(1, 1); } catch (e) { /* not focused */ }
+      };
+      typeField.addEventListener("focus", resetField);
+      typeField.addEventListener("input", () => {
+        const v = typeField.value;
+        if (!v.startsWith(KEEP)) sendKey("Backspace");
+        else for (const ch of v.slice(KEEP.length)) sendKey(ch);
+        resetField();
+      });
+      typeField.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter" || e.key === "Escape") {
+          e.preventDefault();
+          sendKey(e.key);
+          typeField.blur();
+        }
+      });
+      typeField.addEventListener("keyup", (e) => e.stopPropagation());
+      document.getElementById("ocw-type-done").onclick = () => { sendKey("Enter"); typeField.blur(); canvas.focus(); };
+      const touchDevice = () => navigator.maxTouchPoints > 0
+        && (!!(window.matchMedia && matchMedia("(pointer: coarse)").matches)
+          || /iPhone|iPad|iPod|Android|Mobile/.test(navigator.userAgent)
+          || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+      const showTypeBar = (on) => {
+        if (typeBar.hidden !== on) return;
+        typeBar.hidden = !on;
+        if (on) resetField(); else { typeField.blur(); canvas.focus(); }
+      };
+      // What the page shows over the ride that takes the rider's touches
+      // or attention: the page log's panel, a focused text field (the
+      // on-screen keyboard). The app's faster / slower zones are off
+      // meanwhile (spec 3.2.3).
+      const overlay = () => {
+        const log = document.getElementById("ocw-log");
+        if (log && !log.hidden && getComputedStyle(log).display !== "none") return "log";
+        const a = document.activeElement;
+        if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return "text";
+        return "";
+      };
+      let controlsHidden = false;
       let turnUntil = 0;
       const tips = () => {
         if (!riding) return;
@@ -621,7 +703,14 @@
         try { steer = JSON.parse((window.ocw && window.ocw.steer && window.ocw.steer()) || "{}"); } catch (e) { steer = {}; }
         let menu = {};
         try { menu = JSON.parse((window.ocw && window.ocw.menu && window.ocw.menu()) || "{}"); } catch (e) { menu = {}; }
-        if (menu.open) { if (!tip.hidden) tip.hidden = true; return; }
+        showTypeBar(!!steer.typing && touchDevice());
+        // The controls hidden (the eye button): no page button drawn, no
+        // tips.
+        if (controlsHidden !== !!steer.controls_hidden) {
+          controlsHidden = !!steer.controls_hidden;
+          root.classList.toggle("ocw-controls-hidden", controlsHidden);
+        }
+        if (menu.open || controlsHidden) { if (!tip.hidden) tip.hidden = true; return; }
         const wantFs = steer.tip && !fsElement() && !standalone() && !seen("ocw.tip.fullscreen");
         if (wantFs && (fsSupported || iosLike)) {
           if (tipKind !== "fullscreen") {
@@ -657,11 +746,13 @@
           wake();
           setInterval(tips, 500);
         },
+        overlay,
         state() {
           return JSON.stringify({riding, insets, fullscreen: !!fsElement(), fullscreen_api: fsSupported,
             standalone: standalone(), wake_lock: lockState, wake_lock_error: lockError,
             tip: tip.hidden ? "" : tipKind, tip_text: tip.hidden ? "" : tip.textContent,
             tip_rect: tip.hidden ? null : (() => { const r = tip.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
+            controls_hidden: controlsHidden, overlay: overlay(), type_bar: !typeBar.hidden, typed,
             touch_action: getComputedStyle(document.body).touchAction});
         },
       };
@@ -1286,7 +1377,7 @@
           || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
       if (!hasBt) {
         msg.textContent = "This browser has no Web Bluetooth (Firefox, Safari, iOS): riding with virtual power ("
-          + (touchFirst ? "the stop / − / + buttons on the right" : "↑ / ↓")
+          + (touchFirst ? "touch the top of the screen for faster, the bottom for slower" : "↑ / ↓")
           + "). Trainers connect in Chrome or Edge.";
       }
       // A touch-first phone or tablet without Web Bluetooth (iOS: Safari

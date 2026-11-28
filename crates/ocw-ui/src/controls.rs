@@ -170,6 +170,8 @@ pub fn throttle_keys(
         down_pressed: b.key_just_pressed(Action::Stop, keys) || pad.down_pressed,
         plus_10: false,
         minus_10: false,
+        slower_pressed: false,
+        slower_held: false,
     }
 }
 

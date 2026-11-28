@@ -294,7 +294,8 @@ fn keys(
     let pad = ride_pads.read_bound(pads.iter(), b);
     let pressed = |a| b.just_pressed(a, &keys, pads.iter().map(|(_, p)| p));
     let mut power_keys: ThrottleKeys = ocw_ui::controls::throttle_keys(b, &keys, &pad);
-    // The touch power buttons (spec 3.2.3, TS5): a phone has no ↑ / ↓.
+    // The touch zones (spec 3.2.3: the top of the screen is faster, the
+    // bottom slower): a phone has no ↑ / ↓.
     if let Some(mut t) = touch_power {
         power_keys = power_keys.or(t.take());
     }
@@ -1301,6 +1302,47 @@ mod tests {
         assert!(
             json.contains("\"shown\": false"),
             "the key hid the hints: {json}"
+        );
+
+        // The faster / slower zones (spec 3.2.3 *The on-screen controls*;
+        // the virtual trainer): a tap at the top of the screen is ↑
+        // (25 W), at the bottom 10 W less and, with no power left, a stop
+        // – through this app's power keys, as in the other app.
+        let tap_at = |app: &mut App, y: f32| {
+            for phase in [TouchPhase::Started, TouchPhase::Ended] {
+                app.world_mut().write_message(TouchInput {
+                    phase,
+                    position: Vec2::new(640.0, y),
+                    window: Entity::PLACEHOLDER,
+                    force: None,
+                    id: 7,
+                });
+                app.update();
+            }
+            // The power is sent at most every 0.1 s.
+            for _ in 0..8 {
+                app.update();
+            }
+        };
+        let client = |app: &App| app.world().resource::<Session>().0.client.clone_power();
+        assert!(
+            app.world().resource::<Session>().0.client.virtual_device(),
+            "the browser's virtual trainer"
+        );
+        tap_at(&mut app, 100.0);
+        assert_eq!(client(&app), (25.0, false));
+        tap_at(&mut app, 650.0);
+        assert_eq!(client(&app), (15.0, false));
+        tap_at(&mut app, 650.0);
+        tap_at(&mut app, 650.0);
+        assert_eq!(client(&app), (0.0, false));
+        tap_at(&mut app, 650.0);
+        assert_eq!(client(&app), (0.0, true), "no power left: a stop");
+        tap_at(&mut app, 100.0);
+        assert_eq!(client(&app), (25.0, false), "the top rides on");
+        assert!(
+            (line(&app) - (tapped - 2.0 * by_touch)).abs() < 1e-6,
+            "no zone steered"
         );
     }
 }

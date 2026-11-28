@@ -3116,7 +3116,8 @@ impl ClientCore {
     }
 
     /// Whether the power device is the virtual trainer (no trainer or
-    /// power meter connected; the touch power buttons show, spec 3.2.3).
+    /// power meter connected; the touch zones for faster / slower are
+    /// on, spec 3.2.3).
     pub fn virtual_device(&self) -> bool {
         self.virtual_device
     }
@@ -3194,6 +3195,11 @@ impl ClientCore {
 
     pub fn key_power_w(&self) -> f64 {
         self.key_power_w
+    }
+
+    /// The keyboard power and the brake (the touch zones' tests).
+    pub fn clone_power(&self) -> (f64, bool) {
+        (self.key_power_w, self.braking)
     }
 
     /// Sets the keyboard power; returns a sample to send when it changed

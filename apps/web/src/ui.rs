@@ -688,6 +688,8 @@ pub fn hud_layout_view_json(
         "touch_tip": boxes.touch_tip,
         "banner_slot": touch.banner,
         "chevrons": touch.chevrons,
+        // The menu button and the hide button (☰, the eye).
+        "buttons": touch.buttons,
         "big_lines": boxes.big_lines,
         "small_lines": boxes.small_lines,
         "text": boxes.text,
@@ -717,13 +719,37 @@ fn publish_hud_layout(
     }
 }
 
+/// [`view_json`] with the tap targets' boxes (CSS px: `rows` – each
+/// item's `[left, top, width, height]` or null –, `arrows` – `[item, −1 |
+/// +1, left, top, width, height]` of the value rows' ‹ ›): the touch
+/// tests tap them.
+pub fn view_json_with_boxes(
+    v: &ocw_render::menu::MenuView,
+    boxes: &ocw_render::menu::MenuBoxes,
+) -> String {
+    let mut j: serde_json::Value = serde_json::from_str(&view_json(v)).unwrap_or_default();
+    j["rows"] = serde_json::json!(boxes.rows);
+    j["arrows"] = serde_json::json!(
+        boxes
+            .arrows
+            .iter()
+            .map(|(i, d, r)| serde_json::json!([i, d, r[0], r[1], r[2], r[3]]))
+            .collect::<Vec<_>>()
+    );
+    j.to_string()
+}
+
 /// Publishes the menu and the settings for the page when they change.
 fn publish(
     view: Res<ocw_render::menu::MenuView>,
+    boxes: Option<Res<ocw_render::menu::MenuBoxes>>,
     settings: Option<Res<crate::settings::WebSettings>>,
 ) {
-    if view.is_changed() || MENU_JSON.lock().expect("not poisoned").is_empty() {
-        *MENU_JSON.lock().expect("not poisoned") = view_json(&view);
+    let boxes_changed = boxes.as_ref().is_some_and(|b| b.is_changed());
+    if view.is_changed() || boxes_changed || MENU_JSON.lock().expect("not poisoned").is_empty() {
+        let none = ocw_render::menu::MenuBoxes::default();
+        *MENU_JSON.lock().expect("not poisoned") =
+            view_json_with_boxes(&view, boxes.as_deref().unwrap_or(&none));
     }
     if let Some(s) = settings
         && s.is_changed()

@@ -6,6 +6,10 @@
 //! the home bar. `fullscreen` (Captures → *Full screen*) asks the page for
 //! the Fullscreen API; on the iPhone, which has none, the page's answer
 //! says how to add OCW to the home screen (the manifest's `fullscreen`).
+//! The page also says when it shows something over the ride that takes
+//! the rider's touches (`window.ocwScreen.overlay()`: the page log's
+//! panel, a focused text field with the on-screen keyboard): the faster /
+//! slower touch zones are off meanwhile (`ocw_ui::touch::TouchBlocked`).
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
@@ -41,6 +45,24 @@ fn page_insets() -> Option<String> {
     None
 }
 
+/// Whether the page shows a panel or a text field over the ride
+/// (`window.ocwScreen.overlay()`: "" or what it is).
+fn page_overlay() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::browser::call_page("ocwScreen", "overlay", &[])
+            .ok()
+            .and_then(|v| v.as_string())
+            .is_some_and(|s| !s.is_empty())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    false
+}
+
+fn follow_page_overlay(mut blocked: ResMut<ocw_ui::touch::TouchBlocked>) {
+    blocked.set_if_neq(ocw_ui::touch::TouchBlocked(page_overlay()));
+}
+
 fn follow_page_insets(mut last: ResMut<PageInsets>, mut safe: ResMut<SafeArea>) {
     let Some(text) = page_insets() else { return };
     if text == last.0 {
@@ -67,7 +89,8 @@ fn fullscreen(_what: &str) -> Result<String, String> {
 pub fn build(app: &mut App) {
     app.init_resource::<SafeArea>()
         .init_resource::<PageInsets>()
-        .add_systems(First, follow_page_insets);
+        .init_resource::<ocw_ui::touch::TouchBlocked>()
+        .add_systems(First, (follow_page_insets, follow_page_overlay));
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("fullscreen")
