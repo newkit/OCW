@@ -54,6 +54,7 @@ pub mod ragdoll;
 pub mod region_look;
 pub mod riders;
 pub mod road_corners;
+pub mod road_holes;
 pub mod road_material;
 pub mod road_mesh;
 pub mod road_style;

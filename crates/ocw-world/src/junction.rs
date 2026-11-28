@@ -3787,18 +3787,58 @@ fn f32p(p: [f64; 3]) -> [f32; 3] {
     p.map(|x| x as f32)
 }
 
-/// Rows of plain points: flat across, by the points' central differences
-/// (as `road_mesh` draws an unshaped strip).
-fn plain_row(pts: &[[f32; 3]], i: usize, half: f32) -> [[f32; 3]; 2] {
+/// How far a bend's edges are pushed out at most to keep a strip's width
+/// round it (the mitre, 1 / cos of half the turn; 2: a turn of 120°;
+/// sharper bends get a round outer corner, `ocw-render::road_mesh`).
+pub const MAX_MITRE: f32 = 2.0;
+
+/// The direction to the right (x, z) at point `i` of a strip – square to
+/// the bisector of its two segments – and the mitre that keeps the road
+/// its width there (spec 4.4 *Road surface without holes*): 1 at the ends
+/// and past [`MAX_MITRE`] (a turn sharper than 120°: the bisector's row
+/// at the half width, the outer corner drawn round).
+pub fn mitred_right(pts: &[[f32; 3]], i: usize) -> ([f32; 2], f32) {
     let n = pts.len();
-    let (a, b) = (pts[i.saturating_sub(1)], pts[(i + 1).min(n - 1)]);
-    let d = [b[0] - a[0], b[2] - a[2]];
-    let l = d[0].hypot(d[1]).max(1e-9);
-    let r = [-d[1] / l, d[0] / l];
+    let seg = |a: usize, b: usize| {
+        let d = [pts[b][0] - pts[a][0], pts[b][2] - pts[a][2]];
+        let l = d[0].hypot(d[1]);
+        if l < 1e-6 {
+            [0.0, 0.0]
+        } else {
+            [d[0] / l, d[1] / l]
+        }
+    };
+    let d0 = if i > 0 { seg(i - 1, i) } else { [0.0, 0.0] };
+    let d1 = if i + 1 < n { seg(i, i + 1) } else { [0.0, 0.0] };
+    let b = [d0[0] + d1[0], d0[1] + d1[1]];
+    let bl = b[0].hypot(b[1]);
+    if bl < 1e-6 {
+        // A turn right back (or one point): the central difference.
+        let (a, c) = (pts[i.saturating_sub(1)], pts[(i + 1).min(n - 1)]);
+        let d = [c[0] - a[0], c[2] - a[2]];
+        let l = d[0].hypot(d[1]).max(1e-9);
+        return ([-d[1] / l, d[0] / l], 1.0);
+    }
+    let b = [b[0] / bl, b[1] / bl];
+    let both = d0 != [0.0, 0.0] && d1 != [0.0, 0.0];
+    let cos = b[0] * d0[0] + b[1] * d0[1];
+    let mitre = if both && cos >= 1.0 / MAX_MITRE {
+        1.0 / cos
+    } else {
+        1.0
+    };
+    ([-b[1], b[0]], mitre)
+}
+
+/// Rows of plain points: flat across, square to the bisector and mitred
+/// ([`mitred_right`], as `road_mesh` draws an unshaped strip).
+fn plain_row(pts: &[[f32; 3]], i: usize, half: f32) -> [[f32; 3]; 2] {
+    let (r, mitre) = mitred_right(pts, i);
+    let w = half * mitre;
     let p = pts[i];
     [
-        [p[0] - r[0] * half, p[1], p[2] - r[1] * half],
-        [p[0] + r[0] * half, p[1], p[2] + r[1] * half],
+        [p[0] - r[0] * w, p[1], p[2] - r[1] * w],
+        [p[0] + r[0] * w, p[1], p[2] + r[1] * w],
     ]
 }
 
@@ -4054,15 +4094,17 @@ impl JunctionSet {
             .enumerate()
             .map(|(i, it)| it.2.unwrap_or_else(|| plain_row(&points, i, half)))
             .collect();
-        // No row whose corner lies behind the row before it (on the inner
-        // side of a sharp bend, rows square to different pieces of the
-        // centre line cross): the strip's edge would fold back (J5, §4.8.8
-        // Rule). The two end rows stay.
+        // No row whose corners both lie behind the row before it (J5,
+        // §4.8.8 Rule). Where only the inner corner does – the inside of a
+        // sharp bend – the row stays: dropping it cut the bend's outer
+        // corner off, a hole in the road (spec 4.4 *Road surface without
+        // holes*); `road_mesh` joins the inner corners there into a pivot.
+        // The two end rows stay.
         let mut keep = vec![true; rows.len()];
         let mut last = 0;
         for i in 1..rows.len() {
             let (a, b) = (rows[last], rows[i]);
-            let ahead = (0..2).all(|k| {
+            let ahead = (0..2).any(|k| {
                 let d = [b[k][0] - a[k][0], b[k][2] - a[k][2]];
                 let c = [
                     points[i][0] - points[last][0],

@@ -205,12 +205,282 @@ pub struct RoadMeshes {
     pub overlays: MeshArrays,
 }
 
-/// The direction of a strip at point `i` (horizontal, unit).
-fn direction(p: &[Vec3], i: usize) -> Vec3 {
-    let n = p.len();
-    (p[(i + 1).min(n - 1)] - p[i.saturating_sub(1)])
-        .with_y(0.0)
-        .normalize_or_zero()
+pub use ocw_world::junction::MAX_MITRE;
+
+/// The direction to the right at point `i` of a strip and its mitre
+/// ([`ocw_world::junction::mitred_right`]; spec 4.4 *Road surface without
+/// holes*: without it a bend of 40° drew the road 6 % narrower at the
+/// point and the outside of a sharp vertex was open between the quads).
+fn mitred_right(p: &[Vec3], i: usize) -> (Vec3, f32) {
+    let pts: Vec<[f32; 3]> = p[i.saturating_sub(1)..(i + 2).min(p.len())]
+        .iter()
+        .map(|q| q.to_array())
+        .collect();
+    let (r, mitre) = ocw_world::junction::mitred_right(&pts, i.min(1));
+    (Vec3::new(r[0], 0.0, r[1]), mitre)
+}
+
+/// Whether the turn at point `i` is sharper than a mitre can keep the
+/// road's width round ([`MAX_MITRE`]): its outer corner gets a round fan
+/// ([`outer_fan`]). The turn's outer side: −1 left, +1 right.
+fn sharp_turn(p: &[Vec3], i: usize) -> Option<f32> {
+    if i == 0 || i + 1 >= p.len() {
+        return None;
+    }
+    let d0 = (p[i] - p[i - 1]).with_y(0.0).normalize_or_zero();
+    let d1 = (p[i + 1] - p[i]).with_y(0.0).normalize_or_zero();
+    if d0 == Vec3::ZERO || d1 == Vec3::ZERO {
+        return None;
+    }
+    let b = (d0 + d1).normalize_or_zero();
+    if b != Vec3::ZERO && b.dot(d0) >= 1.0 / MAX_MITRE {
+        return None;
+    }
+    // Turning right (towards +z when heading +x) leaves the outside left.
+    let turn = d0.x * d1.z - d0.z * d1.x;
+    Some(if turn > 0.0 { -1.0 } else { 1.0 })
+}
+
+/// The look of a carriageway's vertices (for the fans at its corners).
+#[derive(Clone, Copy)]
+struct SurfaceLook {
+    far: [f32; 3],
+    half: f32,
+    b: [f32; 2],
+}
+
+/// A round fan of carriageway round `c` from corner `a` to corner `b`
+/// through direction `via` (the outside of a sharp turn, or between two strips meeting
+/// at an angle; spec 4.4 *Road surface without holes*): the wedge between
+/// two square row ends, which was open. `u_rim` is the corners' across
+/// coordinate (± the half width), `v` the along coordinate there. Every
+/// triangle faces up.
+fn outer_fan(
+    m: &mut MeshArrays,
+    c: Vec3,
+    a: Vec3,
+    b: Vec3,
+    via: Vec3,
+    look: SurfaceLook,
+    u_rim: f32,
+    v: f32,
+) {
+    let (va, vb) = ((a - c).with_y(0.0), (b - c).with_y(0.0));
+    let (ra, rb) = (va.length(), vb.length());
+    if ra < 1e-3 || rb < 1e-3 {
+        return;
+    }
+    let (aa, ab) = (va.z.atan2(va.x), vb.z.atan2(vb.x));
+    let mut span = ab - aa;
+    while span > std::f32::consts::PI {
+        span -= std::f32::consts::TAU;
+    }
+    while span < -std::f32::consts::PI {
+        span += std::f32::consts::TAU;
+    }
+    if span.abs() < 1e-3 {
+        return;
+    }
+    // Round the side `via` points to (a turn back has both ways open).
+    let mid = aa + span / 2.0;
+    if Vec3::new(mid.cos(), 0.0, mid.sin()).dot(via) < 0.0 {
+        span -= std::f32::consts::TAU * span.signum();
+    }
+    let pieces = (span.abs() / 15f32.to_radians()).ceil().max(1.0) as u32;
+    let base = m.positions.len() as u32;
+    let code = |m: &mut MeshArrays, q: Vec3, uv: [f32; 2]| {
+        vertex(m, q, Vec3::Y, look.far, look.half, uv, look.b);
+    };
+    // Polar road coordinates: across grows with the radius (tyre tracks
+    // and wear run round the bend), along with the arc (no rings of the
+    // surface's noise).
+    code(m, c, [0.0, v]);
+    for k in 0..=pieces {
+        let t = k as f32 / pieces as f32;
+        let ang = aa + span * t;
+        let r = ra + (rb - ra) * t;
+        let y = a.y + (b.y - a.y) * t;
+        let q = Vec3::new(c.x + r * ang.cos(), y, c.z + r * ang.sin());
+        code(m, q, [u_rim, v + (span * t).abs() * r]);
+    }
+    for k in 0..pieces {
+        let (i, j) = (base + 1 + k, base + 2 + k);
+        let (pc, pi, pj) = (
+            Vec3::from(m.positions[base as usize]),
+            Vec3::from(m.positions[i as usize]),
+            Vec3::from(m.positions[j as usize]),
+        );
+        // Up-facing: negative 2D cross product in (x, z).
+        let d = (pi.xz() - pc.xz()).perp_dot(pj.xz() - pc.xz());
+        if d < 0.0 {
+            m.indices.extend([base, i, j]);
+        } else {
+            m.indices.extend([base, j, i]);
+        }
+    }
+}
+
+/// One end of a drawn carriageway: where strips meet at a way split
+/// without a junction surface, the wedge between their square ends on the
+/// outside of the bend gets a fan ([`joint_fans`]).
+#[derive(Clone, Copy)]
+pub(crate) struct StripEnd {
+    /// The end point (drawn, lifted).
+    pub at: Vec3,
+    /// The end row [left, right] (drawn, lifted).
+    pub row: [Vec3; 2],
+    /// Horizontal direction out of the strip at this end.
+    pub out: Vec3,
+    look: SurfaceLook,
+    v: f32,
+}
+
+/// Strip ends nearer than this horizontally (and within
+/// [`JOINT_DY_M`] in height) meet (m).
+pub const JOINT_M: f32 = 0.05;
+/// See [`JOINT_M`] (m).
+pub const JOINT_DY_M: f32 = 0.5;
+
+/// The fans between strips that meet end to end at an angle (a way
+/// split; at a junction without a surface the two that go on straightest; spec 4.4 *Road surface
+/// without holes*: the wedge on the outside of the bend between their
+/// square ends was a hole – 13,000 of Andorra's hole samples).
+fn joint_fans(m: &mut MeshArrays, ends: &[StripEnd]) {
+    let key = |p: Vec3| ((p.x / 1.0).floor() as i64, (p.z / 1.0).floor() as i64);
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, e) in ends.iter().enumerate() {
+        grid.entry(key(e.at)).or_default().push(i);
+    }
+    for (i, a) in ends.iter().enumerate() {
+        let (cx, cz) = key(a.at);
+        let mut others = Vec::new();
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                for &j in grid.get(&(cx + dx, cz + dz)).into_iter().flatten() {
+                    let b = &ends[j];
+                    if j != i
+                        && b.at.xz().distance(a.at.xz()) < JOINT_M
+                        && (b.at.y - a.at.y).abs() < JOINT_DY_M
+                    {
+                        others.push(j);
+                    }
+                }
+            }
+        }
+        // Two ends at a point; with more (a junction without a surface),
+        // the end that goes on straightest from this one, if this one is
+        // its straightest too. Each pair once.
+        let best = |a: &StripEnd, others: &[usize]| {
+            others
+                .iter()
+                .copied()
+                .min_by(|&x, &y| a.out.dot(ends[x].out).total_cmp(&a.out.dot(ends[y].out)))
+        };
+        let Some(j) = best(a, &others) else {
+            continue;
+        };
+        if others.len() > 1 {
+            let back: Vec<usize> = others
+                .iter()
+                .copied()
+                .filter(|&k| k != j)
+                .chain(std::iter::once(i))
+                .collect();
+            if best(&ends[j], &back) != Some(i) {
+                continue;
+            }
+        }
+        if j < i {
+            continue;
+        }
+        let b = &ends[j];
+        // Arriving along a (against its out direction) and leaving along b.
+        let (din, dout) = (a.out, -b.out);
+        let turn = din.x * dout.z - din.z * dout.x;
+        if turn.abs() < 1e-3 && din.dot(dout) > 0.0 {
+            continue;
+        }
+        // The outside: left of the way on a right turn.
+        let outer = Vec3::new(din.z, 0.0, -din.x) * if turn > 0.0 { 1.0 } else { -1.0 };
+        let outer_b = Vec3::new(dout.z, 0.0, -dout.x) * if turn > 0.0 { 1.0 } else { -1.0 };
+        let pick = |row: [Vec3; 2], c: Vec3, n: Vec3| {
+            if (row[0] - c).dot(n) >= (row[1] - c).dot(n) {
+                (row[0], -1.0)
+            } else {
+                (row[1], 1.0)
+            }
+        };
+        let (ca, ua) = pick(a.row, a.at, outer);
+        let (cb, _) = pick(b.row, b.at, outer_b);
+        if ca.xz().distance(cb.xz()) < 0.01 {
+            continue;
+        }
+        let look = if a.look.half <= b.look.half {
+            a.look
+        } else {
+            b.look
+        };
+        let via = (din - dout).normalize_or_zero();
+        outer_fan(m, a.at, ca, cb, via, look, ua * look.half, a.v);
+    }
+}
+
+/// Whether a carriageway quad between rows `i` and `i + 1` has a triangle
+/// facing down (wound clockwise seen from above: culled, a hole).
+fn quad_flipped(e: &[[Vec3; 2]], i: usize) -> bool {
+    let (l0, r0) = (e[i][0].xz(), e[i][1].xz());
+    let (l1, r1) = (e[i + 1][0].xz(), e[i + 1][1].xz());
+    // Up-facing triangles have a negative 2D cross product in (x, z)
+    // (`road_holes::tri_at`).
+    (r0 - l0).perp_dot(l1 - l0) > 1e-6 || (r1 - r0).perp_dot(l1 - r0) > 1e-6
+}
+
+/// Removes the folds of a carriageway's edges (spec 4.4 *Road surface
+/// without holes*; Andorra, 2026-11-28): on the inside of a bend tighter
+/// than the road's half width – a hairpin of a wide road, a sharp vertex
+/// of a coarsely mapped one – the edge offset from the centreline runs
+/// backwards, the quads there turn over and the renderer culls them: the
+/// road had a hole on the inside of the turn. The inner edge's points of
+/// such quads are joined into one pivot (their mean; a strip's end point
+/// stays where it is, the next strip or junction surface goes on from
+/// it), round which the outer edge fans: every triangle faces up and the
+/// road keeps its full width round the outside.
+pub(crate) fn unfold_edges(edges: &mut [[Vec3; 2]], p: &[Vec3]) {
+    let n = edges.len();
+    if n < 2 || p.len() != n {
+        return;
+    }
+    let orig = edges.to_vec();
+    // Per side, the range of points each point is joined with.
+    let mut lo: [Vec<usize>; 2] = [(0..n).collect(), (0..n).collect()];
+    let mut hi = lo.clone();
+    for _ in 0..n {
+        let Some(i) = (0..n - 1).find(|&i| quad_flipped(edges, i)) else {
+            return;
+        };
+        // The inner side: the edge that gains least along the centreline.
+        let c = (p[i + 1] - p[i]).with_y(0.0);
+        let gain = |k: usize| (edges[i + 1][k] - edges[i][k]).with_y(0.0).dot(c);
+        let k = if gain(0) <= gain(1) { 0 } else { 1 };
+        let (a, b) = (lo[k][i], hi[k][i + 1]);
+        if a == lo[k][i + 1] && b == hi[k][i] {
+            // Already one pivot and still turned over: nothing more to do.
+            return;
+        }
+        let pivot = if a == 0 {
+            orig[0][k]
+        } else if b == n - 1 {
+            orig[n - 1][k]
+        } else {
+            (a..=b).map(|j| orig[j][k]).sum::<Vec3>() / (b - a + 1) as f32
+        };
+        for j in a..=b {
+            lo[k][j] = a;
+            hi[k][j] = b;
+            edges[j][k] = pivot;
+        }
+    }
 }
 
 /// Pushes one vertex.
@@ -290,6 +560,7 @@ pub fn road_meshes_bands(
     let mut corners = crate::road_corners::corners(strips);
     corners.retain(|c| c.ends.iter().all(|e| !shaped(e.0)));
     let trims = crate::road_corners::trims(&corners, strips.len());
+    let mut ends: Vec<StripEnd> = Vec::with_capacity(2 * strips.len());
     for (i, (s, trim)) in strips.iter().zip(&trims).enumerate() {
         let r = rows.get(i).copied().flatten();
         let band = bands
@@ -300,12 +571,21 @@ pub fn road_meshes_bands(
         if r.is_none() && trim.iter().flatten().any(Option::is_some) {
             let cut = crate::road_corners::with_cuts(s, trim);
             let band = band.filter(|b| b.len() == cut.points.len());
-            strip_mesh(&mut out.roads, &cut, ctx, trim, None, band);
+            ends.extend(
+                strip_mesh(&mut out.roads, &cut, ctx, trim, None, band)
+                    .into_iter()
+                    .flatten(),
+            );
         } else {
-            strip_mesh(&mut out.roads, s, ctx, trim, r, band);
+            ends.extend(
+                strip_mesh(&mut out.roads, s, ctx, trim, r, band)
+                    .into_iter()
+                    .flatten(),
+            );
         }
         crossing_overlays(&mut out.overlays, s, ctx, r);
     }
+    joint_fans(&mut out.roads, &ends);
     for c in &corners {
         crate::road_corners::corner_mesh(&mut out.roads, c, strips, ctx);
     }
@@ -323,12 +603,12 @@ fn strip_mesh(
     trim: &[[Option<f32>; 2]; 2],
     rows: Option<&Rows>,
     band: Option<&[[f32; 2]]>,
-) {
+) -> Option<[StripEnd; 2]> {
     let lift = Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
     let p: Vec<Vec3> = s.points.iter().map(|q| Vec3::from(*q) + lift).collect();
     let n = p.len();
     if n < 2 {
-        return;
+        return None;
     }
     let half = s.width_m / 2.0;
     let layer = s.surface.code();
@@ -354,12 +634,13 @@ fn strip_mesh(
             .collect(),
         _ => (0..n)
             .map(|i| {
-                let d = direction(&p, i);
-                let r = Vec3::new(-d.z, 0.0, d.x);
-                [p[i] - r * half, p[i] + r * half]
+                let (r, mitre) = mitred_right(&p, i);
+                [p[i] - r * half * mitre, p[i] + r * half * mitre]
             })
             .collect(),
     };
+    let mut edges = edges;
+    unfold_edges(&mut edges, &p);
     let rights: Vec<Vec3> = edges
         .iter()
         .map(|e| (e[1] - e[0]).with_y(0.0).normalize_or_zero())
@@ -388,6 +669,40 @@ fn strip_mesh(
         );
         m.indices.extend([l0, r0, l1, r0, r1, l1]);
     }
+    let surface = SurfaceLook {
+        far,
+        half,
+        b: [code_b(layer, Kind::Surface, extra), lines],
+    };
+    // The outside of turns too sharp for a mitre: a round corner.
+    for i in 1..n - 1 {
+        let Some(side) = sharp_turn(&p, i) else {
+            continue;
+        };
+        let d0 = (p[i] - p[i - 1]).with_y(0.0).normalize_or_zero();
+        let d1 = (p[i + 1] - p[i]).with_y(0.0).normalize_or_zero();
+        let r0 = Vec3::new(-d0.z, 0.0, d0.x) * side * half;
+        let r1 = Vec3::new(-d1.z, 0.0, d1.x) * side * half;
+        let via = (d0 - d1).normalize_or_zero();
+        outer_fan(
+            m,
+            p[i],
+            p[i] + r0,
+            p[i] + r1,
+            via,
+            surface,
+            side * half,
+            along[i],
+        );
+    }
+    let end = |i: usize, inner: usize| StripEnd {
+        at: p[i],
+        row: edges[i],
+        out: (p[i] - p[inner]).with_y(0.0).normalize_or_zero(),
+        look: surface,
+        v: along[i],
+    };
+    let strip_ends = [end(0, 1), end(n - 1, n - 2)];
     let look = DressLook::of(s, ctx);
     for (si, side) in [-1.0f32, 1.0].into_iter().enumerate() {
         // A path along the road (J7): its sidewalk reaches the path's far
@@ -481,6 +796,7 @@ fn strip_mesh(
             ctx,
         );
     }
+    Some(strip_ends)
 }
 
 /// The materials of a road's edge parts.
