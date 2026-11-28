@@ -152,6 +152,21 @@ pub fn write_manifest(
     args: &ManifestArgs,
     key: Option<&SigningKeyPair>,
 ) -> SignedManifest {
+    write_manifest_with(package, args, key, None)
+}
+
+/// The source names of the traffic counts' attributions (spec 18E T11).
+pub const TRAFFIC_COUNTS_SOURCE: &str = "Traffic counts: ";
+
+/// [`write_manifest`], and with `counts` the traffic counts' sources
+/// replace the old manifest's (`world-builder traffic-counts`, spec 18E
+/// T11; their notices go into the credits and LICENSE-DATA.md).
+pub fn write_manifest_with(
+    package: &Path,
+    args: &ManifestArgs,
+    key: Option<&SigningKeyPair>,
+    counts: Option<&[Attribution]>,
+) -> SignedManifest {
     let bytes =
         std::fs::read(package).unwrap_or_else(|e| fail(format!("{}: {e}", package.display())));
     let pkg = ocw_world::WorldPackage::from_bytes(&bytes)
@@ -200,6 +215,10 @@ pub fn write_manifest(
         if !attribution.iter().any(|b| b.source == a.source) {
             attribution.push(a);
         }
+    }
+    if let Some(counts) = counts {
+        attribution.retain(|a| !a.source.starts_with(TRAFFIC_COUNTS_SOURCE));
+        attribution.extend(counts.iter().cloned());
     }
     let mut m = Manifest::new(&id, &name, version, now_unix_s(), GENERATOR, attribution)
         .unwrap_or_else(|e| fail(e));

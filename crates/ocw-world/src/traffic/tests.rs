@@ -501,4 +501,45 @@ fn rules_without_data_follow_the_class() {
     );
     assert!(!rr.edge(&edge(RoadClass::Cycleway)).has_traffic());
     assert!(rr.controls_on(EdgeId(1)).is_empty());
+    // Without TRFC every road keeps the class's demand (T11).
+    assert_eq!(rr.edge(&edge(RoadClass::Primary)).flow, 1.0);
+}
+
+/// T11 (spec 18E): a `TRFC` written before the counts (flow 100 on every
+/// edge) and one without a factor (0) read as 1; counted factors survive
+/// the round trip to 1/100.
+#[test]
+fn flow_of_old_and_counted_packages() {
+    let mut t = sample();
+    for r in t.edges.values_mut() {
+        r.flow = 1.0;
+    }
+    let mut b = Vec::new();
+    write_traffic(&t, &mut b);
+    // The edge records start after version, country and count (7 bytes);
+    // the flow is the last u16 of each 28-byte record.
+    for i in 0..t.edges.len() {
+        let at = 7 + i * 28 + 26;
+        assert_eq!(u16::from_le_bytes([b[at], b[at + 1]]), 100, "pre-T11 value");
+        b[at] = 0;
+        b[at + 1] = 0;
+    }
+    let back = read_traffic(&b).unwrap();
+    assert!(
+        back.edges.values().all(|r| r.flow == 1.0),
+        "no factor reads 1"
+    );
+    // Counted factors: kept to 1/100, never stored as "none".
+    for (r, f) in t.edges.values_mut().zip([0.004, 2.346, 31.0]) {
+        r.flow = f;
+    }
+    let mut b = Vec::new();
+    write_traffic(&t, &mut b);
+    let flows: Vec<f32> = read_traffic(&b)
+        .unwrap()
+        .edges
+        .values()
+        .map(|r| r.flow)
+        .collect();
+    assert_eq!(flows, vec![0.01, 2.35, 31.0]);
 }

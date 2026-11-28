@@ -11982,6 +11982,7 @@ name = "world-builder"
 version = "0.2.7"
 dependencies = [
  "clap",
+ "ocw-sim",
  "ocw-sky",
  "ocw-world",
  "ocw-worldgen",

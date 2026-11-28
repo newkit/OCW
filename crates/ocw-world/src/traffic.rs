@@ -21,7 +21,9 @@
 //!   maxspeed forward, backward: u16 u16 (SpeedLimit::code)
 //!   speed source: u8   country: [u8; 2]
 //!   maxweight: u16 (0.1 t, 0 none)   maxheight: u16 (cm, 0 none)
-//!   parking left, right: u8 u8 (Parking::code)   flow: u16 (1/100)
+//!   parking left, right: u8 u8 (Parking::code)
+//!   flow: u16 (1/100; 0 = no factor, read as 1 – packages before T11
+//!   wrote 100 everywhere)
 //! control count: u32, per control (sorted by edge, along):
 //!   edge id: u64   along: f32 (m from the edge's `from`)   kind: u8
 //!   applies: u8   at junction: u8   OSM node: i64
@@ -639,7 +641,9 @@ pub struct EdgeRules {
     pub roundabout: bool,
     /// Overtaking forbidden forward / backward (`overtaking=no`).
     pub no_overtaking: [bool; 2],
-    /// Demand factor of the road (open counts, spec 18E T11; 1 until then).
+    /// Demand factor of the road: its annual average daily traffic against
+    /// the class's default (open counts, `world-builder traffic-counts`,
+    /// spec 18E T11; 1 without counts), 0.01 – 655.
     pub flow: f32,
 }
 
@@ -1321,6 +1325,24 @@ fn get_opt_edge(r: &mut Bytes) -> Result<Option<EdgeId>, String> {
     Ok((v != 0).then_some(EdgeId(v)))
 }
 
+/// The stored demand factor (1/100): never 0, which means "no factor".
+fn flow_code(flow: f32) -> u16 {
+    if flow.is_finite() {
+        (flow * 100.0).round().clamp(1.0, 65535.0) as u16
+    } else {
+        100
+    }
+}
+
+/// The demand factor of a stored code (0: none, 1).
+fn flow_of(code: u16) -> f32 {
+    if code == 0 {
+        1.0
+    } else {
+        f32::from(code) / 100.0
+    }
+}
+
 /// Writes the `TRFC` payload.
 pub fn write_traffic(t: &TrafficData, b: &mut Vec<u8>) {
     b.push(TRAFFIC_VERSION);
@@ -1345,7 +1367,7 @@ pub fn write_traffic(t: &TrafficData, b: &mut Vec<u8>) {
         b.extend(h.to_le_bytes());
         b.push(r.parking[0].code());
         b.push(r.parking[1].code());
-        b.extend(((r.flow * 100.0).round().clamp(0.0, 65535.0) as u16).to_le_bytes());
+        b.extend(flow_code(r.flow).to_le_bytes());
     }
     b.extend((t.controls.len() as u32).to_le_bytes());
     for c in &t.controls {
@@ -1419,7 +1441,7 @@ pub fn read_traffic(payload: &[u8]) -> Result<TrafficData, String> {
         let w = u16_of(&mut r)?;
         let h = u16_of(&mut r)?;
         let parking = [Parking::from_code(r.u8()?), Parking::from_code(r.u8()?)];
-        let flow = f32::from(u16_of(&mut r)?) / 100.0;
+        let flow = flow_of(u16_of(&mut r)?);
         let oneway = if f & flags::ONEWAY_FWD != 0 {
             Oneway::Forward
         } else if f & flags::ONEWAY_BWD != 0 {
