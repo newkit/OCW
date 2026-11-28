@@ -67,11 +67,13 @@ pub const FLASH_S: f64 = 0.15;
 pub const POWER_FLASH_S: f64 = 0.9;
 /// How long the note of the hide button shows (s).
 pub const TOAST_S: f64 = 4.0;
-/// The first-ride tip (the second line while the power is the virtual
-/// trainer's).
+/// The first-ride tip; with the faster / slower zones on (the power is
+/// the virtual trainer's) the short one that names them too – it must
+/// stay above the rider on a small phone.
 pub const TIP: &str =
     "Tap or hold the left / right side to steer \u{2013} two fingers move the camera";
-pub const TIP_POWER: &str = "Top of the screen: faster \u{2013} bottom: slower";
+pub const TIP_POWER: &str =
+    "Sides: steer \u{2013} top: faster \u{2013} bottom: slower \u{2013} two fingers: camera";
 /// The note when the controls are hidden the first time.
 pub const HIDDEN_NOTE: &str = "Controls hidden \u{2013} they still work";
 
@@ -344,7 +346,12 @@ fn touch_steer(world: &mut World) {
     // The menu and hide buttons are tap targets, not steering: where
     // they were drawn in the last frame.
     let buttons_on = world.resource::<RideTouch>().buttons;
-    let boxes = world.get_resource::<ocw_render::hud::HudBoxes>().cloned();
+    // (Below the HUD's boxes as they were before the menu opened, as the
+    // renderer draws them: `ButtonAnchor`.)
+    let boxes = match world.get_resource::<ocw_render::touch_hud::ButtonAnchor>() {
+        Some(a) => a.0.clone(),
+        None => world.get_resource::<ocw_render::hud::HudBoxes>().cloned(),
+    };
     let buttons_at = if buttons_on {
         button_rects(ui_off, ui_size, ui_scale, boxes.as_ref())
     } else {
@@ -493,7 +500,14 @@ fn touch_steer(world: &mut World) {
         .flash
         .filter(|(_, until)| now < *until)
         .map(|(s, _)| s);
-    let shown = active && presence.shown(setting);
+    // Touch stays the HUD's form under the open menu (no key help comes
+    // back, so the top panel and the menu button below it keep their
+    // place); the hints themselves are not drawn there.
+    let menu_over_ride = menu_open
+        && crate::riding(world)
+        && crate::god::not_flying(world)
+        && setting != TouchSetting::Off;
+    let shown = (active || menu_over_ride) && presence.shown(setting);
     // The menu and hide buttons: on a touch device (or after a touch),
     // in the ride – in flight and with the steering *off* too – and the
     // menu button over the open menu.
@@ -528,7 +542,7 @@ fn touch_steer(world: &mut World) {
     let share = |y: f32| ((y - ui_off.y) / ui_size.y.max(1.0)).clamp(0.0, 1.0);
     let power_band = power_zones.as_ref().map(|z| z.band());
     let tip = if power_zones.is_some() {
-        format!("{TIP}\n{TIP_POWER}")
+        TIP_POWER.to_string()
     } else {
         TIP.to_string()
     };
@@ -1187,6 +1201,8 @@ mod tests {
         // A finger that slides off the button does nothing.
         touch(&mut app, 8, TouchPhase::Started, x, y);
         app.update();
+        touch(&mut app, 8, TouchPhase::Moved, x + 300.0, y + 300.0);
+        app.update();
         touch(&mut app, 8, TouchPhase::Ended, x + 300.0, y + 300.0);
         app.update();
         app.update();
@@ -1275,6 +1291,10 @@ mod tests {
             hud.buttons && hud.menu_open,
             "it stays over the menu: {hud:?}"
         );
+        // Touch stays the HUD's form (the top panel keeps its height, the
+        // button its place), but no hints are drawn under the menu.
+        assert!(hud.shown && !hud.hints(), "{hud:?}");
+        assert_eq!(button(&app, CornerButton::Menu), (x, y));
         // Over the menu the zones are off; the button closes it.
         hold(&mut app, 3, 640.0, 100.0, 1);
         assert_eq!(take(&mut app), ThrottleKeys::default());

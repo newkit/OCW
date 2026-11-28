@@ -334,7 +334,9 @@ fn measure_menu(
     let k = scale.map_or(1.0, |s| s.0);
     let rect = |c: &ComputedNode, t: &UiGlobalTransform| {
         let inv = c.inverse_scale_factor();
-        let size = c.size() * inv * k;
+        // With the scale of a narrow viewport's menu ([`menu_fit`]).
+        let scale = Vec2::new(t.matrix2.x_axis.length(), t.matrix2.y_axis.length());
+        let size = c.size() * scale * inv * k;
         let min = t.translation * inv * k - size * 0.5 + off;
         [min.x, min.y, size.x, size.y]
     };
@@ -735,6 +737,27 @@ pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
 /// camera's viewport when it has one (OCW Studio draws the menu – its
 /// trust dialog – into the 3D view between its panels), else the window,
 /// else 16:9.
+/// The narrowest viewport (width / height) the menu is laid out for: its
+/// panel at its full width. A narrower one – a phone in portrait – gets
+/// this layout scaled down to its width ([`menu_fit`]).
+pub const MENU_MIN_ASPECT: f32 = PANEL_WIDTH_VH / PANEL_MAX_VW;
+
+/// The aspect the menu is laid out for and the scale it is drawn at, in a
+/// viewport of `aspect` (width / height). The menu's sizes follow the
+/// viewport's height (vh); in a viewport narrower than
+/// [`MENU_MIN_ASPECT`] the same sizes would squeeze the text into a
+/// narrow panel and push the rows off the screen (a phone in portrait:
+/// the title in three lines, *Settings* below the panel). There the menu
+/// is laid out as for [`MENU_MIN_ASPECT`] and scaled to the width: every
+/// page keeps its layout, rows and all, at any size.
+pub fn menu_fit(aspect: f32) -> (f32, f32) {
+    if aspect > 0.0 && aspect < MENU_MIN_ASPECT {
+        (MENU_MIN_ASPECT, aspect / MENU_MIN_ASPECT)
+    } else {
+        (aspect, 1.0)
+    }
+}
+
 pub fn menu_aspect(ui_viewport: Option<(f32, f32)>, window: Option<(f32, f32)>) -> f32 {
     ui_viewport
         .filter(|(w, h)| *w > 0.0 && *h > 0.0)
@@ -1425,13 +1448,14 @@ fn draw_menu(
         Query<&mut Text, With<MenuHint>>,
         Query<(&mut Text, &mut Node), (With<MenuEmphasis>, Without<MenuRoot>)>,
     )>,
-    (windows, ui_cameras): (
+    (windows, ui_cameras, mut panel_fit): (
         Query<&Window, With<bevy::window::PrimaryWindow>>,
         Query<&Camera, With<bevy::ui::IsDefaultUiCamera>>,
+        Query<&mut UiTransform, With<MenuPanel>>,
     ),
     mut last_aspect: Local<f32>,
 ) {
-    let aspect = menu_aspect(
+    let viewport_aspect = menu_aspect(
         ui_cameras
             .single()
             .ok()
@@ -1439,8 +1463,29 @@ fn draw_menu(
             .map(|s| (s.x, s.y)),
         windows.single().ok().map(|w| (w.width(), w.height())),
     );
-    let resized = (aspect - *last_aspect).abs() > 1e-3;
-    *last_aspect = aspect;
+    // A narrow viewport (a phone in portrait): the layout of the
+    // narrowest full-width panel, scaled to the width.
+    let (aspect, scale) = menu_fit(viewport_aspect);
+    let resized = (viewport_aspect - *last_aspect).abs() > 1e-3;
+    *last_aspect = viewport_aspect;
+    for mut n in &mut panel {
+        let max = if scale < 1.0 {
+            vh(PANEL_MAX_VW * MENU_MIN_ASPECT)
+        } else {
+            vw(PANEL_MAX_VW)
+        };
+        // Laid out wider than the viewport: it must not shrink to it.
+        let shrink = if scale < 1.0 { 0.0 } else { 1.0 };
+        if n.max_width != max || n.flex_shrink != shrink {
+            n.max_width = max;
+            n.flex_shrink = shrink;
+        }
+    }
+    for mut t in &mut panel_fit {
+        if t.scale != Vec2::splat(scale) {
+            t.scale = Vec2::splat(scale);
+        }
+    }
     // Rows of a new page appear a frame after they were spawned: style them
     // then, too.
     if !view.is_changed() && !resized && !rows.iter().any(|(r, ..)| r.is_added()) {
@@ -1850,6 +1895,32 @@ mod tests {
         let a = menu_aspect(Some((0.0, 0.0)), Some((1600.0, 1200.0)));
         assert!((a - 4.0 / 3.0).abs() < 1e-6);
         assert!((menu_aspect(None, None) - 16.0 / 9.0).abs() < 1e-6);
+    }
+
+    /// A phone in portrait (regression: at 430 × 839 the title took three
+    /// lines of a squeezed panel and *Settings* and *Captures* lay below
+    /// the screen, out of a finger's reach): narrower than the panel's
+    /// full width the menu keeps that layout and is scaled to the width,
+    /// so every page that fits a desktop window fits the phone.
+    #[test]
+    fn a_narrow_viewport_gets_the_full_layout_scaled_to_its_width() {
+        // Wide enough: as it was.
+        for a in [16.0 / 9.0, 4.0 / 3.0, MENU_MIN_ASPECT] {
+            assert_eq!(menu_fit(a), (a, 1.0));
+        }
+        for (w, h) in [(430.0, 839.0), (360.0, 640.0), (820.0, 1136.0)] {
+            let (aspect, scale) = menu_fit(w / h);
+            assert_eq!(aspect, MENU_MIN_ASPECT);
+            assert!(scale < 1.0 && scale > 0.3, "{w}x{h}: {scale}");
+            // The panel at its full width, scaled, is 94 % of the width …
+            let panel_px = PANEL_WIDTH_VH / 100.0 * h * scale;
+            assert!((panel_px - 0.94 * w).abs() < 0.5, "{w}x{h}: {panel_px}");
+            // … and a page that fills the height's 94 % stays on screen.
+            assert!(PANEL_MAX_VH / 100.0 * h * scale < h);
+            // The layout is the wide one: the content as wide as at 16:9.
+            assert_eq!(content_width_vh(aspect), content_width_vh(16.0 / 9.0));
+        }
+        assert_eq!(menu_fit(0.0), (0.0, 1.0));
     }
 
     /// The calendar fits the ten-foot panel at 16:9 and 4:3 with its

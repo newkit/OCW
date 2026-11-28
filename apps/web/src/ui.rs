@@ -690,6 +690,8 @@ pub fn hud_layout_view_json(
         "chevrons": touch.chevrons,
         // The menu button and the hide button (☰, the eye).
         "buttons": touch.buttons,
+        // The bands of the faster / slower marks and feedback.
+        "zone_bands": touch.zone_bands,
         "big_lines": boxes.big_lines,
         "small_lines": boxes.small_lines,
         "text": boxes.text,

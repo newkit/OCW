@@ -600,6 +600,7 @@
         for (const k of ["top_panel", "top_right", "profile", "touch_tip"]) if (hud[k]) boxes.push(hud[k]);
         for (const c of hud.chevrons || []) boxes.push(c);
         for (const b of hud.buttons || []) boxes.push(b);
+        for (const b of hud.zone_bands || []) boxes.push(b);
         if (mp.shown && mp.rect) boxes.push(mp.rect);
         for (const id of ["ocw-devices-show", "ocw-devices", "ocw-preview-bar"]) {
           const e = document.getElementById(id);
@@ -675,7 +676,7 @@
       });
       typeField.addEventListener("keyup", (e) => e.stopPropagation());
       document.getElementById("ocw-type-done").onclick = () => { sendKey("Enter"); typeField.blur(); canvas.focus(); };
-      const touchDevice = () => navigator.maxTouchPoints > 0
+      const touchDevice = () => (navigator.maxTouchPoints > 0 || "ontouchstart" in window)
         && (!!(window.matchMedia && matchMedia("(pointer: coarse)").matches)
           || /iPhone|iPad|iPod|Android|Mobile/.test(navigator.userAgent)
           || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));

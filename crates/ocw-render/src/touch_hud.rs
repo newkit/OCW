@@ -23,8 +23,16 @@ impl Plugin for TouchHudPlugin {
         app.init_resource::<TouchHud>()
             .init_resource::<crate::hud_fit::HudLayout>()
             .init_resource::<TouchLayout>()
+            .init_resource::<ButtonAnchor>()
             .add_systems(Startup, spawn)
-            .add_systems(Update, (update, place_buttons, place_power, place_tip));
+            .add_systems(
+                Update,
+                (
+                    anchor_buttons,
+                    (update, place_buttons, place_power, place_tip),
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -73,9 +81,10 @@ pub struct TouchHud {
 }
 
 impl TouchHud {
-    /// The hints (chevrons, zone marks, tips) are drawn.
+    /// The hints (chevrons, zone marks, tips) are drawn: not hidden, and
+    /// not under the open menu.
     pub fn hints(&self) -> bool {
-        self.shown && !self.hidden
+        self.shown && !self.hidden && !self.menu_open
     }
 
     /// Anything of the hints' layer is drawn (the hints or the feedback
@@ -200,6 +209,30 @@ pub fn top_boxes(boxes: &crate::hud::HudBoxes, off: Vec2, ui_scale: f32) -> Vec<
         .collect()
 }
 
+/// The HUD's boxes the corner buttons are placed below: the HUD's
+/// ([`crate::hud::HudBoxes`]) as they were before the menu opened. The
+/// open menu changes the top panel's lines (its status line moves into
+/// the menu); the menu button must not move under the finger that will
+/// close the menu. Read by the drawing here and by the hit test in
+/// `ocw_ui::touch`.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct ButtonAnchor(pub Option<crate::hud::HudBoxes>);
+
+/// Follows the HUD's boxes while the menu is closed.
+fn anchor_buttons(
+    boxes: Option<Res<crate::hud::HudBoxes>>,
+    menu: Option<Res<crate::menu::MenuView>>,
+    mut anchor: ResMut<ButtonAnchor>,
+) {
+    if menu.is_some_and(|m| m.open) {
+        return;
+    }
+    let now = boxes.as_deref().cloned();
+    if anchor.0 != now {
+        anchor.0 = now;
+    }
+}
+
 /// The left chevron's distance from the left edge (UI px).
 const CHEV_LEFT: f32 = 36.0;
 /// The gap between the first-ride tip and its neighbours (CSS px).
@@ -280,6 +313,10 @@ pub struct TouchLayout {
     pub chevrons: Vec<[f32; 4]>,
     /// The menu button, then the hide button (while they show).
     pub buttons: Vec<[f32; 4]>,
+    /// The bands of the faster / slower zones' marks and feedback (just
+    /// inside each zone's line, over the width; while the marks show):
+    /// the page keeps its banner out of them.
+    pub zone_bands: Vec<[f32; 4]>,
 }
 
 /// The first-ride tip's box (measured by the HUD: `HudBoxes::touch_tip`).
@@ -726,7 +763,7 @@ fn place_buttons(
     hud: Res<TouchHud>,
     layout: Res<crate::hud_fit::HudLayout>,
     scale: Option<Res<UiScale>>,
-    boxes: Option<Res<crate::hud::HudBoxes>>,
+    boxes: Res<ButtonAnchor>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     safe: Option<Res<crate::safe_area::SafeArea>>,
     mut root: Query<
@@ -774,7 +811,7 @@ fn place_buttons(
     let (rects, _, _, k) = buttons_now(
         &layout,
         scale.as_deref(),
-        boxes.as_deref(),
+        boxes.0.as_ref(),
         windows.single().ok(),
         safe.as_deref(),
     );
@@ -907,7 +944,7 @@ fn place_tip(
     hud: Res<TouchHud>,
     layout: Res<crate::hud_fit::HudLayout>,
     scale: Option<Res<UiScale>>,
-    boxes: Option<Res<crate::hud::HudBoxes>>,
+    boxes: Res<ButtonAnchor>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     safe: Option<Res<crate::safe_area::SafeArea>>,
     mut tip_box: Query<&mut Node, With<TipBox>>,
@@ -920,7 +957,7 @@ fn place_tip(
     let (rects, avoid, off, k) = buttons_now(
         &layout,
         scale.as_deref(),
-        boxes.as_deref(),
+        boxes.0.as_ref(),
         windows.single().ok(),
         safe.as_deref(),
     );
@@ -967,6 +1004,18 @@ fn place_tip(
         chevrons,
         buttons: buttons
             .map(|b| b.iter().map(|(_, r)| window(*r)).collect())
+            .unwrap_or_default(),
+        zone_bands: hud
+            .hints()
+            .then_some(hud.power)
+            .flatten()
+            .map(|band| {
+                let h = FLASH_H + 10.0;
+                vec![
+                    window(Rect::new(0.0, band.0 * ui.y - h, ui.x, band.0 * ui.y)),
+                    window(Rect::new(0.0, band.1 * ui.y, ui.x, band.1 * ui.y + h)),
+                ]
+            })
             .unwrap_or_default(),
     });
 }
@@ -1361,6 +1410,11 @@ mod tests {
         assert_eq!(display::<CornerKey>(&mut app), [Display::Flex; 2]);
         assert_eq!(display::<EyeStroke>(&mut app), [Display::None]);
         assert_eq!(display::<Toast>(&mut app), [Display::None]);
+        // The bands of the zones' marks and feedback, for the page.
+        let bands = app.world().resource::<TouchLayout>().zone_bands.clone();
+        assert_eq!(bands.len(), 2);
+        assert_eq!(bands[0], [0.0, 130.0, 1280.0, 50.0]);
+        assert_eq!(bands[1], [0.0, 540.0, 1280.0, 50.0]);
         // The buttons are 48 px (scale 1) at the top left.
         let mut q = app.world_mut().query::<(&Node, &CornerKey)>();
         for (n, k) in q.iter(app.world()) {
@@ -1387,6 +1441,10 @@ mod tests {
         assert_eq!(display::<Toast>(&mut app), [Display::Flex]);
         let layout = app.world().resource::<TouchLayout>().clone();
         assert!(layout.chevrons.is_empty() && layout.banner.is_none());
+        assert!(
+            layout.zone_bands.is_empty(),
+            "no marks: no bands to keep free"
+        );
         assert_eq!(layout.buttons.len(), 2);
         // A touch's feedback still shows: the held side's glow, a step.
         {
@@ -1419,5 +1477,46 @@ mod tests {
             assert_eq!(n.display, want, "{:?}", k.0);
         }
         assert_eq!(display::<Toast>(&mut app), [Display::None]);
+    }
+
+    /// The buttons stay where they were when the menu opened, whatever
+    /// the open menu does to the HUD's top panel (regression: on a tablet
+    /// the panel lost a line under the menu and ☰ moved up, away from
+    /// the finger that came to close the menu).
+    #[test]
+    fn the_buttons_keep_their_place_under_the_open_menu() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(TouchHudPlugin)
+            .init_resource::<crate::menu::MenuView>();
+        let panel = |h: f32| crate::hud::HudBoxes {
+            top_panel: Some([10.0, 10.0, 600.0, h]),
+            ..Default::default()
+        };
+        app.insert_resource(panel(120.0));
+        {
+            let mut h = app.world_mut().resource_mut::<TouchHud>();
+            h.shown = true;
+            h.buttons = true;
+        }
+        app.update();
+        let top = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&Node, &CornerKey)>();
+            q.iter(app.world()).map(|(n, _)| n.top).collect::<Vec<_>>()
+        };
+        assert_eq!(top(&mut app), [px(138), px(138)], "below the panel");
+        // The menu opens and the panel shrinks: the buttons stay.
+        app.world_mut().resource_mut::<crate::menu::MenuView>().open = true;
+        app.world_mut().resource_mut::<TouchHud>().menu_open = true;
+        app.insert_resource(panel(80.0));
+        app.update();
+        app.update();
+        assert_eq!(top(&mut app), [px(138), px(138)]);
+        assert_eq!(app.world().resource::<ButtonAnchor>().0, Some(panel(120.0)));
+        // Closed again: they follow the panel.
+        app.world_mut().resource_mut::<crate::menu::MenuView>().open = false;
+        app.world_mut().resource_mut::<TouchHud>().menu_open = false;
+        app.update();
+        assert_eq!(top(&mut app), [px(98), px(98)]);
     }
 }

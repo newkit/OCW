@@ -629,7 +629,7 @@ impl Page {
             ],
             Self::Account => &[crate::account::NOTE],
             Self::UnicornControls => &[
-                "Touch: tap or hold a side to steer; without a trainer the top of the screen is faster, the bottom slower. Unicorn: cursor keys and + / -, or the gamepad.",
+                "Touch: sides steer, top faster, bottom slower. Unicorn: cursor keys, + / -, gamepad.",
             ],
             Self::Bindings => &[
                 "One or two keys and a gamepad button per ride action. The menu's keys, the sticks, the triggers and the unicorn's flight keys stay fixed.",
