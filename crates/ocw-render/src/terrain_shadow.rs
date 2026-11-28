@@ -1,4 +1,4 @@
-//! Terrain shadows (spec 4.5 *Terrain shadows*, v7.09): the mountains
+//! Terrain shadows (spec 4.5 *Terrain shadows*, v7.15): the mountains
 //! shade the valleys at every distance. The sun's cascaded shadow maps
 //! reach 40 – 250 m from the camera (`quality::Quality::shadow_distance_m`)
 //! and the terrain tiles never cast into them (`NotShadowCaster`: near and
@@ -700,6 +700,24 @@ mod tests {
                         }
                     }
                     let ln = sum / cnt as f32;
+                    // As uploaded: both meshes carry their normals in
+                    // 16-bit signed normalised components (10G); the
+                    // packing moves N·L by far less than a shade.
+                    for (arr, i) in [(&far.normals, f), (&near.normals, nidx)] {
+                        let bevy::mesh::VertexAttributeValues::Snorm16x4(q) =
+                            crate::package::pack_normals(&arr[i..=i])
+                        else {
+                            unreachable!()
+                        };
+                        let unpacked = Vec3::new(
+                            f32::from(q[0][0]) / 32767.0,
+                            f32::from(q[0][1]) / 32767.0,
+                            f32::from(q[0][2]) / 32767.0,
+                        )
+                        .normalize();
+                        let exact = Vec3::from(arr[i]).dot(sun);
+                        assert!((unpacked.dot(sun) - exact).abs() < 1e-4);
+                    }
                     // Away from the crest and the foot (the 100 m grid
                     // cuts their kinks off).
                     if (pf.x - 1500.0).abs() > 150.0 && (pf.x - 3500.0).abs() > 150.0 {

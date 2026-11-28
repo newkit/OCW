@@ -758,6 +758,16 @@ impl AirSpace {
         &self.relief
     }
 
+    /// The aerodromes with runways or strips (x, z, elevation): the live
+    /// aircraft's gear rule ([`live::live_gear`]).
+    pub fn field_points(&self) -> Vec<[f64; 3]> {
+        self.fields
+            .iter()
+            .filter(|f| !f.strips.is_empty())
+            .map(|f| [f.pos[0], f.pos[1], f.elevation_m])
+            .collect()
+    }
+
     /// The runway direction a field uses now: into the wind (in a calm
     /// the day's choice from the seed); a field without a runway gets a
     /// strip into the wind.
@@ -1484,8 +1494,14 @@ fn aircraft_motion(f: &Flight, t: f64, s: &PathState) -> (f64, bool) {
     let speed = (s.vel[0].powi(2) + s.vel[1].powi(2) + s.vel[2].powi(2)).sqrt();
     let rotor = match f.kind {
         AirKind::Glider | AirKind::Balloon => 0.0,
-        // Idling on the pad.
-        AirKind::Helicopter if s.ground && speed < 0.5 => 0.3,
+        // On the pad: run down after landing, spool up before lift-off.
+        AirKind::Helicopter if s.ground && speed < 0.5 => f
+            .path
+            .hold_at(t - f.start_s)
+            .map_or(1.0, |(since, until, first)| {
+                rotor_spool(since, until, first)
+            }),
+        // The propeller idling (~1,000 of ~2,500 rpm).
         AirKind::SmallPlane if s.ground && speed < 0.5 => 0.4,
         _ => 1.0,
     };
@@ -1498,16 +1514,58 @@ fn aircraft_motion(f: &Flight, t: f64, s: &PathState) -> (f64, bool) {
     (rotor, burner)
 }
 
+/// How long a helicopter's rotor takes to spool up or run down (s).
+pub const ROTOR_SPOOL_S: f64 = 25.0;
+
+/// A helicopter's rotor speed (0 still … 1 flying) standing on its pad
+/// `since` s after the hold began and `until` s before it ends (v7.08):
+/// running down after landing, spooling up before lift-off; at the
+/// path's start it was never running, so it only spools up.
+pub fn rotor_spool(since: f64, until: f64, first: bool) -> f64 {
+    let up = (1.0 - until / ROTOR_SPOOL_S).clamp(0.0, 1.0);
+    let down = if first {
+        0.0
+    } else {
+        (1.0 - since / ROTOR_SPOOL_S).clamp(0.0, 1.0)
+    };
+    up.max(down)
+}
+
+/// Seconds after lift-off when an airliner's gear starts to come up
+/// (positive climb, some 15 – 30 m over the runway; 18C v7.08).
+pub const GEAR_UP_AFTER_LIFTOFF_S: f64 = 6.0;
+/// Seconds before touchdown when it goes down on final: at the approach
+/// speeds of [`AirSpace`]'s arrivals (72 – 78 m/s on the 3° glide slope)
+/// about 9.5 km out and 500 m (1,650 ft) over the runway.
+pub const GEAR_DOWN_BEFORE_TOUCHDOWN_S: f64 = 130.0;
+
+/// Whether a flight's gear is down `t` seconds after its start (18C,
+/// v7.08; the user, 2026-11-28: "airplanes stow their landing gear after
+/// take off and only put it out short before landing"). Retractable gear
+/// (airliners): down on the ground and while taxiing, up
+/// [`GEAR_UP_AFTER_LIFTOFF_S`] after lift-off, up the whole flight, down
+/// again [`GEAR_DOWN_BEFORE_TOUCHDOWN_S`] before touchdown on final – by
+/// the flight's phase and its time to touchdown, never by the height over
+/// the terrain (a low pass over a ridge keeps it up). Fixed gear (small
+/// planes, gliders, helicopters, balloons): always down. The renderer
+/// swings it in and out over a few seconds.
+pub fn gear_down(kind: AirKind, mission: Mission, path: &FlightPath, t: f64, ground: bool) -> bool {
+    if kind != AirKind::Airliner || ground {
+        return true;
+    }
+    match mission {
+        Mission::Departure => path
+            .time_of_liftoff()
+            .is_some_and(|l| t < l + GEAR_UP_AFTER_LIFTOFF_S),
+        Mission::Arrival => t >= path.time_of_touchdown() - GEAR_DOWN_BEFORE_TOUCHDOWN_S,
+        _ => false,
+    }
+}
+
 fn aircraft_now(f: &Flight, now: f64, upper: &UpperAir, contrails: bool) -> AircraftNow {
     let s = f.state(now);
     let (rotor, burner) = aircraft_motion(f, now, &s);
-    let above = s.pos[1] - f.field_m;
-    let gear_down = match (f.kind, f.mission) {
-        (AirKind::Airliner, Mission::Arrival) => above < 1100.0,
-        (AirKind::Airliner, Mission::Departure) => above < 350.0,
-        (AirKind::Airliner, _) => false,
-        _ => true,
-    } || s.ground;
+    let gear_down = gear_down(f.kind, f.mission, &f.path, now - f.start_s, s.ground);
     let trail = (contrails && f.kind == AirKind::Airliner)
         .then(|| trail(f, now, upper))
         .flatten();

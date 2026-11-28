@@ -1,5 +1,5 @@
 //! Terrain shadows from the height field (spec 4.5 *Terrain shadows*,
-//! v7.09): where the mountains around hide the sun. The renderer's
+//! v7.15): where the mountains around hide the sun. The renderer's
 //! cascaded shadow maps reach at most 250 m from the camera and the terrain
 //! never cast into them, so no ridge shaded a valley: a slope the sun could
 //! not reach was lit like an open one at any distance. This module finds,

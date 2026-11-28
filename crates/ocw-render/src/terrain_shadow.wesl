@@ -1,4 +1,4 @@
-// Terrain shadows (spec 4.5 *Terrain shadows*, v7.09): the shadow of the
+// Terrain shadows (spec 4.5 *Terrain shadows*, v7.15): the shadow of the
 // mountains from the height field, for every surface that is lit by the
 // sun – the near and far terrain, roads, trees, houses, water, riders'
 // gear, vehicles. `terrain_shadow::TerrainShadowMap` keeps the shadow line

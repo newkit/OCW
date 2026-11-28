@@ -178,7 +178,7 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 <section class="panel" id="questions"></section>
 <section class="panel" id="janitor"></section>
 <section class="panel" id="art"></section>
-<footer>View of the machines in config/machines.toml, polled over SSH every 5 s (also machines disabled for building: read-only probes); on the machines it only changes the janitor's cleanup of build artefacts (target/) when a disk fills up. Enabled/Disabled, the build slots and the agents allowed on the coordinator (with the token) go to config/build-machines.toml, which scripts/remote.sh and scripts/agent-slots.sh read. Open questions: from SPECIFICATION.md of the main checkout. The coordinator card reads this machine's /proc (process names and RSS, never command lines); its samples go to test-output/build-log/DAY/deb.jsonl. Batteries (laptops, a Meta Quest on Link): read-only probes every 2 min, the headset's level from the Meta runtime's device cache and service log. Claude tasks: agents.jsonl, the task files' mtime and size (never their content) and git. JSON: <a href="api/status">/api/status</a></footer>
+<footer>View of the machines in config/machines.toml, polled over SSH every 5 s (also machines disabled for building: read-only probes); on the machines it only changes the janitor's cleanup (stale checkouts' target/, checkouts idle for 30 days, leftovers and temp folders: once a day and when a disk fills up). Enabled/Disabled, the build slots and the agents allowed on the coordinator (with the token) go to config/build-machines.toml, which scripts/remote.sh and scripts/agent-slots.sh read. Open questions: from SPECIFICATION.md of the main checkout. The coordinator card reads this machine's /proc (process names and RSS, never command lines); its samples go to test-output/build-log/DAY/deb.jsonl. Batteries (laptops, a Meta Quest on Link): read-only probes every 2 min, the headset's level from the Meta runtime's device cache and service log. Claude tasks: agents.jsonl, the task files' mtime and size (never their content) and git. JSON: <a href="api/status">/api/status</a></footer>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -221,10 +221,14 @@ function janitorLine(r, now) {
   let txt;
   if (r.error) txt = `<span class="warnt">last pass${ago} failed</span> <span class="muted">(${esc(r.error)})</span>`;
   else {
-    const acts = r.actions || [], size = acts.reduce((a, x) => a + (x.bytes || 0), 0);
+    const acts = r.actions || [], n = r.count ?? acts.length;
+    const size = r.bytes ?? acts.reduce((a, x) => a + (x.bytes || 0), 0);
     const verb = r.mode === "dry-run" ? "would delete" : "deleted";
-    txt = `last pass${ago}: disk ${esc(r.pct)} %, ` + (acts.length ? `${verb} ${acts.length} × target/ (${bytes(size)})` : "nothing to do");
-    if (acts.length) txt += `<div class="cmd">${acts.map((a) => esc(`${a.path} – ${a.reason}`)).join("<br>")}</div>`;
+    txt = `last ${r.why === "routine" ? "routine " : ""}pass${ago}: disk ${esc(r.pct)} %, ` +
+      (n ? `${verb} ${n} item${n === 1 ? "" : "s"} (${bytes(size)})` : "nothing to do");
+    const shown = acts.filter((a) => a.result === "deleted" || a.result === "planned" || a.result === "failed");
+    if (shown.length) txt += `<div class="cmd">${shown.slice(0, 8).map((a) => esc(`${a.result === "failed" ? "FAILED " : ""}${a.path} – ${a.reason}`)).join("<br>")}` +
+      (shown.length > 8 || n > shown.length ? `<br>… (${n} in all; see janitor.jsonl)` : "") + `</div>`;
   }
   return `<div class="line"><span class="k">Janitor</span>${txt}</div>`;
 }
@@ -539,11 +543,15 @@ $("questions").addEventListener("click", (e) => {
 function renderJanitor(j, now) {
   const lv = j.levels || {};
   let html = `<h2>Janitor <span class="badge ${j.mode === "on" ? "ok" : "warn"}">${esc(j.mode || "off")}</span>` +
-    `<span class="muted" style="font-size:12px;font-weight:400">target/ of merged or gone agent branches above ${esc(lv.merged ?? 75)} %, ` +
-    `idle agent checkouts above ${esc(lv.lru ?? 85)} %, alert above ${esc(lv.alert ?? 92)} %</span></h2>`;
+    `<span class="muted" style="font-size:12px;font-weight:400">stale checkouts, leftovers and temp folders ` +
+    (j.routine_h ? `every ${esc(j.routine_h)} h per enabled machine and ` : "") + `at once above ${esc(lv.merged ?? 75)} % ` +
+    `(or below ${esc(j.free_min_gb ?? 40)} GB free), idle checkouts above ${esc(lv.lru ?? 85)} %, alert above ${esc(lv.alert ?? 92)} %</span></h2>`;
   const bits = [];
   if (j.last_pass) bits.push(`last pass ${dur(now - j.last_pass)} ago`);
   if (j.next_pass && j.mode !== "off") bits.push(`next pass at the earliest in ${dur(Math.max(0, j.next_pass - now))}`);
+  const ms = Object.entries(j.machines || {}).filter(([, r]) => r && r.at);
+  if (ms.length) bits.push("last pass per machine: " + ms.map(([n, r]) =>
+    `${n} ${dur(now - r.at)} ago (${r.error ? "failed" : r.count ? (r.mode === "dry-run" ? "would free " : "freed ") + bytes(r.mode === "dry-run" ? r.bytes : r.freed) : "nothing"})`).join(", "));
   if (j.test_output_bytes != null) bits.push(`test-output on the coordinator: ${bytes(j.test_output_bytes)} (kept)`);
   if (bits.length) html += `<div class="line">${bits.map(esc).join(" · ")}</div>`;
   const rec = (j.recent || []).slice().reverse();

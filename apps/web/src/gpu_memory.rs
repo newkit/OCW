@@ -27,6 +27,51 @@ static IMAGE_BYTES: AtomicU64 = AtomicU64::new(0);
 static IMAGE_COUNT: AtomicU64 = AtomicU64::new(0);
 static CPU_IMAGE_BYTES: AtomicU64 = AtomicU64::new(0);
 static CPU_MESH_BYTES: AtomicU64 = AtomicU64::new(0);
+/// The meshes' bytes by kind (`ocw_render::mesh_kind`), biggest first.
+static KINDS: std::sync::Mutex<Vec<KindSum>> = std::sync::Mutex::new(Vec::new());
+
+/// The meshes of one kind on the GPU (10G *The first tiles' GPU memory*).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct KindSum {
+    pub kind: &'static str,
+    pub meshes: u64,
+    pub vertices: u64,
+    /// Vertex bytes (the strides as uploaded).
+    pub vertex_bytes: u64,
+    pub index_bytes: u64,
+}
+
+impl KindSum {
+    pub fn bytes(&self) -> u64 {
+        self.vertex_bytes + self.index_bytes
+    }
+}
+
+/// The last sums by kind, biggest first.
+pub fn kinds() -> Vec<KindSum> {
+    KINDS.lock().map(|k| k.clone()).unwrap_or_default()
+}
+
+/// "gpu meshes by kind: terrain 30.1 MB (540 k vertices, 32 B; 9), …"
+/// (kinds under 0.5 MB left out).
+pub fn kinds_line(kinds: &[KindSum]) -> String {
+    let parts: Vec<String> = kinds
+        .iter()
+        .filter(|k| k.bytes() >= 500_000)
+        .map(|k| {
+            format!(
+                "{} {:.1} MB ({} k vertices, {} B; {})",
+                k.kind,
+                k.bytes() as f64 / 1e6,
+                k.vertices / 1000,
+                k.vertex_bytes.checked_div(k.vertices).unwrap_or(0),
+                k.meshes
+            )
+        })
+        .collect();
+    format!("gpu meshes by kind: {}", parts.join(", "))
+}
+
 /// The biggest images kept on the CPU ("1280×1280×1 6.6 MB", …).
 static CPU_IMAGES_TOP: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
@@ -123,6 +168,12 @@ pub fn texture_bytes(size: [u32; 3], block: (u32, u32), block_bytes: u32, mips: 
 
 /// The vertex and index bytes of a mesh.
 pub fn mesh_bytes(mesh: &RenderMesh) -> u64 {
+    let (v, i) = mesh_parts(mesh);
+    v + i
+}
+
+/// The vertex bytes and the index bytes of a mesh.
+pub fn mesh_parts(mesh: &RenderMesh) -> (u64, u64) {
     let stride = mesh.layout.0.layout().array_stride;
     let indices = match mesh.buffer_info {
         RenderMeshBufferInfo::Indexed {
@@ -137,7 +188,7 @@ pub fn mesh_bytes(mesh: &RenderMesh) -> u64 {
         }
         RenderMeshBufferInfo::NonIndexed => 0,
     };
-    u64::from(mesh.vertex_count) * stride + indices
+    (u64::from(mesh.vertex_count) * stride, indices)
 }
 
 fn sum_gpu_memory(
@@ -152,9 +203,24 @@ fn sum_gpu_memory(
     }
     let (mut bytes, mut count) = (0, 0);
     let mut buffers = HashMap::new();
-    for (id, m) in meshes.iter() {
-        bytes += mesh_bytes(m);
+    let ids: Vec<_> = meshes.iter().map(|(id, _)| id).collect();
+    let kinds = ocw_render::mesh_kind::kinds_of(&ids);
+    let mut by_kind: HashMap<&'static str, KindSum> = HashMap::new();
+    for ((id, m), kind) in meshes.iter().zip(kinds) {
+        let (v, i) = mesh_parts(m);
+        bytes += v + i;
         count += 1;
+        let k = by_kind.entry(kind).or_insert(KindSum {
+            kind,
+            meshes: 0,
+            vertices: 0,
+            vertex_bytes: 0,
+            index_bytes: 0,
+        });
+        k.meshes += 1;
+        k.vertices += u64::from(m.vertex_count);
+        k.vertex_bytes += v;
+        k.index_bytes += i;
         for s in [
             allocator.mesh_vertex_slice(&id),
             allocator.mesh_index_slice(&id),
@@ -164,6 +230,11 @@ fn sum_gpu_memory(
         {
             buffers.insert(s.buffer.id(), s.buffer.size());
         }
+    }
+    let mut by_kind: Vec<KindSum> = by_kind.into_values().collect();
+    by_kind.sort_by_key(|k| (std::cmp::Reverse(k.bytes()), k.kind));
+    if let Ok(mut k) = KINDS.lock() {
+        *k = by_kind;
     }
     MESH_BYTES.store(bytes, Relaxed);
     MESH_COUNT.store(count, Relaxed);
@@ -327,6 +398,28 @@ mod tests {
         // A 3D texture's depth halves with each level.
         let d3 = TextureDimension::D3;
         assert_eq!(texture_bytes(e(4, 4, 4), d3, rgba, 2, 1), 256 + 32);
+    }
+
+    /// The meshes by kind for the page log (10G *The first tiles' GPU
+    /// memory*): biggest first, small kinds left out.
+    #[test]
+    fn the_kinds_read_as_a_line() {
+        let k = |kind, vertices, stride, index_bytes| KindSum {
+            kind,
+            meshes: 9,
+            vertices,
+            vertex_bytes: vertices * stride,
+            index_bytes,
+        };
+        let line = kinds_line(&[
+            k("terrain", 1_000_000, 32, 6_000_000),
+            k("roads", 100_000, 40, 1_000_000),
+            k("lamps", 1000, 32, 1000),
+        ]);
+        assert_eq!(
+            line,
+            "gpu meshes by kind: terrain 38.0 MB (1000 k vertices, 32 B; 9), roads 5.0 MB (100 k vertices, 40 B; 9)"
+        );
     }
 
     /// The renderer's allocations for the page log (10G).

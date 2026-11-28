@@ -192,6 +192,35 @@ pub struct LiveFrame<'a> {
     pub upper: &'a UpperAir,
     /// The ground under the viewer (m): the field height of the gear rule.
     pub ground_m: f64,
+    /// The aerodromes (x, z, elevation; [`super::AirSpace::field_points`]):
+    /// the gear rule of [`live_gear`].
+    pub fields: &'a [[f64; 3]],
+}
+
+/// A live aircraft's gear (18C, v7.08): fixed gear always down; an
+/// airliner's down on the ground (under 10 m over it), on final (sinking,
+/// under 600 m over the nearest aerodrome within 14 km) and just after
+/// take-off or before touchdown (under 40 m over it within 5 km), up
+/// otherwise – also with no aerodrome near (cruise, unknown).
+pub fn live_gear(
+    kind: AirKind,
+    pos: [f64; 3],
+    climb: f64,
+    above_ground: f64,
+    fields: &[[f64; 3]],
+) -> bool {
+    if kind != AirKind::Airliner || above_ground < 10.0 {
+        return true;
+    }
+    let Some((d, e)) = fields
+        .iter()
+        .map(|f| ((pos[0] - f[0]).hypot(pos[2] - f[1]), f[2]))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+    else {
+        return false;
+    };
+    let above = pos[1] - e;
+    climb < -0.5 && above < 600.0 && d < 14_000.0 || above < 40.0 && d < 5000.0
 }
 
 fn rotor(kind: AirKind) -> f64 {
@@ -225,12 +254,7 @@ pub fn now(
             let vel = a.velocity(f.t_ms);
             let above = pos[1] - relief.max_at(pos[0], pos[2]).max(f.ground_m.min(pos[1]));
             let mission = mission(a.kind, above, vel[1]);
-            let gear_down = match mission {
-                Mission::Arrival => above < 1100.0,
-                Mission::Departure => above < 350.0,
-                Mission::Cruise => false,
-                _ => true,
-            };
+            let gear_down = live_gear(a.kind, pos, vel[1], above, f.fields);
             let id = ID_BIT | u64::from(a.id);
             let burner = a.kind == AirKind::Balloon && {
                 let slot = (f.t_ms / 6000) as u64;
@@ -483,6 +507,7 @@ mod tests {
             contrails: true,
             upper: &upper,
             ground_m: 300.0,
+            fields: &[],
         };
         let a = now(&set, &proj, &relief, &f, |_| [0.0; 3]);
         assert_eq!(a.len(), 2);
@@ -544,5 +569,32 @@ mod tests {
         // Flying east: heard west of where it is.
         let now_x = position(&a, &proj, &relief, a.at_ms + 10_000).unwrap()[0];
         assert!(h.pos[0] < now_x);
+    }
+
+    /// Live airliners: gear up at cruise and with no aerodrome near, down
+    /// on final near one and on the ground; fixed gear always down.
+    #[test]
+    fn live_gear_follows_the_phase_near_an_aerodrome() {
+        let field = [[10_000.0, 0.0, 600.0]];
+        let a = AirKind::Airliner;
+        // Cruise: up, with or without an aerodrome.
+        assert!(!live_gear(a, [0.0, 11_000.0, 0.0], 0.0, 10_000.0, &field));
+        assert!(!live_gear(a, [0.0, 1_000.0, 0.0], -4.0, 400.0, &[]));
+        // On final 6 km out, 350 m over the field, sinking: down.
+        assert!(live_gear(a, [4_000.0, 950.0, 0.0], -4.0, 350.0, &field));
+        // The same height 30 km out: up (a low pass, not an approach).
+        assert!(!live_gear(a, [-20_000.0, 950.0, 0.0], -4.0, 350.0, &field));
+        // Climbing out at 300 m over the field: up.
+        assert!(!live_gear(a, [9_000.0, 900.0, 0.0], 8.0, 300.0, &field));
+        // On the ground: down.
+        assert!(live_gear(a, [10_000.0, 600.0, 0.0], 0.0, 2.0, &field));
+        // Fixed gear.
+        assert!(live_gear(
+            AirKind::SmallPlane,
+            [0.0, 3000.0, 0.0],
+            0.0,
+            2500.0,
+            &[]
+        ));
     }
 }

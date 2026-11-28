@@ -1930,13 +1930,21 @@ pub fn lazy_ground(
                 let key = task.1;
                 let solid = (!solid.indices.is_empty()).then(|| {
                     (
-                        Mesh3d(meshes.add(solid.mesh())),
+                        Mesh3d(crate::mesh_kind::add(
+                            &mut meshes,
+                            solid.mesh(),
+                            "ground detail",
+                        )),
                         MeshMaterial3d(materials.solid.clone()),
                     )
                 });
                 let patches = (!patches.indices.is_empty()).then(|| {
                     (
-                        Mesh3d(meshes.add(patches.mesh())),
+                        Mesh3d(crate::mesh_kind::add(
+                            &mut meshes,
+                            patches.mesh(),
+                            "ground detail",
+                        )),
                         MeshMaterial3d(materials.patches.clone()),
                         Transform::IDENTITY,
                         Visibility::default(),

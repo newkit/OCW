@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pictures of the mountains' shadows (spec 4.5 *Terrain shadows*, v7.09):
+# Pictures of the mountains' shadows (spec 4.5 *Terrain shadows*, v7.15):
 # a camera approaching a valley in the evening shadow of a ridge in
 # Andorra from 10 km to 1 km, a picture every 500 m, each with the terrain
 # shadow off (the look before: only the cascades near the camera, the
@@ -39,7 +39,7 @@ mkdir -p "$OCW_DATA_DIR" "$OCW_CONFIG_DIR"
 drive=.claude/skills/run-ocw/drive.sh
 cargo build -q --release -p ocw-world --example terrain-shadow-probe
 probe=target/release/examples/terrain-shadow-probe
-printf '# Terrain shadows (spec 4.5, v7.09)\n\nAndorra, the same camera path with the terrain shadow off (before: the cascades reach 250 m, the terrain casts nothing) and on.\n\n| Picture | What it shows |\n|---|---|\n' >"$out/index.md"
+printf '# Terrain shadows (spec 4.5, v7.15)\n\nAndorra, the same camera path with the terrain shadow off (before: the cascades reach 250 m, the terrain casts nothing) and on.\n\n| Picture | What it shows |\n|---|---|\n' >"$out/index.md"
 row() { printf '| [%s](%s) | %s |\n' "$1" "$1" "$2" >>"$out/index.md"; }
 
 # The camera at a pose (TIME X Z HEIGHT YAW PITCH) into the array `pose`:

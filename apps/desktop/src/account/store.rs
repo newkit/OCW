@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(store.load(), Some(s));
         let text = std::fs::read_to_string(&secrets).unwrap();
         assert!(
-            text.contains("[account]") && text.contains("[strava]"),
+            text.lines().any(|l| l == "[account]") && text.lines().any(|l| l == "[strava]"),
             "{text}"
         );
         #[cfg(unix)]
