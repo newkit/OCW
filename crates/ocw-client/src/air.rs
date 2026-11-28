@@ -292,9 +292,11 @@ mod tests {
             LiveAircraft {
                 id: 1,
                 kind: AirKind::Airliner,
-                lat: 28.45,
-                lon: -16.5,
-                alt_m: 1200.0,
+                // On final into Tenerife North, ~5 km out, ~370 m over it
+                // (v7.08: the gear by the aerodrome, not the height).
+                lat: 28.47,
+                lon: -16.39,
+                alt_m: 1000.0,
                 speed_mps: 80.0,
                 track_deg: 300.0,
                 climb_mps: -4.0,
@@ -335,7 +337,7 @@ mod tests {
             v.aircraft
                 .iter()
                 .any(|a| a.kind == AirKind::Airliner && a.gear_down),
-            "descending low: on approach"
+            "on final near an aerodrome: gear down"
         );
         assert_eq!(
             v.attribution.as_deref(),
