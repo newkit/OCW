@@ -3283,7 +3283,7 @@ fn tunnels(
     if let Some(path) = out {
         let st = stage("shape terrain", || tn::shape(&mut pkg, &tags));
         println!(
-            "tunnels shaped: {} tunnels, {} vertices raised (up to {:.1} m), {} laid under open roads and galleries (moved up to {:.1} m), {} mound vertices kept (another road, or too high), {} left under a road more than {:.0} m above them, {:.0} m of bored stretches made open road (cutting or underpass)",
+            "tunnels shaped: {} tunnels, {} vertices raised (up to {:.1} m), {} laid under open roads and galleries (moved up to {:.1} m), {} mound vertices kept (another road, or too high), {} left under a road more than {:.0} m above them, {:.0} m of bored stretches made open road (cutting or underpass), {:.0} m made cut-and-cover boxes",
             st.tunnels,
             st.raised,
             st.max_raise_m,
@@ -3292,7 +3292,8 @@ fn tunnels(
             st.kept_for_roads,
             st.left_floating,
             tn::FILL_MAX_M,
-            st.cut_open_m
+            st.cut_open_m,
+            st.boxed_m
         );
         let after = tn::measure(&pkg, &tags);
         let report = tn::format_report(&pkg, &after, &[]);

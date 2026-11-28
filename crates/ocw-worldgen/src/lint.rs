@@ -333,6 +333,7 @@ fn lint_tunnels(pkg: &WorldPackage, r: &mut LintReport) {
                 SectionKind::Bored => "tunnel.bored",
                 SectionKind::Gallery { .. } => "tunnel.gallery",
                 SectionKind::Open => "tunnel.open",
+                SectionKind::Box => "tunnel.box",
             };
             r.add(
                 key,

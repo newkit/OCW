@@ -61,6 +61,10 @@ pub const GALLERY_OPEN_M: f64 = 1.5;
 pub const GALLERY_ROOF_M: f64 = 5.2;
 pub const GALLERY_SLAB_M: f64 = 0.6;
 pub const GALLERY_PILLAR_STEP_M: f64 = 6.0;
+/// A box tunnel: the clear height under its flat roof and the roof
+/// slab's thickness (m).
+pub const BOX_ROOF_M: f64 = 4.7;
+pub const BOX_SLAB_M: f64 = 0.5;
 /// Sections shorter than this (m) join their neighbours.
 pub const MIN_SECTION_M: f64 = 12.0;
 /// Lateral distance beyond the tube's side where the hill side and the
@@ -109,6 +113,26 @@ impl AxisSample {
     /// The least cover over the shell (m).
     pub fn roof_cover(&self) -> f64 {
         self.cover.iter().copied().fold(f64::INFINITY, f64::min)
+    }
+
+    /// The least cover over a box's roof slab (m; [`BOX_ROOF_M`] +
+    /// [`BOX_SLAB_M`] above the road).
+    pub fn box_cover(&self) -> f64 {
+        ROOF_PROBES
+            .iter()
+            .zip(self.cover)
+            .map(|(f, c)| {
+                c + roof_height(f * self.half, self.half) + LINING_M - BOX_ROOF_M - BOX_SLAB_M
+            })
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// The least cover over the roof of a section of `kind` (m).
+    pub fn cover_for(&self, kind: SectionKind) -> f64 {
+        match kind {
+            SectionKind::Box => self.box_cover(),
+            _ => self.roof_cover(),
+        }
     }
 
     /// Point at lateral offset `l` (m, positive right).
@@ -202,6 +226,10 @@ pub enum SectionKind {
     Gallery { hill_right: bool },
     /// In the open or in a cutting: no roof.
     Open,
+    /// A cut-and-cover box: flat roof at [`BOX_ROOF_M`] (a city tunnel
+    /// under streets, an underpass under a road embankment), where the
+    /// terrain covers a box but not the tube.
+    Box,
 }
 
 /// A stretch of a tunnel edge (from, to: distance from the edge's start).
@@ -314,13 +342,13 @@ pub fn exposed_runs(samples: &[AxisSample], secs: &[Section]) -> Vec<(f64, f64, 
     let mut out: Vec<(f64, f64, f64)> = Vec::new();
     let mut cur: Option<(f64, f64, f64)> = None;
     for x in samples {
-        let bored = secs.iter().any(|s| {
-            s.kind == SectionKind::Bored
+        let roofed = secs.iter().find(|s| {
+            matches!(s.kind, SectionKind::Bored | SectionKind::Box)
                 && x.s >= s.from + PORTAL_SLOPE_M
                 && x.s <= s.to - PORTAL_SLOPE_M
         });
-        let e = -x.roof_cover();
-        if bored && e > EXPOSED_TOL_M {
+        let e = roofed.map_or(0.0, |s| -x.cover_for(s.kind));
+        if roofed.is_some() && e > EXPOSED_TOL_M {
             cur = Some(match cur {
                 Some((a, _, w)) => (a, x.s, w.max(e)),
                 None => (x.s, x.s, e),
@@ -381,6 +409,7 @@ fn kind_code(k: SectionKind) -> u8 {
         SectionKind::Gallery { hill_right: false } => 1,
         SectionKind::Gallery { hill_right: true } => 2,
         SectionKind::Open => 3,
+        SectionKind::Box => 4,
     }
 }
 
@@ -418,6 +447,7 @@ pub fn read_tunnels(payload: &[u8]) -> Result<TunnelSections, String> {
                 1 => SectionKind::Gallery { hill_right: false },
                 2 => SectionKind::Gallery { hill_right: true },
                 3 => SectionKind::Open,
+                4 => SectionKind::Box,
                 k => return Err(format!("tunnels: unknown section kind {k}")),
             };
             secs.push(Section { from, to, kind });

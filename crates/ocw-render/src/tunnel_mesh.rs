@@ -25,8 +25,8 @@
 
 use bevy::prelude::*;
 use ocw_world::tunnels::{
-    self as tn, AxisSample, CROWN_M, GALLERY_PILLAR_STEP_M, GALLERY_ROOF_M, GALLERY_SLAB_M,
-    SectionKind, WALL_M,
+    self as tn, AxisSample, BOX_ROOF_M, CROWN_M, GALLERY_PILLAR_STEP_M, GALLERY_ROOF_M,
+    GALLERY_SLAB_M, SectionKind, WALL_M,
 };
 
 use crate::package::MeshArrays;
@@ -281,9 +281,10 @@ fn scale(c: [f32; 4], f: f32) -> [f32; 4] {
 /// The tube's wall and vault profile from the left foot over the crown
 /// to the right foot: (lateral, height, colour key), the walls split at
 /// the painted band.
-fn vault_profile(half: f32) -> Vec<(f32, f32)> {
+fn vault_profile(half: f32, boxed: bool) -> Vec<(f32, f32)> {
     let (w, c) = (WALL_M as f32, CROWN_M as f32);
     let band = LIGHT_BAND_M as f32;
+    let w = if boxed { BOX_ROOF_M as f32 } else { w };
     let mut p = vec![
         (-half, WALKWAY_M),
         (-half, band),
@@ -292,6 +293,11 @@ fn vault_profile(half: f32) -> Vec<(f32, f32)> {
     ];
     const ARCH: usize = 14;
     for k in 1..ARCH {
+        if boxed {
+            // A flat roof, split as the arch for the soot and the light.
+            p.push((half * (-1.0 + 2.0 * k as f32 / ARCH as f32), w));
+            continue;
+        }
         let a = std::f32::consts::PI * (1.0 - k as f32 / ARCH as f32);
         p.push((half * a.cos(), w + (c - w) * a.sin()));
     }
@@ -327,6 +333,18 @@ fn vault_colour(l: f32, h: f32, half: f32, road_half: f32) -> [f32; 4] {
 /// Builds the meshes of one tunnel: its axis points (every
 /// [`tn::STEP_M`], from the edge's start) and its sections.
 pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) -> TunnelMeshes {
+    tunnel_meshes_with(axis, sections, seed, [true, true])
+}
+
+/// [`tunnel_meshes`]; `portals` says whether each end of the axis is a
+/// portal (false where the tunnel goes on in the next edge of the graph:
+/// no frame inside the hill).
+pub fn tunnel_meshes_with(
+    axis: &[AxisPoint],
+    sections: &[tn::Section],
+    seed: u64,
+    portals: [bool; 2],
+) -> TunnelMeshes {
     let mut out = TunnelMeshes::default();
     if axis.len() < 2 {
         return out;
@@ -338,26 +356,34 @@ pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) ->
             .map_or(SectionKind::Open, |k| k.kind)
     };
     let total = axis.last().map_or(0.0, |a| a.s);
-    // Bored stretches with their collars (into the next section).
-    let bored: Vec<(f64, f64)> = sections
+    // Roofed stretches (bored tubes, boxes) with their collars (into the
+    // next section).
+    let roofed = |k: SectionKind| matches!(k, SectionKind::Bored | SectionKind::Box);
+    let bored: Vec<(f64, f64, bool)> = sections
         .iter()
-        .filter(|k| k.kind == SectionKind::Bored)
-        .map(|k| (k.from, k.to))
+        .filter(|k| roofed(k.kind))
+        .map(|k| (k.from, k.to, k.kind == SectionKind::Box))
         .collect();
     let in_tube = |s: f64| {
         bored
             .iter()
-            .any(|&(a, b)| s >= a - COLLAR_M - 1e-6 && s <= b + COLLAR_M + 1e-6)
+            .find(|&&(a, b, _)| s >= a - 1e-6 && s <= b + 1e-6)
+            .or_else(|| {
+                bored
+                    .iter()
+                    .find(|&&(a, b, _)| s >= a - COLLAR_M - 1e-6 && s <= b + COLLAR_M + 1e-6)
+            })
+            .map(|&(_, _, boxed)| boxed)
     };
     let lamps: Vec<f64> = bored
         .iter()
-        .flat_map(|&(a, b)| lamp_positions(a, b))
+        .flat_map(|&(a, b, _)| lamp_positions(a, b))
         .collect();
     for w in axis.windows(2) {
         let (a, b) = (w[0], w[1]);
         let mid = (a.s + b.s) / 2.0;
-        if in_tube(mid) {
-            tube_segment(&mut out, a, b, &lamps, seed);
+        if let Some(boxed) = in_tube(mid) {
+            tube_segment(&mut out, a, b, &lamps, seed, boxed);
         } else {
             match kind_at(mid) {
                 SectionKind::Gallery { hill_right } => {
@@ -378,9 +404,16 @@ pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) ->
             width: a.width,
         }
     };
-    // Fittings along the bored stretches.
-    for &(from, to) in &bored {
+    // Fittings along the roofed stretches.
+    for &(from, to, boxed) in &bored {
         let len = to - from;
+        let roof = |l: f32, half: f32| -> f32 {
+            if boxed {
+                BOX_ROOF_M as f32
+            } else {
+                tn::roof_height(f64::from(l), f64::from(half)) as f32
+            }
+        };
         let mut fit = Builder {
             m: &mut out.fittings,
         };
@@ -390,7 +423,7 @@ pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) ->
             let e = (s + tn::STEP_M * 4.0).min(to);
             let (p, q) = (point_at(s), point_at(e));
             let l = -0.35 * p.half();
-            let h = tn::roof_height(f64::from(l), f64::from(p.half())) as f32 - 0.18;
+            let h = roof(l, p.half()) - 0.18;
             let c = (p.at(l, h) + q.at(l, h)) / 2.0;
             let ax = (q.at(l, h) - p.at(l, h)) / 2.0;
             let r = Vec3::new(p.right.x, 0.0, p.right.y);
@@ -398,7 +431,7 @@ pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) ->
             s = e;
         }
         // Jet fans in long tunnels, in pairs under the crown.
-        if len >= FAN_MIN_TUNNEL_M {
+        if len >= FAN_MIN_TUNNEL_M && !boxed {
             let mut s = from + 100.0;
             while s < to - 100.0 {
                 let p = point_at(s);
@@ -423,7 +456,7 @@ pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) ->
         for &s in lamps.iter().filter(|&&s| s >= from && s <= to) {
             let p = point_at(s);
             let l = -0.35 * p.half();
-            let h = tn::roof_height(f64::from(l), f64::from(p.half())) as f32 - 0.27;
+            let h = roof(l, p.half()) - 0.27;
             let r = Vec3::new(p.right.x, 0.0, p.right.y);
             glow.cuboid(
                 p.at(l, h),
@@ -449,13 +482,31 @@ pub fn tunnel_meshes(axis: &[AxisPoint], sections: &[tn::Section], seed: u64) ->
             }
             s += REFLECTOR_STEP_M;
         }
-        // The portal frames at both ends (where the tube leaves the hill).
+        // The portal frames at both ends (where the tube leaves the hill);
+        // where a tube meets a box inside, a bulkhead closes the arch over
+        // the box's roof.
         for (s, out_dir) in [(from - COLLAR_M, -1.0f32), (to + COLLAR_M, 1.0)] {
             if s < -COLLAR_M - 0.5 || s > total + COLLAR_M + 0.5 {
                 continue;
             }
+            if (out_dir < 0.0 && from <= 0.5 && !portals[0])
+                || (out_dir > 0.0 && to >= total - 0.5 && !portals[1])
+            {
+                continue;
+            }
+            let beyond = kind_at((s + f64::from(out_dir) * 1.0).clamp(0.0, total));
+            let at = if out_dir < 0.0 { from } else { to };
+            if roofed(beyond)
+                && (s + f64::from(out_dir) * 1.0) > 0.0
+                && (s + f64::from(out_dir)) < total
+            {
+                if !boxed && beyond == SectionKind::Box {
+                    bulkhead(&mut out.fittings, &point_at(at));
+                }
+                continue;
+            }
             let p = point_at(s.clamp(0.0, total));
-            portal_frame(&mut out.lit, &p, out_dir, s.clamp(0.0, total) as f32);
+            portal_frame(&mut out.lit, &p, out_dir, s.clamp(0.0, total) as f32, boxed);
         }
     }
     out
@@ -515,7 +566,14 @@ fn road_surface(
     }
 }
 
-fn tube_segment(out: &mut TunnelMeshes, a: AxisPoint, b: AxisPoint, lamps: &[f64], seed: u64) {
+fn tube_segment(
+    out: &mut TunnelMeshes,
+    a: AxisPoint,
+    b: AxisPoint,
+    lamps: &[f64],
+    seed: u64,
+    boxed: bool,
+) {
     let half = a.half();
     let rh = (a.width / 2.0) as f32;
     let light = |s: f64| {
@@ -534,7 +592,7 @@ fn tube_segment(out: &mut TunnelMeshes, a: AxisPoint, b: AxisPoint, lamps: &[f64
         true,
     );
     // Walls and vault.
-    let prof = vault_profile(half);
+    let prof = vault_profile(half, boxed);
     let mut arc = vec![0.0f32];
     for w in prof.windows(2) {
         let d = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
@@ -669,9 +727,9 @@ fn open_segment(out: &mut TunnelMeshes, a: AxisPoint, b: AxisPoint) {
 
 /// A concrete frame round the tube's mouth at `p`, facing `out_dir`
 /// along the axis (−1 at the start, +1 at the end).
-fn portal_frame(m: &mut MeshArrays, p: &AxisPoint, out_dir: f32, s: f32) {
+fn portal_frame(m: &mut MeshArrays, p: &AxisPoint, out_dir: f32, s: f32, boxed: bool) {
     let half = p.half();
-    let prof = vault_profile(half);
+    let prof = vault_profile(half, boxed);
     let fwd = p.forward() * out_dir;
     let depth = 0.6;
     let c = grey(0.55);
@@ -729,6 +787,26 @@ fn portal_frame(m: &mut MeshArrays, p: &AxisPoint, out_dir: f32, s: f32) {
             [front(l0, h0), front(l1, h1), back(l0, h0), back(l1, h1)],
             uv,
             [scale(c, 0.8); 4],
+        );
+    }
+}
+
+/// Closes a tube's arch above a box's flat roof where the two meet.
+fn bulkhead(m: &mut MeshArrays, p: &AxisPoint) {
+    let half = p.half();
+    let roof = BOX_ROOF_M as f32;
+    let arch: Vec<(f32, f32)> = vault_profile(half, false)
+        .into_iter()
+        .filter(|&(_, h)| h >= roof)
+        .collect();
+    let mut bl = Builder { m };
+    let c = grey(0.2);
+    for w in arch.windows(2) {
+        let ((l0, h0), (l1, h1)) = (w[0], w[1]);
+        bl.quad(
+            [p.at(l0, roof), p.at(l0, h0), p.at(l1, roof), p.at(l1, h1)],
+            [[0.0; 2]; 4],
+            [c; 4],
         );
     }
 }
@@ -928,6 +1006,50 @@ mod tests {
         assert!(m.fittings.positions.len() > 2 * short.fittings.positions.len());
         // The portal frames are lit concrete.
         assert!(!m.lit.indices.is_empty());
+    }
+
+    #[test]
+    fn a_box_has_a_flat_roof_and_a_bulkhead_to_the_tube() {
+        let ax = axis(600.0);
+        let secs = [
+            Section {
+                from: 0.0,
+                to: 300.0,
+                kind: SectionKind::Bored,
+            },
+            Section {
+                from: 300.0,
+                to: 600.0,
+                kind: SectionKind::Box,
+            },
+        ];
+        let m = tunnel_meshes(&ax, &secs, 3);
+        // In the box part nothing rises above its roof.
+        let top = 100.0 + BOX_ROOF_M as f32 + 0.01;
+        assert!(
+            m.tube
+                .positions
+                .iter()
+                .filter(|p| p[0] > 310.0)
+                .all(|p| p[1] <= top)
+        );
+        assert!(m.tube.positions.iter().any(|p| p[0] < 290.0 && p[1] > top));
+        // No fans in a box; a bulkhead closes the arch at x 300.
+        assert!(
+            m.fittings
+                .positions
+                .iter()
+                .filter(|p| p[0] > 310.0)
+                .all(|p| p[1] <= top)
+        );
+        assert!(
+            m.fittings
+                .positions
+                .iter()
+                .any(|p| (p[0] - 300.0).abs() < 0.1 && p[1] > top)
+        );
+        // No portal frame inside, between the two.
+        assert!(m.lit.positions.iter().all(|p| p[0] < 10.0 || p[0] > 590.0));
     }
 
     #[test]

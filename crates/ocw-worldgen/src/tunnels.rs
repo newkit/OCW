@@ -138,7 +138,7 @@ fn section_lengths(secs: &[Section]) -> (f64, f64, f64) {
     for s in secs {
         let l = s.to - s.from;
         match s.kind {
-            SectionKind::Bored => out.0 += l,
+            SectionKind::Bored | SectionKind::Box => out.0 += l,
             SectionKind::Gallery { .. } => out.1 += l,
             SectionKind::Open => out.2 += l,
         }
@@ -283,6 +283,9 @@ pub struct ShapeStats {
     /// Bored stretches the mounds could not cover, made open road in a
     /// cutting (m; under another road: an underpass).
     pub cut_open_m: f64,
+    /// Bored stretches made cut-and-cover boxes (m: the terrain covers a
+    /// box's flat roof but not the tube's arch).
+    pub boxed_m: f64,
 }
 
 /// The terrain below the road surface where the road is in the open
@@ -400,12 +403,14 @@ fn apply(
     st.left_floating += floating.len();
 }
 
-/// `secs` with `[a, b]` of its bored sections made open; bored pieces
-/// left shorter than [`tn::MIN_SECTION_M`] are open too.
-pub fn carve_open(secs: &[Section], a: f64, b: f64) -> Vec<Section> {
+/// `secs` with `[a, b]` of its roofed (bored or box) sections made
+/// `kind`; roofed pieces left shorter than [`tn::MIN_SECTION_M`] become
+/// `kind` too.
+pub fn carve(secs: &[Section], a: f64, b: f64, kind: SectionKind) -> Vec<Section> {
+    let roofed = |k: SectionKind| matches!(k, SectionKind::Bored | SectionKind::Box);
     let mut out: Vec<Section> = Vec::new();
     for s in secs {
-        if s.kind != SectionKind::Bored || s.to <= a || s.from >= b {
+        if !roofed(s.kind) || s.to <= a || s.from >= b {
             out.push(*s);
             continue;
         }
@@ -413,25 +418,25 @@ pub fn carve_open(secs: &[Section], a: f64, b: f64) -> Vec<Section> {
             out.push(Section {
                 from: s.from,
                 to: a,
-                kind: SectionKind::Bored,
+                kind: s.kind,
             });
         }
         out.push(Section {
             from: a.max(s.from),
             to: b.min(s.to),
-            kind: SectionKind::Open,
+            kind,
         });
         if b < s.to {
             out.push(Section {
                 from: b,
                 to: s.to,
-                kind: SectionKind::Bored,
+                kind: s.kind,
             });
         }
     }
     for s in &mut out {
-        if s.kind == SectionKind::Bored && s.to - s.from < tn::MIN_SECTION_M {
-            s.kind = SectionKind::Open;
+        if roofed(s.kind) && s.kind != kind && s.to - s.from < tn::MIN_SECTION_M {
+            s.kind = kind;
         }
     }
     let mut merged: Vec<Section> = Vec::new();
@@ -442,6 +447,11 @@ pub fn carve_open(secs: &[Section], a: f64, b: f64) -> Vec<Section> {
         }
     }
     merged
+}
+
+/// [`carve`] into open road.
+pub fn carve_open(secs: &[Section], a: f64, b: f64) -> Vec<Section> {
+    carve(secs, a, b, SectionKind::Open)
 }
 
 /// Shapes `pkg`'s terrain round its tunnels (see the module docs) and
@@ -471,7 +481,7 @@ pub fn shape(pkg: &mut WorldPackage, tags: &TunnelTags) -> ShapeStats {
         for x in &samples {
             let kind = section_kind_at(&secs, x.s);
             match kind {
-                SectionKind::Bored => {
+                SectionKind::Bored | SectionKind::Box => {
                     if x.roof_cover() >= COVER_M - LINING_M {
                         continue;
                     }
@@ -499,35 +509,57 @@ pub fn shape(pkg: &mut WorldPackage, tags: &TunnelTags) -> ShapeStats {
     // What the mounds could not cover (another road over the tunnel, a
     // shell far out of a steep slope) becomes open road in a cutting –
     // under another road an underpass, that road its roof.
-    let mut lay2 = Targets::new();
-    for e in g.edges.iter().filter(|e| e.tunnel) {
-        let Some(secs) = stored.edges.get(&e.id.0) else {
-            continue;
-        };
-        let ground = |x: f64, z: f64| pkg.surface_height(x, z);
-        let samples = tn::probe(e, &ground);
-        let runs = tn::exposed_runs(&samples, secs);
-        if runs.is_empty() {
-            continue;
-        }
-        let mut secs = secs.clone();
-        for &(a, b, _) in &runs {
-            secs = carve_open(&secs, a - tn::STEP_M, b + tn::STEP_M);
-            st.cut_open_m += b - a + tn::STEP_M;
-        }
-        for x in &samples {
-            if section_kind_at(&secs, x.s) == SectionKind::Open {
-                lay_band(
-                    x,
-                    band_of(SectionKind::Open, x, e.width_m, sp),
-                    sp,
-                    &mut lay2,
-                );
+    // Laying one stretch can uncover the next (its slope cut away):
+    // repeated until nothing is exposed, a few rounds at most.
+    for _ in 0..4 {
+        let mut lay2 = Targets::new();
+        for e in g.edges.iter().filter(|e| e.tunnel) {
+            let Some(secs) = stored.edges.get(&e.id.0) else {
+                continue;
+            };
+            let ground = |x: f64, z: f64| pkg.surface_height(x, z);
+            let samples = tn::probe(e, &ground);
+            let runs = tn::exposed_runs(&samples, secs);
+            if runs.is_empty() {
+                continue;
             }
+            let mut secs = secs.clone();
+            for &(a, b, _) in &runs {
+                // A box fits where the terrain covers its flat roof (a
+                // city tunnel under streets, an underpass under a road);
+                // else the road is open in a cutting.
+                let (a, b) = (a - tn::STEP_M, b + tn::STEP_M);
+                let was_bored = section_kind_at(&secs, (a + b) / 2.0) == SectionKind::Bored;
+                let box_fits = was_bored
+                    && samples
+                        .iter()
+                        .filter(|x| x.s >= a && x.s <= b)
+                        .all(|x| x.box_cover() >= -tn::EXPOSED_TOL_M);
+                if box_fits {
+                    secs = carve(&secs, a, b, SectionKind::Box);
+                    st.boxed_m += b - a;
+                } else {
+                    secs = carve_open(&secs, a, b);
+                    st.cut_open_m += b - a;
+                }
+            }
+            for x in &samples {
+                if section_kind_at(&secs, x.s) == SectionKind::Open {
+                    lay_band(
+                        x,
+                        band_of(SectionKind::Open, x, e.width_m, sp),
+                        sp,
+                        &mut lay2,
+                    );
+                }
+            }
+            stored.edges.insert(e.id.0, secs);
         }
-        stored.edges.insert(e.id.0, secs);
+        if lay2.is_empty() {
+            break;
+        }
+        apply(pkg, g, &roads, &Targets::new(), &lay2, &mut st);
     }
-    apply(pkg, g, &roads, &Targets::new(), &lay2, &mut st);
     pkg.look.tunnels = Some(stored);
     st
 }
@@ -633,6 +665,7 @@ pub fn format_report(
                     SectionKind::Gallery { hill_right: true } => "Gr",
                     SectionKind::Gallery { hill_right: false } => "Gl",
                     SectionKind::Open => "O",
+                    SectionKind::Box => "X",
                 };
                 format!("{k}{:.0}", x.to - x.from)
             })

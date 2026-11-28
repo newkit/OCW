@@ -199,7 +199,9 @@ pub fn structure_cut_pieces<'a>(
             .iter()
             .map(|x| match kind(x.s) {
                 SectionKind::Gallery { .. } => true,
-                SectionKind::Open => false,
+                // Boxes lie under laid terrain (cities, road embankments):
+                // cutting the tube's arch would open the ground over them.
+                SectionKind::Open | SectionKind::Box => false,
                 SectionKind::Bored => {
                     let low = [-x.half, 0.0, x.half]
                         .into_iter()

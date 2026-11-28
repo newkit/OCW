@@ -226,6 +226,75 @@ pub fn tube_meshes(track: &dyn Track, from: f64, to: f64) -> crate::tunnel_mesh:
     crate::tunnel_mesh::tunnel_meshes(&axis, &secs, seed)
 }
 
+/// The tunnels as drawn before 2026-11-28 (a dark tube along the
+/// track's covered stretches, the package's tunnels not used), for before
+/// / after pictures: `OCW_TUNNELS=legacy` (read once).
+pub fn legacy_mode() -> bool {
+    static LEGACY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *LEGACY.get_or_init(|| std::env::var("OCW_TUNNELS").is_ok_and(|v| v == "legacy"))
+}
+
+/// The tube as drawn before 2026-11-28 (unlit vertex colours: concrete
+/// walls, a darker vault with a strip of lamps along the crown, dark
+/// asphalt), only for [`legacy_mode`].
+pub fn legacy_tube_mesh(track: &dyn Track, from: f64, to: f64) -> Mesh {
+    let n = ((to - from) / SCAN_STEP_M).ceil().max(1.0) as usize;
+    // Unlit colours (sunlight and tree shadows would reach through the
+    // hill): concrete walls, a darker vault with a strip of lamps along
+    // the crown, a dark asphalt floor.
+    let wall = [0.30, 0.29, 0.27, 1.0];
+    let vault = [0.20, 0.19, 0.18, 1.0];
+    let lamps = [0.95, 0.85, 0.55, 1.0];
+    let floor = [0.09, 0.09, 0.10, 1.0];
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut colors = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let ring = |d: f64| -> Vec<Vec3> {
+        let s = track.sample(d);
+        tube_profile(track.road_width_at(d))
+            .iter()
+            .map(|&[l, h]| to_vec3(s.offset_position(l)) + Vec3::Y * h as f32)
+            .collect()
+    };
+    let mut prev = ring(from);
+    for i in 1..=n {
+        let d = (from + i as f64 * SCAN_STEP_M).min(to);
+        let next = ring(d);
+        let segments = prev.len() - 1;
+        for k in 0..segments {
+            let (a, b, c, e) = (prev[k], prev[k + 1], next[k], next[k + 1]);
+            // Inward normal: the ring runs over the top from left to right
+            // (b after a), the next ring is ahead (c), so (c - a) × (b - a)
+            // points into the tube.
+            let normal = (c - a).cross(b - a).normalize_or_zero();
+            let base = positions.len() as u32;
+            for v in [a, b, c, e] {
+                positions.push(v.to_array());
+                normals.push(normal.to_array());
+                colors.push(match k {
+                    _ if k == segments - 1 => floor,
+                    0 => wall,
+                    _ if k == segments - 2 => wall,
+                    _ if k == segments / 2 - 1 || k == segments / 2 => lamps,
+                    _ => vault,
+                });
+            }
+            indices.extend([base, base + 1, base + 2, base + 1, base + 3, base + 2]);
+        }
+        prev = next;
+    }
+    let mut mesh = Mesh::new(
+        bevy::mesh::PrimitiveTopology::TriangleList,
+        bevy::asset::RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(bevy::mesh::Indices::U32(indices));
+    mesh
+}
+
 /// One tunnel of the package's road graph near the rider: its axis
 /// samples (home metres), sections and entities.
 struct Structure {
@@ -237,6 +306,8 @@ struct Structure {
 /// The materials of tunnels (one set for all).
 #[derive(Clone)]
 struct TunnelMaterials {
+    /// The old tube's vertex colours ([`legacy_mode`]).
+    legacy: Handle<StandardMaterial>,
     tube: Handle<StandardMaterial>,
     fittings: Handle<StandardMaterial>,
     glow: Handle<StandardMaterial>,
@@ -247,6 +318,13 @@ impl TunnelMaterials {
     fn new(materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) -> Self {
         let tex = images.add(crate::tunnel_mesh::tunnel_image());
         Self {
+            legacy: materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                cull_mode: None,
+                double_sided: true,
+                ..default()
+            }),
             // Unlit (sunlight and tree shadows would reach through the
             // hill): the lamps' light is baked into the vertex colours.
             tube: materials.add(StandardMaterial {
@@ -527,7 +605,7 @@ fn update_tunnels(
     // With a package the tunnels of its road graph are drawn as what they
     // are in the terrain (tube, gallery, open road); without one, a tube
     // along the track's covered stretches.
-    let pieces = if let Some(pkg) = &package {
+    let pieces = if let Some(pkg) = package.as_ref().filter(|_| !legacy_mode()) {
         let tunnels = &mut *tunnels;
         tunnels.structures.retain(|_, st| {
             let keep = structure_near(st, here2, DROP_M);
@@ -551,7 +629,11 @@ fn update_tunnels(
                 })
                 .collect();
             let seed = (key.0 as u64) << 32 | key.1 as u64;
-            let m = crate::tunnel_mesh::tunnel_meshes(&axis, &sections, seed);
+            // An end deep under the terrain goes on in the next edge.
+            let open_end =
+                |x: Option<&ocw_world::tunnels::AxisSample>| x.is_none_or(|x| x.roof_cover() < 1.0);
+            let portals = [open_end(samples.first()), open_end(samples.last())];
+            let m = crate::tunnel_mesh::tunnel_meshes_with(&axis, &sections, seed, portals);
             let entities = spawn_meshes(&mut commands, &mut meshes, &mats, m);
             tunnels.structures.insert(
                 key,
@@ -601,8 +683,20 @@ fn update_tunnels(
             if tunnels.tubes.contains_key(&key) {
                 continue;
             }
-            let m = tube_meshes(track, a, b);
-            let es = spawn_meshes(&mut commands, &mut meshes, &mats, m);
+            let es = if legacy_mode() {
+                let mat = mats.legacy.clone();
+                vec![
+                    commands
+                        .spawn((
+                            SceneEntity,
+                            Mesh3d(meshes.add(legacy_tube_mesh(track, a, b))),
+                            MeshMaterial3d(mat),
+                        ))
+                        .id(),
+                ]
+            } else {
+                spawn_meshes(&mut commands, &mut meshes, &mats, tube_meshes(track, a, b))
+            };
             tunnels.tubes.insert(key, es);
         }
         match &ground {
