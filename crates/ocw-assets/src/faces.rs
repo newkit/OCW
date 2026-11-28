@@ -140,7 +140,7 @@ fn forms(s: Vec3) -> Vec<Blob> {
         [0.0, -0.083, -0.083],
         [0.021, 0.0135, 0.015],
         0.0,
-        0.016,
+        0.020,
         false,
     );
     // The neck under the jaw (so the jaw's underside runs into it).
