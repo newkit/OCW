@@ -138,8 +138,9 @@ pub fn lamp_light(s: f64, lamps: &[f64]) -> f32 {
     // Lamps are sorted: look at the neighbours only.
     let i = lamps.partition_point(|&l| l < s);
     let mut best: f32 = 0.0;
-    for j in i.saturating_sub(2)..(i + 2).min(lamps.len()) {
-        let d = ((s - lamps[j]) / 4.5) as f32;
+    let near = &lamps[i.saturating_sub(2)..(i + 2).min(lamps.len())];
+    for &l in near {
+        let d = ((s - l) / 4.5) as f32;
         best = best.max((-d * d).exp());
     }
     best
@@ -1126,7 +1127,7 @@ mod tests {
         // Regression (the Arcalís video, 2026-11-28): the open road in the
         // sun has the light asphalt of the package's roads, not the tube's
         // dark one.
-        assert!(m.lit.colors.iter().any(|c| *c == SUNLIT_ASPHALT));
+        assert!(m.lit.colors.contains(&SUNLIT_ASPHALT));
         assert!(!m.lit.colors.iter().any(|c| c[0] < 0.2 && c[0] == c[1]));
     }
 
