@@ -14,7 +14,7 @@ const SIZE: f32 = 1000.0;
 /// crossing it on the terrain at x 500.
 fn package(ground: impl Fn(f64, f64) -> f64, over: Option<f64>) -> WorldPackage {
     let mut v = vec![[300.0, 500.0], [700.0, 500.0]];
-    if let Some(h) = over {
+    if over.is_some() {
         v.extend([[500.0, 300.0], [500.0, 700.0]]);
     }
     let mut roads = vec![Road::straight(&v, 0, 1, RoadClass::Secondary, 7.0, |_| {
