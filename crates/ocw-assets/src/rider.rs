@@ -2454,8 +2454,7 @@ pub fn build(detail: Detail) -> Model {
             use face::ROUND_GLASSES as g;
             for x in [-g.0[0], g.0[0]] {
                 let c = skull + Vec3::new(x, g.0[1], g.0[2]);
-                p.slot("metal")
-                    .torus(c, Vec3::Z, g.1, 0.0011, 10, 3, 0.0);
+                p.slot("metal").torus(c, Vec3::Z, g.1, 0.0011, 10, 3, 0.0);
                 let rim: Vec<Vec3> = std::iter::once(c)
                     .chain((0..10).map(|k| {
                         let a = k as f32 / 10.0 * std::f32::consts::TAU;
@@ -2463,7 +2462,8 @@ pub fn build(detail: Detail) -> Model {
                     }))
                     .collect();
                 // The lens' front (towards −z).
-                let tris: Vec<[u32; 3]> = (0..10u32).map(|k| [0, 1 + (k + 1) % 10, 1 + k]).collect();
+                let tris: Vec<[u32; 3]> =
+                    (0..10u32).map(|k| [0, 1 + (k + 1) % 10, 1 + k]).collect();
                 p.slot("lens_clear").add_smooth(&rim, &tris);
             }
             let y = g.0[1] + 0.006;
@@ -3206,7 +3206,10 @@ mod tests {
         let (upper_low, upper_high) = low_high(&upper);
         let (lower_low, lower_high) = low_high(&lower);
         assert!((lower_high - upper_low).abs() < 0.002, "the lips meet");
-        assert!(lower_high - lower_low > upper_high - upper_low, "a fuller lower lip");
+        assert!(
+            lower_high - lower_low > upper_high - upper_low,
+            "a fuller lower lip"
+        );
         let drop = lower_lip_offset(1.0);
         assert!(drop.y < -0.005 && drop.z > 0.0 && lower_lip_offset(0.0) == Vec3::ZERO);
         let (inside_low, inside_high) = low_high(&inside);

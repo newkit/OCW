@@ -1242,7 +1242,11 @@ ftp_w = 5000
         let saved = toml::to_string(&r).unwrap();
         assert!(!saved.contains("eyes"), "{saved}");
         let old: Rider = toml::from_str(&saved).unwrap();
-        assert_eq!(old.character(), before, "a rider saved before loads the same");
+        assert_eq!(
+            old.character(),
+            before,
+            "a rider saved before loads the same"
+        );
         r.set_character(Character { eyes: 5, ..before });
         assert_eq!(r.eyes.as_deref(), Some("blue"));
         let saved = toml::to_string(&r).unwrap();

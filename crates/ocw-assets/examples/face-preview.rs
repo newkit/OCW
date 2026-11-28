@@ -23,7 +23,11 @@ const HALF: f32 = 0.165;
 fn linear(c: Rgb) -> Vec3 {
     let f = |v: u8| {
         let s = f32::from(v) / 255.0;
-        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
     };
     let [r, g, b] = c.channels();
     Vec3::new(f(r), f(g), f(b))
@@ -31,7 +35,11 @@ fn linear(c: Rgb) -> Vec3 {
 
 fn srgb(v: f32) -> u8 {
     let v = v.clamp(0.0, 1.0);
-    let s = if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+    let s = if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    };
     (s * 255.0 + 0.5) as u8
 }
 
@@ -111,7 +119,10 @@ fn triangles(m: &Model, c: &Character, helmet: bool) -> Vec<Tri> {
                 _ => Vec3::new(mat.color[0], mat.color[1], mat.color[2]),
             };
             let hair = matches!(mat.name.as_str(), "hair" | "facial_hair");
-            let glossy = matches!(mat.name.as_str(), "iris" | "eye_white" | "lens" | "eye_glint");
+            let glossy = matches!(
+                mat.name.as_str(),
+                "iris" | "eye_white" | "lens" | "eye_glint"
+            );
             for t in p.indices.chunks(3) {
                 let v = |k: usize| t[k] as usize;
                 out.push(Tri {
@@ -131,7 +142,11 @@ fn triangles(m: &Model, c: &Character, helmet: bool) -> Vec<Tri> {
 
 fn render(tris: &[Tri], skin: Vec3, yaw: f32, pitch: f32, img: &mut [u8], x0: usize, width: usize) {
     let centre = rider::skull_centre() + Vec3::new(0.0, -0.035, 0.0);
-    let v = Vec3::new(yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
+    let v = Vec3::new(
+        yaw.sin() * pitch.cos(),
+        pitch.sin(),
+        -yaw.cos() * pitch.cos(),
+    );
     let r = Vec3::Y.cross(v).normalize();
     let up = v.cross(r);
     let light = (v * 0.8 + up * 0.55 - r * 0.45).normalize();
@@ -153,12 +168,28 @@ fn render(tris: &[Tri], skin: Vec3, yaw: f32, pitch: f32, img: &mut [u8], x0: us
             continue;
         }
         let (min_x, max_x) = (
-            s.iter().map(|p| p.0).fold(f32::MAX, f32::min).floor().max(0.0) as usize,
-            s.iter().map(|p| p.0).fold(f32::MIN, f32::max).ceil().min(SIZE as f32 - 1.0) as usize,
+            s.iter()
+                .map(|p| p.0)
+                .fold(f32::MAX, f32::min)
+                .floor()
+                .max(0.0) as usize,
+            s.iter()
+                .map(|p| p.0)
+                .fold(f32::MIN, f32::max)
+                .ceil()
+                .min(SIZE as f32 - 1.0) as usize,
         );
         let (min_y, max_y) = (
-            s.iter().map(|p| p.1).fold(f32::MAX, f32::min).floor().max(0.0) as usize,
-            s.iter().map(|p| p.1).fold(f32::MIN, f32::max).ceil().min(SIZE as f32 - 1.0) as usize,
+            s.iter()
+                .map(|p| p.1)
+                .fold(f32::MAX, f32::min)
+                .floor()
+                .max(0.0) as usize,
+            s.iter()
+                .map(|p| p.1)
+                .fold(f32::MIN, f32::max)
+                .ceil()
+                .min(SIZE as f32 - 1.0) as usize,
         );
         for y in min_y..=max_y {
             for x in min_x..=max_x {
@@ -166,7 +197,11 @@ fn render(tris: &[Tri], skin: Vec3, yaw: f32, pitch: f32, img: &mut [u8], x0: us
                 let e = |a: (f32, f32, f32), b: (f32, f32, f32)| {
                     (b.0 - a.0) * (py - a.1) - (b.1 - a.1) * (px - a.0)
                 };
-                let w = [e(s[1], s[2]) / area, e(s[2], s[0]) / area, e(s[0], s[1]) / area];
+                let w = [
+                    e(s[1], s[2]) / area,
+                    e(s[2], s[0]) / area,
+                    e(s[0], s[1]) / area,
+                ];
                 if w.iter().any(|k| *k < 0.0) {
                     continue;
                 }
@@ -187,7 +222,11 @@ fn render(tris: &[Tri], skin: Vec3, yaw: f32, pitch: f32, img: &mut [u8], x0: us
                 };
                 let lit = 0.28 + 0.95 * n.dot(light).max(0.0) + 0.25 * n.dot(fill).max(0.0);
                 let half = (light + v).normalize();
-                let spec = if t.glossy { 0.6 * n.dot(half).max(0.0).powf(120.0) } else { 0.0 };
+                let spec = if t.glossy {
+                    0.6 * n.dot(half).max(0.0).powf(120.0)
+                } else {
+                    0.0
+                };
                 let c = albedo * lit + Vec3::splat(spec);
                 let o = (y * width + x0 + x) * 3;
                 img[o] = srgb(c.x);
@@ -213,7 +252,10 @@ fn main() {
         let tris: usize = m.nodes[i].primitives.iter().map(|p| p.triangles()).sum();
         println!("{name}: {tris} triangles");
     }
-    println!("mouth (from the skull's centre): {}", ocw_assets::faces::mouth() - rider::skull_centre());
+    println!(
+        "mouth (from the skull's centre): {}",
+        ocw_assets::faces::mouth() - rider::skull_centre()
+    );
     // How far the helmets' straps are from the face's skin (m).
     let f = ocw_assets::faces::Face::get();
     for h in ocw_assets::helmet::Helmet::ALL {
@@ -241,15 +283,114 @@ fn main() {
         }
     }
     let looks = [
-        look("ada", Age::Twenties, 1, "long", 0x7E3A24, "none", "none", "green", 0, false),
-        look("cyd", Age::Forties, 11, "crew-cut", 0x3B2A20, "none", "short-boxed", "dark-brown", 0, false),
-        look("dag", Age::Seventies, 5, "bald", 0x9C9A96, "classic", "full", "blue", 2, false),
-        look("eve", Age::Sixties, 14, "low-bun", 0x15110F, "none", "none", "dark-brown", 2, false),
-        look("finn", Age::Thirties, 8, "short-textured", 0x6B4426, "none", "stubble", "hazel", 0, false),
-        look("gus", Age::Fifties, 3, "side-part", 0xA0703F, "pencil", "chin-strap", "grey", 1, true),
-        look("hal", Age::Thirties, 9, "buzz-cut", 0x15110F, "handlebar", "goatee", "brown", 0, false),
-        look("ike", Age::Forties, 6, "shaved", 0xB3482A, "chevron", "long", "amber", 0, false),
-        look("jo", Age::Twenties, 15, "afro", 0x15110F, "horseshoe", "short-stubble-beard", "dark-brown", 0, true),
+        look(
+            "ada",
+            Age::Twenties,
+            1,
+            "long",
+            0x7E3A24,
+            "none",
+            "none",
+            "green",
+            0,
+            false,
+        ),
+        look(
+            "cyd",
+            Age::Forties,
+            11,
+            "crew-cut",
+            0x3B2A20,
+            "none",
+            "short-boxed",
+            "dark-brown",
+            0,
+            false,
+        ),
+        look(
+            "dag",
+            Age::Seventies,
+            5,
+            "bald",
+            0x9C9A96,
+            "classic",
+            "full",
+            "blue",
+            2,
+            false,
+        ),
+        look(
+            "eve",
+            Age::Sixties,
+            14,
+            "low-bun",
+            0x15110F,
+            "none",
+            "none",
+            "dark-brown",
+            2,
+            false,
+        ),
+        look(
+            "finn",
+            Age::Thirties,
+            8,
+            "short-textured",
+            0x6B4426,
+            "none",
+            "stubble",
+            "hazel",
+            0,
+            false,
+        ),
+        look(
+            "gus",
+            Age::Fifties,
+            3,
+            "side-part",
+            0xA0703F,
+            "pencil",
+            "chin-strap",
+            "grey",
+            1,
+            true,
+        ),
+        look(
+            "hal",
+            Age::Thirties,
+            9,
+            "buzz-cut",
+            0x15110F,
+            "handlebar",
+            "goatee",
+            "brown",
+            0,
+            false,
+        ),
+        look(
+            "ike",
+            Age::Forties,
+            6,
+            "shaved",
+            0xB3482A,
+            "chevron",
+            "long",
+            "amber",
+            0,
+            false,
+        ),
+        look(
+            "jo",
+            Age::Twenties,
+            15,
+            "afro",
+            0x15110F,
+            "horseshoe",
+            "short-stubble-beard",
+            "dark-brown",
+            0,
+            true,
+        ),
     ];
     let views = [(180f32, 0f32), (140.0, -4.0), (90.0, 0.0), (165.0, -28.0)];
     for (k, (name, c, helmet)) in looks.iter().enumerate() {
@@ -272,8 +413,14 @@ fn main() {
             );
         }
         let path = format!("{dir}/face-{}-{name}.png", k + 1);
-        image::save_buffer(&path, &img, width as u32, SIZE as u32, image::ExtendedColorType::Rgb8)
-            .expect("the picture");
+        image::save_buffer(
+            &path,
+            &img,
+            width as u32,
+            SIZE as u32,
+            image::ExtendedColorType::Rgb8,
+        )
+        .expect("the picture");
         println!("{path}: {} triangles", tris.len());
     }
 }

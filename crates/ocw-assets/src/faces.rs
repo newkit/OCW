@@ -123,24 +123,84 @@ fn forms(s: Vec3) -> Vec<Blob> {
     // The skull as it is (the hair and the helmets are fitted to it).
     add([0.0, 0.0, 0.0], rider::SKULL_RADII, 0.0, 0.01, false);
     // The middle of the face: the upper jaw and the cheeks.
-    add([0.0, -0.040, -0.028], [0.066, 0.060, 0.068], 0.0, 0.014, false);
+    add(
+        [0.0, -0.040, -0.028],
+        [0.066, 0.060, 0.068],
+        0.0,
+        0.014,
+        false,
+    );
     // The lower jaw – the ellipsoid the helmets' straps and buckles are
     // fitted to ([`rider::face::JAW`]) – and the chin on it.
     let (c, r, tilt) = rider::face::JAW;
     add(c, r, tilt, 0.012, false);
-    add([0.0, -0.083, -0.083], [0.021, 0.0135, 0.015], 0.0, 0.010, false);
+    add(
+        [0.0, -0.083, -0.083],
+        [0.021, 0.0135, 0.015],
+        0.0,
+        0.010,
+        false,
+    );
     // The neck under the jaw (so the jaw's underside runs into it).
-    add([0.0, -0.115, -0.002], [0.043, 0.07, 0.043], 0.0, 0.008, false);
+    add(
+        [0.0, -0.115, -0.002],
+        [0.043, 0.07, 0.043],
+        0.0,
+        0.008,
+        false,
+    );
     // The brow ridge and the cheekbones.
-    add([0.030, 0.027, -0.079], [0.022, 0.009, 0.014], 0.0, 0.008, true);
-    add([0.0, 0.026, -0.086], [0.014, 0.010, 0.010], 0.0, 0.008, false);
-    add([0.045, -0.012, -0.060], [0.019, 0.016, 0.017], 0.0, 0.016, true);
+    add(
+        [0.030, 0.027, -0.079],
+        [0.022, 0.009, 0.014],
+        0.0,
+        0.008,
+        true,
+    );
+    add(
+        [0.0, 0.026, -0.086],
+        [0.014, 0.010, 0.010],
+        0.0,
+        0.008,
+        false,
+    );
+    add(
+        [0.045, -0.012, -0.060],
+        [0.019, 0.016, 0.017],
+        0.0,
+        0.016,
+        true,
+    );
     // The nose: the bridge down to the tip, the tip, the wings.
-    add([0.0, -0.007, -0.094], [0.0068, 0.020, 0.0085], 0.49, 0.006, false);
-    add([0.0, -0.025, -0.1075], [0.0085, 0.0082, 0.0090], 0.0, 0.005, false);
-    add([0.0118, -0.029, -0.097], [0.0068, 0.0062, 0.0090], 0.0, 0.004, true);
+    add(
+        [0.0, -0.007, -0.094],
+        [0.0068, 0.020, 0.0085],
+        0.49,
+        0.006,
+        false,
+    );
+    add(
+        [0.0, -0.025, -0.1075],
+        [0.0085, 0.0082, 0.0090],
+        0.0,
+        0.005,
+        false,
+    );
+    add(
+        [0.0118, -0.029, -0.097],
+        [0.0068, 0.0062, 0.0090],
+        0.0,
+        0.004,
+        true,
+    );
     // The mound of the mouth.
-    add([0.0, -0.055, -0.083], [0.027, 0.017, 0.016], 0.0, 0.012, false);
+    add(
+        [0.0, -0.055, -0.083],
+        [0.027, 0.017, 0.016],
+        0.0,
+        0.012,
+        false,
+    );
     out
 }
 
@@ -149,9 +209,8 @@ fn forms(s: Vec3) -> Vec<Blob> {
 /// from the axis at [`PIVOT`] tilted down by `(PIVOT − h) / TURN` rad –
 /// round the chin and under the jaw to the neck.
 const ROWS: [f32; 24] = [
-    0.052, 0.043, 0.035, 0.029, 0.023, 0.017, 0.011, 0.005, -0.001, -0.007, -0.014, -0.021,
-    -0.028, -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.089, -0.099, -0.109,
-    -0.118,
+    0.052, 0.043, 0.035, 0.029, 0.023, 0.017, 0.011, 0.005, -0.001, -0.007, -0.014, -0.021, -0.028,
+    -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.089, -0.099, -0.109, -0.118,
 ];
 /// The grid's columns: the angle round the head's axis (degrees, 0 the
 /// middle of the face; mirrored).
@@ -241,7 +300,11 @@ impl Face {
             h,
             r: Vec::new(),
         };
-        let (a_max, h_top, h_bot) = (face.a[face.a.len() - 1], face.h[0], face.h[face.h.len() - 1]);
+        let (a_max, h_top, h_bot) = (
+            face.a[face.a.len() - 1],
+            face.h[0],
+            face.h[face.h.len() - 1],
+        );
         let eyes = eye_centres(skull);
         let mut r = Vec::with_capacity(face.a.len() * face.h.len());
         for (j, &h) in face.h.iter().enumerate() {
@@ -250,7 +313,11 @@ impl Face {
                 let skin = ray_last_hit(o, d, &drawn).unwrap_or(0.0);
                 let rim = i == 0 || j == 0 || i + 1 == face.a.len() || j + 1 == face.h.len();
                 if rim {
-                    let under = if j + 1 == face.h.len() { RIM_UNDER_JAW } else { RIM_UNDER };
+                    let under = if j + 1 == face.h.len() {
+                        RIM_UNDER_JAW
+                    } else {
+                        RIM_UNDER
+                    };
                     r.push(skin - under);
                     continue;
                 }
@@ -262,7 +329,11 @@ impl Face {
                 let (mut lo, mut hi) = (t.max(0.0), t + 0.002);
                 for _ in 0..16 {
                     let m = (lo + hi) / 2.0;
-                    if field(o + d * m) > 0.0 { hi = m } else { lo = m }
+                    if field(o + d * m) > 0.0 {
+                        hi = m
+                    } else {
+                        lo = m
+                    }
                 }
                 let mut form = (lo + hi) / 2.0;
                 // The eye sockets: the skin stays behind the lids.
@@ -339,7 +410,11 @@ impl Face {
         let (mut lo, mut hi) = (self.a[0], self.a[self.a.len() - 1]);
         for _ in 0..28 {
             let m = (lo + hi) / 2.0;
-            if self.surface(m, y).0.x - self.skull.x < x { lo = m } else { hi = m }
+            if self.surface(m, y).0.x - self.skull.x < x {
+                lo = m
+            } else {
+                hi = m
+            }
         }
         (lo + hi) / 2.0
     }
@@ -822,7 +897,11 @@ fn lines(f: &Face, deep: bool) -> Parts {
             0.0005 + 0.0003 * k,
         );
         // Crow's feet at the outer corners.
-        let fan: &[f32] = if deep { &[0.35, 0.0, -0.35] } else { &[0.22, -0.22] };
+        let fan: &[f32] = if deep {
+            &[0.35, 0.0, -0.35]
+        } else {
+            &[0.22, -0.22]
+        };
         for slope in fan {
             let x0 = at::EYE[0] + at::EYE_HALF_WIDTH + 0.003;
             let len = 0.0065 + 0.002 * k;
@@ -856,7 +935,13 @@ fn lines(f: &Face, deep: bool) -> Parts {
             crease(
                 f,
                 s,
-                &[[-0.026, y], [-0.013, y + 0.001], [0.0, y + 0.0013], [0.013, y + 0.001], [0.026, y]],
+                &[
+                    [-0.026, y],
+                    [-0.013, y + 0.001],
+                    [0.0, y + 0.0013],
+                    [0.013, y + 0.001],
+                    [0.026, y],
+                ],
                 0.00055,
             );
         }
@@ -962,9 +1047,8 @@ fn full(_: &Face, q: Vec3, a: f32, h: f32) -> (f32, f32) {
 
 fn goatee(_: &Face, q: Vec3, a: f32, h: f32) -> (f32, f32) {
     let round = Vec3::new(q.x / 0.022, (q.y + 0.084) / 0.024, 0.0).length();
-    let d = (1.0 - smooth((round - 0.8) / 0.25))
-        * above_neck_line(a, h, -0.104, 0.006)
-        * off_lips(q);
+    let d =
+        (1.0 - smooth((round - 0.8) / 0.25)) * above_neck_line(a, h, -0.104, 0.006) * off_lips(q);
     (d, 0.006)
 }
 
@@ -973,7 +1057,10 @@ fn chin_strap(_: &Face, _: Vec3, a: f32, h: f32) -> (f32, f32) {
     let u = a.abs() / 79f32.to_radians();
     let line = -0.089 + 0.029 * u * u;
     let d = 1.0 - smooth(((h - line).abs() - 0.0045) / 0.003);
-    (d * smooth((76f32.to_radians() - a.abs()) / 6f32.to_radians()), 0.003)
+    (
+        d * smooth((76f32.to_radians() - a.abs()) / 6f32.to_radians()),
+        0.003,
+    )
 }
 
 /// How far the long beard hangs below a point of the chin's and the
@@ -996,7 +1083,8 @@ pub const UNDER_STRAPS: f32 = 0.0025;
 /// The share of its length a beard keeps at column angle `a`, row `h`:
 /// 1 on the front of the face, 0 where the straps lie.
 fn off_straps(a: f32, h: f32) -> f32 {
-    (1.0 - smooth((a.abs() - 28f32.to_radians()) / 22f32.to_radians())) * smooth((h + 0.104) / 0.012)
+    (1.0 - smooth((a.abs() - 28f32.to_radians()) / 22f32.to_radians()))
+        * smooth((h + 0.104) / 0.012)
 }
 
 /// The beards of `ocw_core::character::BEARDS` after "None", in
@@ -1022,7 +1110,11 @@ fn beard(f: &Face, (grow, hangs): (Growth, bool)) -> Parts {
             let rim = i == 0 || j == 0 || i + 1 == nx || j + 1 == ny;
             let q = f.vertex(i, j).0 - f.skull;
             let (d, thick) = grow(f, q, f.a[i], f.h[j]);
-            if rim || d < 0.03 { (0.0, 0.0) } else { (d, thick) }
+            if rim || d < 0.03 {
+                (0.0, 0.0)
+            } else {
+                (d, thick)
+            }
         })
         .collect();
     let mut p = Parts::new();
@@ -1131,7 +1223,11 @@ fn moustache(f: &Face, style: usize) -> Parts {
                     let inner = (m == 1 || m == 2) && k > 0 && k < 6;
                     let end = smooth((1.0 - v) / 0.3);
                     let dense = if inner { 0.3 + 0.7 * end } else { 0.0 };
-                    let lift = if inner { 0.0030 * (0.3 + 0.7 * end) } else { -0.0004 };
+                    let lift = if inner {
+                        0.0030 * (0.3 + 0.7 * end)
+                    } else {
+                        -0.0004
+                    };
                     (at + d * lift, grey(dense))
                 },
                 |_, _| Vec3::NEG_Z,
@@ -1282,7 +1378,10 @@ mod tests {
         const { assert!(PUPIL < IRIS / 2.0 && IRIS < LID_UP + LID_DOWN) };
         // The mouth and the eyes where the model's constants say.
         let mouth = mouth() - rider::skull_centre();
-        assert!(mouth.distance(Vec3::from(rider::face::MOUTH)) < 1e-3, "{mouth}");
+        assert!(
+            mouth.distance(Vec3::from(rider::face::MOUTH)) < 1e-3,
+            "{mouth}"
+        );
         assert_eq!(rider::face::EYE[..2], EYE);
     }
 
@@ -1329,11 +1428,17 @@ mod tests {
             .map(|k| z(0.0, at::BROW_Y - k as f32 * 0.003))
             .fold(f32::MAX, f32::min);
         let nose = z(0.0, at::NOSE_BASE_Y + 0.008);
-        assert!(nose < foremost + 0.002, "the nose's tip: {nose} vs {foremost}");
+        assert!(
+            nose < foremost + 0.002,
+            "the nose's tip: {nose} vs {foremost}"
+        );
         assert!(nose < z(0.0, at::MOUTH_Y) - 0.008, "in front of the lips");
         assert!(nose < z(0.0, at::EYE[1]) - 0.012, "the bridge lies back");
         let brow = z(at::EYE[0], at::BROW_Y);
-        assert!(brow < at::LID_FRONT - 0.002, "the brow over the eye: {brow}");
+        assert!(
+            brow < at::LID_FRONT - 0.002,
+            "the brow over the eye: {brow}"
+        );
         for side in [-1.0, 1.0] {
             let socket = z(side * at::EYE[0], at::EYE[1]);
             assert!(socket > at::LID_FRONT + 0.0008, "{socket}");
@@ -1357,7 +1462,10 @@ mod tests {
             let pupil = pts[0] - f.skull;
             assert!((pupil.x - side * at::EYE[0]).abs() < 1e-5, "{pupil}");
             assert!((pupil.y - at::EYE[1]).abs() < 1e-5, "{pupil}");
-            assert!((pupil.z - (at::LID_FRONT + at::LID)).abs() < 5e-4, "{pupil}");
+            assert!(
+                (pupil.z - (at::LID_FRONT + at::LID)).abs() < 5e-4,
+                "{pupil}"
+            );
             assert!(cols[0][0] < 0.05, "a black pupil");
             assert!(cols.iter().any(|c| c[0] > 0.95), "the iris in its colour");
             let rim = cols[per_eye - 1][0];
@@ -1408,7 +1516,10 @@ mod tests {
         let (corner_top, corner_line, corner_bottom) = lip_lines(1.0);
         assert!(corner_top - corner_bottom < 0.0015 && corner_line > line0);
         let (upper, lower) = &set().lips;
-        for (lip, swell) in [(shape(upper, "lips"), 0.0015), (shape(lower, "lips"), 0.002)] {
+        for (lip, swell) in [
+            (shape(upper, "lips"), 0.0015),
+            (shape(lower, "lips"), 0.002),
+        ] {
             let over: Vec<f32> = lip.positions.iter().map(|p| f.over(*p)).collect();
             let most = over.iter().copied().fold(f32::MIN, f32::max);
             assert!((swell..0.0035).contains(&most), "{most}");
@@ -1417,10 +1528,19 @@ mod tests {
             }
             assert!(lip.colors.iter().any(|c| c[0] < 0.6), "dark at the line");
             let wide = at::MOUTH_HALF_WIDTH + 1e-3;
-            assert!(lip.positions.iter().all(|p| (p.x - f.skull.x).abs() <= wide));
+            assert!(
+                lip.positions
+                    .iter()
+                    .all(|p| (p.x - f.skull.x).abs() <= wide)
+            );
         }
         let inside = shape(upper, "eye");
-        let lowest = inside.positions.iter().map(|p| p.y).fold(f32::MAX, f32::min) - f.skull.y;
+        let lowest = inside
+            .positions
+            .iter()
+            .map(|p| p.y)
+            .fold(f32::MAX, f32::min)
+            - f.skull.y;
         assert!(lowest < line0 - rider::face::LIP_DROP_M, "{lowest}");
         for p in &inside.positions {
             let over = f.over(*p);
@@ -1460,8 +1580,16 @@ mod tests {
         {
             let beard = k < 7;
             let s = shape(part, "facial_hair");
-            let budget = if beard { BEARD_BUDGET } else { MOUSTACHE_BUDGET };
-            assert!((60..=budget).contains(&s.triangles()), "{name}: {}", s.triangles());
+            let budget = if beard {
+                BEARD_BUDGET
+            } else {
+                MOUSTACHE_BUDGET
+            };
+            assert!(
+                (60..=budget).contains(&s.triangles()),
+                "{name}: {}",
+                s.triangles()
+            );
             let pts = hairy(part);
             assert!(pts.iter().all(|(_, d)| (0.0..=1.0).contains(d)), "{name}");
             for i in open_edge(s) {
@@ -1474,10 +1602,17 @@ mod tests {
                     continue;
                 }
                 let over = f.over(*q + f.skull);
-                assert!(over > 0.0001, "{name}: hair {} mm in the skin at {q}", -over * 1e3);
+                assert!(
+                    over > 0.0001,
+                    "{name}: hair {} mm in the skin at {q}",
+                    -over * 1e3
+                );
                 assert!(over < 0.07, "{name}");
                 if beard {
-                    assert!(from_lips(*q, 0.0) >= LIP_MARGIN, "{name}: on the lips at {q}");
+                    assert!(
+                        from_lips(*q, 0.0) >= LIP_MARGIN,
+                        "{name}: on the lips at {q}"
+                    );
                     if from_lips(*q, rider::face::LIP_DROP_M) < 5e-4 {
                         assert!(over < LIP_SHORT + 2e-4, "{name}: {over} at the lips");
                     }
@@ -1497,7 +1632,11 @@ mod tests {
                 .map(|p| p.1)
                 .fold(0.0, f32::max)
         };
-        assert!((0.3..=0.55).contains(&most(0)), "stubble is thin: {}", most(0));
+        assert!(
+            (0.3..=0.55).contains(&most(0)),
+            "stubble is thin: {}",
+            most(0)
+        );
         assert!((0.6..=0.85).contains(&most(1)), "{}", most(1));
         for k in 2..7 {
             assert!(most(k) > 0.99, "{}: {}", rider::opt::BEARD[k], most(k));
@@ -1510,16 +1649,25 @@ mod tests {
                 .collect()
         };
         assert!(
-            dense(4).iter().all(|q| q.x.abs() < 0.03 && q.y < at::MOUTH_Y),
+            dense(4)
+                .iter()
+                .all(|q| q.x.abs() < 0.03 && q.y < at::MOUTH_Y),
             "the goatee on the chin"
         );
         assert!(
-            dense(5).iter().all(|q| q.y < at::MOUTH_Y - 0.012 || q.x.abs() > 0.045),
+            dense(5)
+                .iter()
+                .all(|q| q.y < at::MOUTH_Y - 0.012 || q.x.abs() > 0.045),
             "the chin strap keeps to the jaw"
         );
         assert!(dense(5).iter().any(|q| q.x > 0.05) && dense(5).iter().any(|q| q.x.abs() < 0.01));
         let low = |k: usize| dense(k).iter().map(|q| q.y).fold(f32::MAX, f32::min);
-        assert!(low(6) < low(3) - 0.012, "the long beard hangs: {} vs {}", low(6), low(3));
+        assert!(
+            low(6) < low(3) - 0.012,
+            "the long beard hangs: {} vs {}",
+            low(6),
+            low(3)
+        );
         // The cheeks' upper part, the nose and the eyes stay bare.
         for k in 0..7 {
             assert!(dense(k).iter().all(|q| q.y < at::EYE[1] - 0.012), "{k}");
@@ -1554,7 +1702,10 @@ mod tests {
                         let v = s.normals[*k as usize];
                         assert!((v.length() - 1.0).abs() < 1e-3);
                         let at = s.positions[*k as usize] - Face::get().skull;
-                        assert!(v.dot(n) > 0.0, "{slot}: a normal behind its triangle at {at}");
+                        assert!(
+                            v.dot(n) > 0.0,
+                            "{slot}: a normal behind its triangle at {at}"
+                        );
                     }
                 }
                 assert!(s.colors.len() <= s.positions.len());

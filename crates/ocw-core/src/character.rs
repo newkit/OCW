@@ -1228,7 +1228,10 @@ mod tests {
                 }
             }
         }
-        assert!(darker > 0 && lighter > 0, "{darker} light, {lighter} dark tones");
+        assert!(
+            darker > 0 && lighter > 0,
+            "{darker} light, {lighter} dark tones"
+        );
     }
 
     /// The eye colours (4N *Faces*): seven, brown the default and what a

@@ -808,7 +808,10 @@ mod tests {
         assert!(lens.clear && !lens.needs_shader());
         assert_eq!(lens.plain_material().alpha_mode, AlphaMode::Blend);
         assert_eq!(lens.plain_material().base_color.alpha(), CLEAR_LENS_COVER);
-        assert_ne!(lens.key(false), surface("lens", "glasses_sport", [0.8, 0.9, 0.95, 1.0], &c).key(false));
+        assert_ne!(
+            lens.key(false),
+            surface("lens", "glasses_sport", [0.8, 0.9, 0.95, 1.0], &c).key(false)
+        );
         // Bike parts.
         let carbon = surface("carbon", "bike", [0.0, 0.0, 0.0, 1.0], &c);
         assert_eq!(carbon.clearcoat, 1.0);

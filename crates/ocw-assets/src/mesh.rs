@@ -78,8 +78,7 @@ impl Shape {
     /// length) the colour `f` returns for its index from there.
     pub fn colour_from(&mut self, from: usize, f: impl Fn(usize) -> [f32; 4]) {
         self.colors.resize(from, [1.0; 4]);
-        self.colors
-            .extend((0..self.positions.len() - from).map(f));
+        self.colors.extend((0..self.positions.len() - from).map(f));
     }
 
     /// The vertex colours for a primitive: none, or one per vertex.
