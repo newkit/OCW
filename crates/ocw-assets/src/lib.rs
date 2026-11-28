@@ -51,6 +51,7 @@ pub mod materials;
 pub mod mesh;
 pub mod model;
 pub mod mouth;
+pub mod neck;
 pub mod parts;
 pub mod pose;
 pub mod props;

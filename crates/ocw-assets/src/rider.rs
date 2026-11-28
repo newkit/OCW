@@ -1109,6 +1109,11 @@ pub fn girth_of(name: &str, c: &ocw_core::Character) -> Vec3 {
 /// The scale of node `i`'s meshes for the character `c` (spec 4C, 4N;
 /// [`girth_of`] its rig node); about [`girth_centre`].
 pub fn girth(m: &Model, i: usize, c: &ocw_core::Character) -> Vec3 {
+    // The neck's base is as thick on every body as the head's neck it
+    // goes into (bug 2026-11-28).
+    if m.nodes[i].name == NECK_BASE {
+        return Vec3::ONE;
+    }
     rig_of(m, i).map_or(Vec3::ONE, |r| girth_of(&m.nodes[r].name, c))
 }
 
@@ -1197,11 +1202,90 @@ fn skull_skin(s: &mut Shape, skull: Vec3, detail: Detail) {
     s.ellipsoid(skull, radii, Quat::IDENTITY, bands, detail.sides());
 }
 
-/// The neck (skin), from inside the collar up into the skull.
+/// The neck's measures (m; bug 2026-11-28, 4N *Fixed: the neck and the
+/// jersey*): the head's neck is [`RADIUS`](neck::RADIUS) round at the
+/// head's pivot and closed below it by a half ball round the pivot, so
+/// whichever way the head turns, the skin round the pivot is the same; the
+/// torso carries the neck's base ([`NECK_BASE`]), a tube of
+/// [`BASE_RADIUS`](neck::BASE_RADIUS) from [`BASE_DEPTH`](neck::BASE_DEPTH)
+/// under the pivot (deep inside the jersey for every build) up into that
+/// ball.
+pub mod neck {
+    /// The head's neck at the pivot (and the half ball's radius).
+    pub const RADIUS: f32 = 0.05;
+    /// The head's neck under the skull.
+    pub const TOP_RADIUS: f32 = 0.047;
+    /// The neck's base on the torso: a hair inside the head's ball, so the
+    /// two never fight.
+    pub const BASE_RADIUS: f32 = 0.049;
+    /// How far under the head's pivot the base starts (inside the jersey).
+    pub const BASE_DEPTH: f32 = 0.07;
+    /// The base's dome top above the pivot (inside the head's neck).
+    pub const BASE_DOME: f32 = 0.03;
+}
+
+/// The node of the neck's base (on the torso, without the build's girth:
+/// the neck is as thick on every body, like the head).
+pub const NECK_BASE: &str = "neck_base";
+
+/// The head's pivot (the base of the neck; rest-pose model coordinates).
+pub fn neck_pivot() -> Vec3 {
+    v(body::TORSO_PIVOT) + Vec3::Y * body::TORSO
+}
+
+/// The neck (skin, on the head): from a half ball round the head's pivot
+/// up into the skull. Before (bug 2026-11-28) it was an open tube from 5 cm
+/// under the pivot: with the head lifted against the leaning torso (every
+/// riding pose looks up the road) its front came out of the jersey's
+/// shoulders and left a gap under the throat, worse on thin bodies.
 fn neck_skin(s: &mut Shape, detail: Detail) {
-    let neck = v(body::TORSO_PIVOT) + Vec3::Y * body::TORSO;
-    let (a, b) = (neck - Vec3::Y * 0.05, neck + Vec3::new(0.0, 0.09, -0.01));
-    s.tube(a, b, 0.05, 0.047, detail.sides(), false);
+    let a = neck_pivot();
+    let b = a + Vec3::new(0.0, 0.09, -0.01);
+    let d = (b - a).normalize();
+    let r = neck::RADIUS;
+    let base = Ring::circle(a, d, r);
+    let at = |centre: Vec3, k: f32| Ring {
+        centre,
+        u: base.u * k,
+        v: base.v * k,
+    };
+    // The half ball's rings from the bottom up to the pivot's.
+    let bands: &[f32] = if detail == Detail::High {
+        &[60.0, 30.0]
+    } else {
+        &[45.0]
+    };
+    let mut rings: Vec<Ring> = bands
+        .iter()
+        .map(|deg| {
+            let t = deg.to_radians();
+            at(a - d * (r * t.sin()), t.cos())
+        })
+        .collect();
+    rings.push(base);
+    rings.push(at(b, neck::TOP_RADIUS / r));
+    s.loft(
+        &rings,
+        detail.sides(),
+        false,
+        Cap::Point(a - d * r),
+        Cap::Open,
+    );
+}
+
+/// The neck's base (skin, on the torso's [`NECK_BASE`]): from inside the
+/// jersey up to the head's pivot, closed by a low dome inside the head's
+/// neck.
+fn neck_base_skin(s: &mut Shape, detail: Detail) {
+    let p = neck_pivot();
+    let ring = |y: f32| Ring::circle(p + Vec3::Y * y, Vec3::Y, neck::BASE_RADIUS);
+    s.loft(
+        &[ring(-neck::BASE_DEPTH), ring(0.0)],
+        detail.sides(),
+        false,
+        Cap::Open,
+        Cap::Point(p + Vec3::Y * neck::BASE_DOME),
+    );
 }
 
 /// The jaw with the chin [`face::JAW`] (skin, near model).
@@ -2465,6 +2549,12 @@ pub fn build(detail: Detail) -> Model {
         Cap::Open,
     );
     p.attach(&mut m, sash);
+    // The neck's base on the torso (bug 2026-11-28): the skin from inside
+    // the jersey up into the head's neck, whatever the head does.
+    let i = m.add(Node::new(NECK_BASE, Some(torso), Vec3::ZERO));
+    let mut p = Parts::new();
+    neck_base_skin(p.slot("skin"), detail);
+    p.attach(&mut m, i);
     // Head: neck, face (nose).
     let head = m.add(Node::new(HEAD, Some(torso), Vec3::Y * body::TORSO));
     let mut p = Parts::new();
