@@ -61,7 +61,7 @@ pub const HAIR_PIECES: [&str; 19] = [
 /// Triangle budgets of the part files (N8): a hair piece, a beard, a
 /// moustache, a base body's part.
 pub const HAIR_BUDGET: usize = 1_200;
-pub const BEARD_BUDGET: usize = 700;
+pub const BEARD_BUDGET: usize = 600;
 pub const MOUSTACHE_BUDGET: usize = 150;
 pub const BODY_PART_BUDGET: usize = 600;
 pub const HAND_BUDGET: usize = 700;

@@ -222,15 +222,15 @@ fn forms(s: Vec3) -> Vec<Blob> {
 /// as a box from the side). The last row stays near the head's joint: the
 /// head turns against the neck while riding, and a face reaching further
 /// down the throat stood out of the neck as a flap (v3, tried with −0.135).
-const ROWS: [f32; 24] = [
-    0.052, 0.043, 0.035, 0.029, 0.023, 0.017, 0.011, 0.005, -0.001, -0.007, -0.014, -0.021, -0.028,
+const ROWS: [f32; 23] = [
+    0.052, 0.035, 0.029, 0.023, 0.017, 0.011, 0.005, -0.001, -0.007, -0.014, -0.021, -0.028,
     -0.035, -0.043, -0.050, -0.056, -0.062, -0.070, -0.079, -0.087, -0.096, -0.106, -0.120,
 ];
 /// The grid's columns: the angle round the head's axis (degrees, 0 the
 /// middle of the face; mirrored).
-const COLUMNS: [f32; 13] = [
-    0.0, 3.0, 6.0, 9.5, 13.5, 18.0, 22.5, 27.0, 32.0, 38.0, 47.0, 60.0, 79.0,
-];
+/// (v3: two fewer on each side, wider over the smooth cheeks, so the
+/// heaviest look stays in the rider's budget with the gloves' cuffs.)
+const COLUMNS: [f32; 11] = [0.0, 3.0, 6.0, 9.5, 13.5, 19.0, 26.0, 35.0, 47.0, 62.0, 79.0];
 const PIVOT: f32 = -0.070;
 const TURN: f32 = 0.05;
 /// The axis the rays start from (z from the skull's centre).
@@ -664,7 +664,7 @@ fn eyes(f: &Face, p: &mut Parts) {
             (0.0042, 1.0),
             (at::IRIS, 0.42),
         ];
-        const AROUND: usize = 12;
+        const AROUND: usize = 10;
         let mut verts = vec![ball(c, side, 0.0, 0.0, rb + 0.0003)];
         let mut shades = vec![grey(0.02)];
         for (r, v) in RINGS {
