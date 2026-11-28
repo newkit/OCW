@@ -542,7 +542,7 @@ video = 8
 
 [[scene]]
 name = "tunnel-ceiling-day"
-description = "Inside the Steg tunnel (km 9.1) at noon: the sprayed-concrete vault, the light band at the foot of the walls, soot over the lanes, the cable tray with its lamps, reflectors and markings (spec 3.2, v7.13)"
+description = "Inside the Steg tunnel (km 9.1) at noon: the sprayed-concrete vault, the light band at the foot of the walls, soot over the lanes, the cable tray with its lamps, reflectors and markings (spec 3.2, v7.15)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
 riders = "active = \"Jo Climber\"\n[[rider]]\nname = \"Jo Climber\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#00838F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -551,7 +551,7 @@ shot = 9
 
 [[scene]]
 name = "tunnel-ceiling-night"
-description = "Inside the Steg tunnel (km 9.1) at night: the same view lit only by the tunnel lamps and the bike light (spec 3.2, v7.13)"
+description = "Inside the Steg tunnel (km 9.1) at night: the same view lit only by the tunnel lamps and the bike light (spec 3.2, v7.15)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "240"]
 riders = "active = \"Kai Descent\"\n[[rider]]\nname = \"Kai Descent\"\nweight_kg = 79.0\nheight_cm = 186.0\nbike = \"gravel\"\nframe_color = \"#455A64\"\njersey_color = \"#C0CA33\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -560,7 +560,7 @@ shot = 9
 
 [[scene]]
 name = "tunnel-portal-day"
-description = "The Steg tunnel's lower portal from outside (the rider waiting at route km 8.72, the portal at 8.79) on a summer afternoon: the concrete portal frame in the slope (spec 3.2, v7.13)"
+description = "The Steg tunnel's lower portal from outside (the rider waiting at route km 8.72, the portal at 8.79) on a summer afternoon: the concrete portal frame in the slope (spec 3.2, v7.15)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "0"]
 riders = "active = \"Lu Cadence\"\n[[rider]]\nname = \"Lu Cadence\"\nweight_kg = 57.0\nheight_cm = 162.0\nbike = \"road\"\nframe_color = \"#FBC02D\"\njersey_color = \"#3949AB\"\nhelmet_color = \"#3949AB\"\nkit = \"plain\"\n"
@@ -920,7 +920,7 @@ warmup = 4
 video = 13
 max_video_mb = 6
 
-# --- Andorra tunnels (spec 3.2, 4.3, v7.13) -------------------------------
+# --- Andorra tunnels (spec 3.2, 4.3, v7.15) -------------------------------
 # Before / after the same camera: OCW_TUNNELS=legacy with the live package,
 # then the shaped package (scripts/tunnels-build.sh) with the new look. Tunnel
 # km from the probes below: Ordino - Arcalís 13.05 - 13.23 (the CG-3 tunnel,
@@ -928,7 +928,7 @@ max_video_mb = 6
 
 [[scene]]
 name = "andorra-tunnel-arcalis-entry"
-description = "Ordino - Arcalís km 12.98: the CG-3 tunnel (km 13.05 - 13.23) ahead from behind and above the waiting rider; before (OCW_TUNNELS=legacy, live package) the tube stood out of the slope, after the portal is cut into the mound (spec 3.2, 4.3, v7.13)"
+description = "Ordino - Arcalís km 12.98: the CG-3 tunnel (km 13.05 - 13.23) ahead from behind and above the waiting rider; before (OCW_TUNNELS=legacy, live package) the tube stood out of the slope, after the portal is cut into the mound (spec 3.2, 4.3, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Mia Switchback\"\n[[rider]]\nname = \"Mia Switchback\"\nweight_kg = 63.0\nheight_cm = 169.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -937,7 +937,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-exit"
-description = "Ordino - Arcalís km 13.30: the CG-3 tunnel's upper portal (km 13.23) seen from the front of the waiting rider (spec 3.2, 4.3, v7.13)"
+description = "Ordino - Arcalís km 13.30: the CG-3 tunnel's upper portal (km 13.23) seen from the front of the waiting rider (spec 3.2, 4.3, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Noa Granfondo\"\n[[rider]]\nname = \"Noa Granfondo\"\nweight_kg = 77.0\nheight_cm = 183.0\nbike = \"gravel\"\nframe_color = \"#2E7D32\"\njersey_color = \"#ECEFF1\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
@@ -946,7 +946,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-gallery-arcalis-1175"
-description = "Ordino - Arcalís km 11.75: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.13)"
+description = "Ordino - Arcalís km 11.75: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Oli Echelon\"\n[[rider]]\nname = \"Oli Echelon\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#E65100\"\njersey_color = \"#1E88E5\"\nhelmet_color = \"#E65100\"\nkit = \"plain\"\n"
@@ -955,7 +955,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-gallery-arcalis-1195"
-description = "Ordino - Arcalís km 11.95: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.13)"
+description = "Ordino - Arcalís km 11.95: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Pia Bergpreis\"\n[[rider]]\nname = \"Pia Bergpreis\"\nweight_kg = 56.0\nheight_cm = 161.0\nbike = \"road\"\nframe_color = \"#D81B60\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#FFFFFF\"\nkit = \"band\"\n"
@@ -964,7 +964,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-gallery-arcalis-1215"
-description = "Ordino - Arcalís km 12.15: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.13)"
+description = "Ordino - Arcalís km 12.15: looking for the CG-3 avalanche galleries (tunnel=avalanche_protector) from behind and above (spec 3.2, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Quin Rouleur\"\n[[rider]]\nname = \"Quin Rouleur\"\nweight_kg = 85.0\nheight_cm = 190.0\nbike = \"mtb\"\nframe_color = \"#37474F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FDD835\"\nkit = \"sash\"\n"
@@ -973,7 +973,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-envalira-entry"
-description = "Andorra la Vella - Envalira km 5.06: the CG-2 tunnel (km 5.13 - 5.26) ahead from behind and above (spec 3.2, 4.3, v7.13)"
+description = "Andorra la Vella - Envalira km 5.06: the CG-2 tunnel (km 5.13 - 5.26) ahead from behind and above (spec 3.2, 4.3, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/andorra-envalira.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Rae Tempo\"\n[[rider]]\nname = \"Rae Tempo\"\nweight_kg = 68.0\nheight_cm = 174.0\nbike = \"road\"\nframe_color = \"#C62828\"\njersey_color = \"#FAFAFA\"\nhelmet_color = \"#C62828\"\nkit = \"band\"\n"
@@ -982,7 +982,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-inside-day"
-description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at noon: the new vault, light band, lamp tray, reflectors and markings (spec 3.2, v7.13)"
+description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at noon: the new vault, light band, lamp tray, reflectors and markings (spec 3.2, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Sol Climber\"\n[[rider]]\nname = \"Sol Climber\"\nweight_kg = 80.0\nheight_cm = 187.0\nbike = \"gravel\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
@@ -991,7 +991,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-inside-night"
-description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at night: its lamps (denser in the entrance zones) and the bike light (spec 3.2, v7.13)"
+description = "Inside the CG-3 tunnel (Ordino - Arcalís km 13.14) at night: its lamps (denser in the entrance zones) and the bike light (spec 3.2, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "0"]
 riders = "active = \"Tia Watts\"\n[[rider]]\nname = \"Tia Watts\"\nweight_kg = 59.0\nheight_cm = 165.0\nbike = \"road\"\nframe_color = \"#00897B\"\njersey_color = \"#F06292\"\nhelmet_color = \"#FAFAFA\"\nkit = \"plain\"\n"
@@ -1000,7 +1000,7 @@ shot = 12
 
 [[scene]]
 name = "andorra-tunnel-arcalis-video"
-description = "Video: riding through the CG-3 tunnel on the Arcalís climb (km 12.96 - 13.25) at 900 W: the portal in the slope, the tunnel camera, the lamps, out into the light (spec 3.2, v7.13)"
+description = "Video: riding through the CG-3 tunnel on the Arcalís climb (km 12.96 - 13.25) at 900 W: the portal in the slope, the tunnel camera, the lamps, out into the light (spec 3.2, v7.15)"
 world = "andorra"
 args = ["--world", "{world}", "--route-file", "{world_dir}/ordino-arcalis.route", "--bots", "0", "--power", "900", "--window", "1920x1080"]
 riders = "active = \"Mia Switchback\"\n[[rider]]\nname = \"Mia Switchback\"\nweight_kg = 63.0\nheight_cm = 169.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
@@ -6302,6 +6302,50 @@ args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots"
 at = ["0.5=time 2026-07-15 17:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body c --hair ponytail --hair-colour #D8B26E --skin 3", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,arrival,split --below 700 --in 10", "4=air.follow unicorn 21 6 16", "4=air.follow key 0 -48 9 62 0 1 0", "4=air.follow key 6 -44 7 56 0 1 0", "4=air.follow key 12 -42 6 52 0 1 0", "14=air.follow play"]
 warmup = 14
 video = 12
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-gear-tenerife-takeoff-video"
+description = "Video, 1080p: an airliner's take-off at Tenerife from beside the runway – the run, the lift-off and the gear swinging up into its bays a few seconds later, the climb-out with clean belly (v7.08: gear by the flight's phase); the unicorn flies ahead of it on the camera's side, apart from the aircraft in the picture (air.follow pick airliner,departure)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 10:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body b --hair long --hair-colour #3B2A20 --skin 4 --glasses 2", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,departure --below 3 --in 8", "4=air.follow unicorn -25 14 32", "4=air.follow key 0 -60 6 40 0 1 0", "4=air.follow key 10 -55 8 35 0 1 0", "4=air.follow key 22 -50 10 30 0 1 0", "4=air.follow key 26 -48 12 20 0 1 0", "12=air.follow play"]
+warmup = 12
+video = 24
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-gear-tenerife-landing-video"
+description = "Video, 1080p: an airliner on final into Tenerife, about 9 km out and 500 m up – gear and doors still up, then the gear swinging down over five seconds (v7.08: down only on final, the last ~2 minutes before touchdown); the unicorn flies ahead of it on the camera's side, apart from the aircraft in the picture (air.follow pick airliner,arrival)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 17:00", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair short --hair-colour #8D5524 --skin 9", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,arrival --below 540 --in 6", "4=air.follow unicorn -18 12 30", "4=air.follow key 0 -45 -6 35 0 1 0", "4=air.follow key 10 -42 -8 30 0 1 0", "4=air.follow key 20 -40 -9 26 0 1 0", "12=air.follow play"]
+warmup = 12
+video = 22
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-rotor-tenerife-helicopter-medium-spool-video"
+description = "Video, 720p: the medium transport helicopter on its heliport pad spooling up (25 s from standing blades to flight rpm, ~215 rpm main, ~1,150 rpm tail) and lifting off – the blades turn solid while slow, then blur into a translucent disc as they reach speed (v7.08); the unicorn stands off to the side, apart from it in the picture (air.follow pick helicopter,medium,tour)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1280x720"]
+at = ["0.5=time 2026-07-15 13:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body c --hair afro --hair-colour #1A1A1A --skin 14", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,medium,tour --below 1 --in 30", "4=air.follow unicorn -10 9 18", "4=air.follow key 0 -24 13 22 0 3 0", "4=air.follow key 34 -22 15 20 0 3 0", "10=air.follow play"]
+warmup = 10
+video = 36
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-rotor-tenerife-helicopter-light-video"
+description = "Video, 720p: the light helicopter lifting off from a Tenerife pad – its three-blade rotor (~450 rpm) and tail rotor (~2,000 rpm) spooling up and blurring into discs (v7.08); the unicorn off to the side, apart from it in the picture (air.follow pick helicopter,light,tour)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1280x720"]
+at = ["0.5=time 2026-07-15 13:00", "0.5=weather clear wind=4 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --body a --hair bun --hair-colour #B3482A --skin 2", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter,light,tour --below 1 --in 20", "4=air.follow unicorn -6 6 12", "4=air.follow key 0 -14 9 13 0 1.5 0", "4=air.follow key 26 -13 10 12 0 1.5 0", "10=air.follow play"]
+warmup = 10
+video = 26
 max_video_mb = 30
 pick = false
 

@@ -16,10 +16,11 @@ kill_timeout = "10s"
 
 [env]
   # The world the session rides (on the volume) and more server options
-  # (`ocw-server --help`): no server-side bots, the Echo rider for the
-  # voice echo test.
+  # (`ocw-server --help`): 10 server bots riding the roads at different
+  # strengths (85 – 280 W, BOT_POWERS_W), the Echo rider for the voice echo
+  # test.
   OCW_WORLD = "/data/worlds/pilot/liechtenstein.ocwpkg"
-  OCW_SERVER_ARGS = "--bots 0 --echo-bot"
+  OCW_SERVER_ARGS = "--bots 10 --echo-bot"
 
 # World packages, the server's TLS identity, the voice server's logs.
 [mounts]
