@@ -25,8 +25,8 @@ use crate::pose::{RiderRig, nodes};
 use crate::rider::{self, Detail};
 
 /// How far round the neck's core the rays pass (m): well inside the
-/// neck's skin ([`rider::neck::BASE_RADIUS`]) as drawn with the near
-/// model's eight sides, and the far model's four.
+/// neck's skin ([`rider::neck::RINGS`], at least 4.4 cm by 4.7 cm round)
+/// as drawn with the near model's twelve sides and the far model's six.
 pub fn probe_radius(detail: Detail) -> f32 {
     match detail {
         Detail::High => 0.03,
@@ -80,13 +80,11 @@ pub fn head_turns(rig: &RiderRig) -> Vec<Quat> {
 /// gap), within `reach` of the head's pivot.
 pub fn surfaces(m: &Model, body: &Character, turn: Quat, reach: f32) -> Vec<[Vec3; 3]> {
     let optional = rider::optional();
-    let (Some(torso), Some(head)) = (m.node(nodes::TORSO), m.node(nodes::HEAD)) else {
+    let Some(torso) = m.node(nodes::TORSO) else {
         return Vec::new();
     };
-    let pivot = m.world(head).translation.into();
-    let around = Affine3A::from_translation(pivot)
-        * Affine3A::from_quat(turn)
-        * Affine3A::from_translation(-pivot);
+    let worlds = posed(m, turn);
+    let pivot = neck_joint(m);
     let below = |i: usize, top: usize| {
         let mut at = Some(i);
         while let Some(n) = at {
@@ -120,11 +118,7 @@ pub fn surfaces(m: &Model, body: &Character, turn: Quat, reach: f32) -> Vec<[Vec
         if !shown {
             continue;
         }
-        let w = if below(i, head) {
-            around * m.world(i)
-        } else {
-            m.world(i)
-        };
+        let w = worlds[i];
         let (s, t) = rider::girth_transform(m, i, body);
         for p in &node.primitives {
             let pts: Vec<Vec3> = p
@@ -141,6 +135,38 @@ pub fn surfaces(m: &Model, body: &Character, turn: Quat, reach: f32) -> Vec<[Vec
         }
     }
     out
+}
+
+/// The model-space transforms of the nodes of `m` with the head turned
+/// `turn` against the torso (the rest of the body at rest): the neck and
+/// the head each take their share ([`crate::pose::neck_split`]).
+pub fn posed(m: &Model, turn: Quat) -> Vec<Affine3A> {
+    let mut k = Model {
+        nodes: m
+            .nodes
+            .iter()
+            .map(|n| crate::model::Node {
+                primitives: Vec::new(),
+                ..n.clone()
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let (neck, head) = crate::pose::neck_split(turn);
+    for (name, q) in [(nodes::NECK, neck), (nodes::HEAD, head)] {
+        if let Some(i) = k.node(name) {
+            k.nodes[i].rotation = q;
+        }
+    }
+    (0..k.nodes.len()).map(|i| k.world(i)).collect()
+}
+
+/// The neck's joint (rest-pose model coordinates; the head's for a model
+/// without a neck node).
+pub fn neck_joint(m: &Model) -> Vec3 {
+    m.node(nodes::NECK)
+        .or_else(|| m.node(nodes::HEAD))
+        .map_or(Vec3::ZERO, |i| m.world(i).translation.into())
 }
 
 /// Where a ray from `o` along `d` meets the front of triangle `t` (its
@@ -194,25 +220,27 @@ pub struct Gap {
     pub dir: Vec3,
 }
 
-/// The neck's core with the head turned by `turn`: from inside the jersey
-/// (3.5 cm under the pivot, along the torso) up the head's neck (4.5 cm
-/// along the turned head).
+/// The neck's core with the head turned by `turn`: from inside the
+/// jersey's collar (3.5 cm under the neck's joint, along the torso) up the
+/// bent neck to its top under the skull.
 pub fn core(pivot: Vec3, turn: Quat) -> Vec<Vec3> {
-    let up = turn * Vec3::Y;
+    let (neck, _) = crate::pose::neck_split(turn);
+    let up = neck * Vec3::Y;
     vec![
         pivot - Vec3::Y * 0.035,
         pivot - Vec3::Y * 0.018,
         pivot,
-        pivot + up * 0.02,
-        pivot + up * 0.045,
+        pivot + up * 0.025,
+        pivot + up * 0.05,
+        pivot + up * 0.075,
     ]
 }
 
 /// The first ray through the neck's core that meets no front face (the
 /// background seen between the neck and the jersey), or `None`.
 pub fn gap(m: &Model, detail: Detail, body: &Character, turn: Quat) -> Option<Gap> {
-    let head = m.node(nodes::HEAD)?;
-    let pivot: Vec3 = m.world(head).translation.into();
+    m.node(nodes::HEAD)?;
+    let pivot = neck_joint(m);
     let tris = surfaces(m, body, turn, 0.4);
     let r = probe_radius(detail);
     for at in core(pivot, turn) {
@@ -307,47 +335,17 @@ mod tests {
         assert!(f.is_empty(), "{} gaps:\n{}", f.len(), f.join("\n"));
     }
 
-    /// The check finds the old neck's gap: an open tube from 5 cm under
-    /// the pivot on the head, no base on the torso – its front leaves the
-    /// jersey when the head looks up the road from a leaning torso.
+    /// The check finds a missing neck: without the neck's skin the riding
+    /// turn shows the background between the jersey and the skull.
     #[test]
-    fn the_check_finds_the_old_necks_gap() {
-        use crate::mesh::Parts;
+    fn the_check_finds_a_missing_neck() {
         let mut m = rider::build(Detail::High);
-        let head = m.node(nodes::HEAD).unwrap();
-        let base = m.node(rider::NECK_BASE).unwrap();
-        m.nodes[base].primitives.clear();
-        let skin = m.material("skin").unwrap();
-        // The head's skin without the new neck: replaced by the old tube.
-        let mut p = Parts::new();
-        let a = rider::neck_pivot();
-        p.slot("skin").tube(
-            a - Vec3::Y * 0.05,
-            a + Vec3::new(0.0, 0.09, -0.01),
-            0.05,
-            0.047,
-            8,
-            false,
-        );
-        p.slot("skin").ellipsoid(
-            rider::skull_centre(),
-            Vec3::from(rider::SKULL_RADII),
-            Quat::IDENTITY,
-            7,
-            8,
-        );
-        m.nodes[head].primitives.retain(|q| q.material != skin);
-        p.attach(&mut m, head);
         let c = Character::default();
-        assert!(
-            gap(&m, Detail::High, &c, Quat::IDENTITY).is_none(),
-            "at rest"
-        );
-        // Riding on the hoods: the head lifted ~0.8 rad against the torso.
-        assert!(gap(&m, Detail::High, &c, Quat::from_rotation_x(0.8)).is_some());
-        // The new neck holds.
-        let m = rider::build(Detail::High);
-        assert!(gap(&m, Detail::High, &c, Quat::from_rotation_x(0.8)).is_none());
+        let hoods = Quat::from_rotation_x(0.8);
+        assert!(gap(&m, Detail::High, &c, hoods).is_none());
+        let neck = m.node(nodes::NECK).unwrap();
+        m.nodes[neck].primitives.clear();
+        assert!(gap(&m, Detail::High, &c, hoods).is_some());
     }
 
     /// How many head turns show a gap in the shipped files, per build
@@ -382,18 +380,77 @@ mod tests {
         }
     }
 
-    /// The neck's base is not widened or narrowed with the build.
+    /// The neck follows a share of the build's girth: thicker on a heavy
+    /// build, slimmer on a thin one, never the head's (which keeps 1).
     #[test]
-    fn the_neck_base_keeps_its_girth() {
+    fn the_neck_follows_the_build() {
         use ocw_core::BodyShape;
         let m = rider::build(Detail::High);
-        let i = m.node(rider::NECK_BASE).unwrap();
-        for shape in BodyShape::ALL {
+        let i = m.node(nodes::NECK).unwrap();
+        let g = |shape| {
             let c = Character {
                 shape,
                 ..Character::default()
             };
-            assert_eq!(rider::girth(&m, i, &c), Vec3::ONE);
+            rider::girth(&m, i, &c).x
+        };
+        assert_eq!(g(BodyShape::Normal), 1.0);
+        assert!(g(BodyShape::SuperSkinny) < 0.95 && g(BodyShape::SuperSkinny) > 0.9);
+        assert!(g(BodyShape::Obese) > 1.08 && g(BodyShape::Obese) < 1.15);
+    }
+
+    /// The neck is one smooth skin (bug 2026-11-28: "do not make the skin
+    /// color different"): one primitive in the head's skin material, every
+    /// position with one normal (no hard edge), the normals of the throat
+    /// turning less than 35 degrees from ring to ring, near and far, in the
+    /// generator and the files.
+    #[test]
+    fn the_neck_is_one_smooth_skin() {
+        for (what, m) in [
+            ("near", std::sync::Arc::new(rider::build(Detail::High))),
+            ("far", std::sync::Arc::new(rider::build(Detail::Low))),
+            ("near file", crate::shipped::model(crate::RIDER_ID)),
+            ("far file", crate::shipped::model(crate::RIDER_LOW_ID)),
+        ] {
+            let skin = m.material("skin").expect("skin");
+            let head = m.node(nodes::HEAD).unwrap();
+            assert!(
+                m.nodes[head].primitives.iter().any(|p| p.material == skin),
+                "{what}: the head's skin"
+            );
+            let neck = &m.nodes[m.node(nodes::NECK).unwrap()];
+            assert_eq!(neck.primitives.len(), 1, "{what}");
+            let p = &neck.primitives[0];
+            assert_eq!(p.material, skin, "{what}: the head's skin material");
+            let mut seen: Vec<([f32; 3], [f32; 3])> = Vec::new();
+            for (q, n) in p.positions.iter().zip(&p.normals) {
+                for (q2, n2) in &seen {
+                    if Vec3::from(*q).distance(Vec3::from(*q2)) < 1e-5 {
+                        assert!(
+                            Vec3::from(*n).distance(Vec3::from(*n2)) < 1e-3,
+                            "{what}: a hard edge at {q:?}"
+                        );
+                    }
+                }
+                seen.push((*q, *n));
+            }
+            // The front line of the neck (the throat): the vertex nearest
+            // the front on each ring (the node's frame is the neck's joint),
+            // bottom to top.
+            let front: Vec<Vec3> = rider::neck::RINGS
+                .iter()
+                .map(|r| {
+                    (0..p.positions.len())
+                        .filter(|&k| (p.positions[k][1] - r[0]).abs() < 0.004)
+                        .min_by(|&a, &b| p.positions[a][2].total_cmp(&p.positions[b][2]))
+                        .map(|k| Vec3::from(p.normals[k]))
+                        .unwrap_or_else(|| panic!("{what}: the ring at {}", r[0]))
+                })
+                .collect();
+            for w in front.windows(2) {
+                let a = w[0].angle_between(w[1]).to_degrees();
+                assert!(a < 35.0, "{what}: the throat's shading steps {a} degrees");
+            }
         }
     }
 }

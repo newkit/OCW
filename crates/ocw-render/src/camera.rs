@@ -462,8 +462,13 @@ impl CloseUpShot {
 }
 
 /// The face's centre in the head node's frame (the node's origin is the
-/// neck's pivot; `ocw_assets::pose::EYES` are a little above and ahead).
-pub const FACE_IN_HEAD: Vec3 = Vec3::new(0.0, 0.09, -0.04);
+/// head's joint under the skull, `ocw_assets::rider::HEAD_JOINT` above the
+/// neck's; `ocw_assets::pose::EYES` are a little above and ahead).
+pub const FACE_IN_HEAD: Vec3 = Vec3::new(
+    0.0,
+    0.09 - ocw_assets::rider::HEAD_JOINT[1],
+    -0.04 - ocw_assets::rider::HEAD_JOINT[2],
+);
 
 /// The vertical extent of the head the close-up keeps in the picture
 /// (m: chin to helmet top, about).

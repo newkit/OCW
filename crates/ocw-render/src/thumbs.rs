@@ -623,13 +623,15 @@ pub fn head_centre(scale: f32, hunch: f32) -> Vec3 {
     let rig = ocw_assets::shipped::rider_rig();
     let p = ocw_assets::pose::idle_aged(&rig, 0.0, hunch);
     let torso = p.pelvis.1 * p.torso;
-    let neck = p.pelvis.0 + p.pelvis.1 * rig.torso + torso * rig.neck;
+    let head = p.pelvis.0 + p.pelvis.1 * rig.torso + torso * rig.head_joint(p.head);
     // The head's middle, halfway between chin and crown, in the head's
-    // frame over the rig's neck pivot – calibrated against the rendered
-    // tiles (2026-11-17: the eyes show about 0.165 m over this pivot, the
+    // frame over the neck's joint – calibrated against the rendered tiles
+    // (2026-11-17: the eyes show about 0.165 m over the neck's joint, the
     // head's middle at their height; 0.10 m put the head high in the
-    // picture, a fixed 1.66 m a little low).
-    let mid = neck + torso * p.head * Vec3::new(0.0, 0.158, -0.02);
+    // picture, a fixed 1.66 m a little low); from the head's joint
+    // (`HEAD_JOINT` above the neck's, bug 2026-11-28) that much less.
+    let j = ocw_assets::rider::HEAD_JOINT;
+    let mid = head + torso * p.head * Vec3::new(0.0, 0.158 - j[1], -0.02 - j[2]);
     // The model's root is at the hips, the feet `leg - cleat.y` below.
     (mid + Vec3::Y * (rig.leg() - rig.cleat.y)) * scale
 }
