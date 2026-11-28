@@ -22,6 +22,7 @@ import bevy_pbr::render::{
     mesh_view_bindings as view_bindings,
     mesh_view_types,
     mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
+    shadows,
 };
 
 struct TerrainShadow {
@@ -102,8 +103,36 @@ fn sun_direct(pbr: PbrInput) -> vec3<f32> {
     return lighting::directional_light(0u, &li, true);
 }
 
+// The last part of the cascades' reach over which their shadow fades out
+// (a share of the last cascade's far bound): the trees' and riders'
+// shadows end softly, not at a line across the ground.
+const CASCADE_FADE: f32 = 0.2;
+
+// How far the fragment is into the cascades' fade-out (0 inside, 1 at and
+// beyond their end; 1 without cascades).
+fn cascade_fade(p: vec4<f32>) -> f32 {
+    let light = &view_bindings::lights.directional_lights[0];
+    let n = (*light).num_cascades;
+    if n == 0u {
+        return 1.0;
+    }
+    let view_z = dot(vec4<f32>(
+        view_bindings::view.view_from_world[0].z,
+        view_bindings::view.view_from_world[1].z,
+        view_bindings::view.view_from_world[2].z,
+        view_bindings::view.view_from_world[3].z
+    ), p);
+    let far = (*light).cascades[n - 1u].far_bound;
+    return smoothstep((1.0 - CASCADE_FADE) * far, far, -view_z);
+}
+
 // `apply_pbr_lighting` with the terrain's shadow on the sun (the one
-// directional light, `sky::Sun`).
+// directional light, `sky::Sun`). Inside the cascades the terrain's
+// visibility multiplies their shadow; in their last 20 % the cascades'
+// shadow fades out (the fragment's shadow is then done here: Bevy's is
+// switched off and the shaded part of the sun's direct light taken out);
+// beyond them only the terrain's; without shadow maps (the phones) the
+// terrain's shadow is taken out the same way.
 fn lit(pbr: PbrInput) -> vec4<f32> {
     var input = pbr;
     let v = terrain_sun(input.world_position.xyz);
@@ -114,13 +143,35 @@ fn lit(pbr: PbrInput) -> vec4<f32> {
             && (view_bindings::lights.directional_lights[0].flags
                 & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
     }
+    var sun = v;
     if casts {
-        input.directional_shadow_factor = input.directional_shadow_factor * v;
+        let fade = cascade_fade(input.world_position);
+        if fade <= 0.0 || fade >= 1.0 {
+            // Bevy's own path (beyond the cascades it shadows nothing).
+            input.directional_shadow_factor = input.directional_shadow_factor * v;
+            return apply_pbr_lighting(input);
+        }
+        let view_z = dot(vec4<f32>(
+            view_bindings::view.view_from_world[0].z,
+            view_bindings::view.view_from_world[1].z,
+            view_bindings::view.view_from_world[2].z,
+            view_bindings::view.view_from_world[3].z
+        ), input.world_position);
+        let cascade = shadows::fetch_directional_shadow(
+            0u,
+            input.world_position,
+            input.world_normal,
+            view_z,
+            input.frag_coord.xy
+        );
+        sun = v * mix(cascade, 1.0, fade) * input.directional_shadow_factor;
+        // From here on the shadow is ours.
+        input.flags = input.flags & ~MESH_FLAGS_SHADOW_RECEIVER_BIT;
     }
     var c = apply_pbr_lighting(input);
-    if !casts && n > 0u && v < 0.999 {
+    if n > 0u && sun < 0.999 {
         let direct = view_bindings::view.exposure * sun_direct(input);
-        c = vec4<f32>(max(c.rgb - (1.0 - v) * direct, vec3<f32>(0.0)), c.a);
+        c = vec4<f32>(max(c.rgb - (1.0 - sun) * direct, vec3<f32>(0.0)), c.a);
     }
     return c;
 }
