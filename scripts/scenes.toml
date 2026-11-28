@@ -6238,10 +6238,10 @@ pick = false
 
 [[scene]]
 name = "live-road-tf5-statistics"
-description = "Before: the TF-5 east of Icod de los Vinos from the unicorn 60 m above the road east of the stretch, looking west along it, with busy road traffic from the statistics (Live traffic data off): free flow both ways; a rider on a white road bike in a stripes kit"
+description = "Before: the TF-5 east of Icod de los Vinos from above (the rider stands in the lane, so vehicles also wait behind them), with busy road traffic from the statistics (Live traffic data off): free flow both ways; a rider on a white road bike in a stripes kit"
 world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-23372,-7617", "--bots", "0", "--power", "0"]
-at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body b --hair ponytail --hair-colour #3B2A1A --skin 3", "0.6=set --temp traffic.live_road off", "2=god.flight hover", "3=god on", "3.4=god.view first", "3.5=god.pose -23130 -7640 60 270 -18", "4=traffic road busy"]
+at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body b --hair ponytail --hair-colour #3B2A1A --skin 3", "0.6=set --temp traffic.live_road off", "2=camera.orbit 180 72 520", "4=traffic road busy"]
 shot = 50
 pick = false
 
@@ -6250,7 +6250,7 @@ name = "live-road-tf5-jam"
 description = "After: the same stretch with Live traffic data on – the DGT's reported stationary jam westbound (km 60.5 – 60.0) as a queue at walking pace towards Icod while the eastbound side flows; \"Live traffic: Fuente: DGT\" in the HUD; a rider on a green gravel bike in a chevron kit"
 world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-23372,-7617", "--bots", "0", "--power", "0"]
-at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body a --hair short --hair-colour #C9A26B --skin 2 --beard 1", "0.6=set --temp traffic.live_road on", "2=god.flight hover", "3=god on", "3.4=god.view first", "3.5=god.pose -23130 -7640 60 270 -18", "4=traffic road busy"]
+at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body a --hair short --hair-colour #C9A26B --skin 2 --beard 1", "0.6=set --temp traffic.live_road on", "2=camera.orbit 180 72 520", "4=traffic road busy"]
 shot = 50
 pick = false
 
@@ -6259,7 +6259,7 @@ name = "live-road-tf5-jam-video"
 description = "Video: the reported jam on the TF-5 (Live traffic data on, the DGT's feed) – cars and lorries creeping westbound in the queue, the other side flowing; a rider on a blue time-trial bike in a sash kit"
 world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-23372,-7617", "--bots", "0", "--power", "0"]
-at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body b --hair ponytail --hair-colour #111111 --skin 5", "0.6=set --temp traffic.live_road on", "2=god.flight hover", "3=god on", "3.4=god.view first", "3.5=god.pose -23250 -7630 25 270 -12", "4=traffic road busy"]
+at = ["0.3=time 2026-11-28 17:30", "0.3=weather clear", "0.5=character --body b --hair ponytail --hair-colour #111111 --skin 5", "0.6=set --temp traffic.live_road on", "2=camera.orbit 150 38 110", "4=traffic road busy"]
 warmup = 30
 video = 8
 pick = false
