@@ -478,14 +478,14 @@ test-kiosk-windows: ## The Windows VR kiosk script (scripts/ocw-kiosk.ps1): Powe
 test-vr-monado: ## VR: `ocw-desktop --vr` (vr build) against Monado's simulated headset, headless (spec §14 Phase 11 X1; skipped while Monado and the OpenXR loader are not installed)
 	scripts/test-vr-monado.sh
 
-remote-gc: ## Build machines: list the target/ of merged or gone agent checkouts and their size (GC=1 deletes them; MACHINES="a b" limits)
+remote-gc: ## Build machines: dry run of the cleanup rules – stale checkouts' target/, old checkouts, leftovers, per class with reasons (GC=1 deletes; MACHINES="a b" limits; the janitor does it daily)
 	GC=$(GC) scripts/remote-gc.sh $(MACHINES)
 
 remote-gc-branch: ## Cleanup on merge: delete the target/ of BRANCH's checkout on every reachable build machine (DRY=1: only list)
 	@[ -n "$(BRANCH)" ] || { echo "usage: make remote-gc-branch BRANCH=<branch> [DRY=1]" >&2; exit 2; }
 	scripts/remote-gc.sh --branch $(BRANCH) $(if $(DRY),--dry-run) $(MACHINES)
 
-janitor-plan: ## Dry run of the dashboard's disk janitor on every reachable machine: what each threshold would delete
+janitor-plan: ## Dry run of the dashboard's disk janitor on every reachable machine: what the routine pass and each disk threshold would delete
 	python3 tools/build-dashboard/dashboard.py --janitor-plan --no-record
 
 windows-move-toolchain: ## Windows MACHINE: dry run of moving CARGO_HOME, RUSTUP_HOME, sccache from C: to B:\toolchain (APPLY=1 moves)
