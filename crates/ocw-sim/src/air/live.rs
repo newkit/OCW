@@ -253,6 +253,7 @@ pub fn now(
                     rotor: rotor(a.kind),
                     burner,
                     look: mix(id) as u32,
+                    model: super::pick_model(a.kind, mission, id),
                     trail,
                 },
             ))

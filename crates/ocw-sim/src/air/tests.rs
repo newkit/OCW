@@ -606,3 +606,54 @@ fn arrivals_land_apart() {
         assert!(w[1] - w[0] >= 0.7 * period - 1.0, "{} s apart", w[1] - w[0]);
     }
 }
+
+/// The second narrow-body and the medium transport helicopter fly by the
+/// seed (18G, the user's reference photos 2026-11-28): about half the
+/// airliners are the split-winglet twinjet and about half the helicopter
+/// tours the medium transport helicopter; rescue flights keep the light
+/// helicopter; the choice is the same on every client and kept from the
+/// flight into what is drawn.
+#[test]
+fn the_aircraft_variants_are_picked_by_seed() {
+    let space = space();
+    let w = WeatherState {
+        wind_mps: 1.5,
+        ..summer()
+    };
+    let mut airliners = [0usize; 2];
+    let mut tours = [0usize; 2];
+    for seed in [7, 8, 9, 10] {
+        let all = day_flights(&space, &w, seed, DAY0);
+        assert_eq!(all, day_flights(&space, &w, seed, DAY0), "deterministic");
+        for f in all.values() {
+            assert_eq!(f.model, pick_model(f.kind, f.mission, f.id));
+            assert!(f.kind.model_ids().contains(&f.model_id()));
+            match (f.kind, f.mission) {
+                (AirKind::Airliner, _) => airliners[usize::from(f.model)] += 1,
+                (AirKind::Helicopter, Mission::Tour) => tours[usize::from(f.model)] += 1,
+                (AirKind::Helicopter, Mission::Rescue) => {
+                    assert_eq!(f.model_id(), "vehicles/helicopter-light")
+                }
+                _ => assert_eq!(f.model, 0, "{:?}", f.kind),
+            }
+        }
+    }
+    let share = |c: [usize; 2]| c[1] as f64 / (c[0] + c[1]).max(1) as f64;
+    assert!(airliners[0] + airliners[1] > 20, "{airliners:?}");
+    assert!((0.3..0.7).contains(&share(airliners)), "{airliners:?}");
+    assert!(tours[0] + tours[1] >= 4, "{tours:?}");
+    assert!(tours[0] > 0 && tours[1] > 0, "{tours:?}");
+    // Drawn with the flight's model.
+    let mut sky = AirSky::default();
+    let mut seen = false;
+    for k in 0..48 {
+        let t = DAY0 + 6.0 * 3600.0 + f64::from(k) * 600.0;
+        for a in sky.now(&space, &inputs(&w, 7, t)) {
+            assert!(a.kind.model_ids().contains(&a.model_id()));
+            seen |= a.model == 1;
+        }
+    }
+    assert!(seen, "a variant drawn over a day");
+    // Out of range: the default.
+    assert_eq!(AirKind::Glider.model_of(3), "vehicles/glider-sailplane");
+}

@@ -260,7 +260,7 @@ struct Spinner {
     parts: Vec<Part>,
 }
 
-/// One kind's meshes.
+/// One model's meshes (a kind has one or more, 18G).
 #[derive(Clone)]
 struct KindModel {
     near: Vec<Part>,
@@ -274,7 +274,8 @@ struct KindModel {
 
 #[derive(Resource, Default)]
 struct AirModels {
-    kinds: HashMap<AirKind, KindModel>,
+    /// By model id ([`AircraftNow::model_id`]).
+    kinds: HashMap<&'static str, KindModel>,
     materials: HashMap<(String, [u32; 4], bool), Handle<StandardMaterial>>,
     dot: Option<Handle<Mesh>>,
     dots: HashMap<Lamp, Handle<StandardMaterial>>,
@@ -506,8 +507,10 @@ fn ensure_models(
         return;
     }
     for k in AirKind::ALL {
-        let m = ocw_assets::shipped::model(k.model_id());
-        models.kinds.insert(k, kind_model(&m, meshes));
+        for &id in k.model_ids() {
+            let m = ocw_assets::shipped::model(id);
+            models.kinds.insert(id, kind_model(&m, meshes));
+        }
     }
     models.dot = Some(meshes.add(Sphere::new(1.0).mesh().ico(1).expect("ico sphere")));
     for l in [
@@ -625,7 +628,11 @@ fn sync_aircraft(
     let mut info: HashMap<u64, (&AircraftNow, f32)> = HashMap::new();
     for a in list {
         let pos = Vec3::new(a.pos[0] as f32, a.pos[1] as f32, a.pos[2] as f32);
-        let km = models.kinds.get(&a.kind).cloned().expect("every kind");
+        let km = models
+            .kinds
+            .get(a.model_id())
+            .cloned()
+            .expect("every model");
         let scale = draw_scale(eye.distance(pos), focal, km.size_m);
         info.insert(a.id, (a, scale));
         if let Some(&e) = planes.roots.get(&a.id) {
@@ -1020,6 +1027,7 @@ mod tests {
             rotor: 1.0,
             burner: false,
             look: 1,
+            model: 0,
             trail: None,
         }
     }
@@ -1091,17 +1099,67 @@ mod tests {
     fn aircraft_are_drawn_at_their_true_size() {
         // (kind, span range (x), length range (z), height range (y)), m.
         type Range = (f32, f32);
-        let real: [(AirKind, Range, Range, Range); 5] = [
-            (AirKind::Airliner, (33.0, 40.0), (35.0, 42.0), (9.0, 14.0)),
-            (AirKind::SmallPlane, (9.5, 12.0), (7.0, 9.5), (2.2, 3.5)),
+        let real: [(&str, Range, Range, Range, Range); 7] = [
+            (
+                "vehicles/airliner-twinjet",
+                (33.0, 40.0),
+                (35.0, 42.0),
+                (9.0, 14.0),
+                (0.0, 0.0),
+            ),
+            (
+                "vehicles/airliner-twinjet-split-winglet",
+                (33.0, 40.0),
+                (35.0, 42.0),
+                (9.0, 14.0),
+                (0.0, 0.0),
+            ),
+            (
+                "vehicles/plane-high-wing",
+                (9.5, 12.0),
+                (7.0, 9.5),
+                (2.2, 3.5),
+                (0.0, 0.0),
+            ),
             // The rotor's blades are not along x at rest: its disc below.
-            (AirKind::Helicopter, (8.5, 12.0), (9.5, 13.5), (2.8, 4.0)),
-            (AirKind::Glider, (14.0, 19.0), (6.0, 8.5), (1.0, 2.0)),
+            (
+                "vehicles/helicopter-light",
+                (8.5, 12.0),
+                (9.5, 13.5),
+                (2.8, 4.0),
+                (8.5, 12.0),
+            ),
+            // The medium transport: a rotor of ~19 m, ~21 m with it.
+            (
+                "vehicles/helicopter-medium-transport",
+                (15.0, 20.0),
+                (18.0, 23.0),
+                (5.0, 6.8),
+                (16.0, 20.0),
+            ),
+            (
+                "vehicles/glider-sailplane",
+                (14.0, 19.0),
+                (6.0, 8.5),
+                (1.0, 2.0),
+                (0.0, 0.0),
+            ),
             // The envelope ~18 m and the basket under it: ~21–24 m overall.
-            (AirKind::Balloon, (13.0, 20.0), (13.0, 20.0), (15.0, 25.0)),
+            (
+                "vehicles/balloon-hot-air",
+                (13.0, 20.0),
+                (13.0, 20.0),
+                (15.0, 25.0),
+                (0.0, 0.0),
+            ),
         ];
-        for (k, span, len, high) in real {
-            let m = ocw_assets::shipped::model(k.model_id());
+        for k in AirKind::ALL {
+            for id in k.model_ids() {
+                assert!(real.iter().any(|r| r.0 == *id), "{id} has its sizes here");
+            }
+        }
+        for (k, span, len, high, rotor) in real {
+            let m = ocw_assets::shipped::model(k);
             let (lo, hi) = m.near_bounds().expect("near model");
             let d = hi - lo;
             let within = |v: f32, (a, b): (f32, f32)| (a..=b).contains(&v);
@@ -1112,12 +1170,12 @@ mod tests {
                 d.z,
                 d.y
             );
-            if k == AirKind::Helicopter {
+            if rotor.1 > 0.0 {
                 let r = m.node("rotor_main").expect("rotor");
                 let (rlo, rhi) = m.bounds_where(|i| m.is_below(i, r)).expect("rotor");
                 // The blades' widest extent: at most the disc's diameter.
                 let blades = (rhi - rlo).max_element();
-                assert!((8.5..=12.0).contains(&blades), "rotor {blades:.1} m");
+                assert!(within(blades, rotor), "{k}: rotor {blades:.1} m");
             }
             let lod = m.node("lod1").expect("lod1");
             let (flo, fhi) = m.bounds_where(|i| m.is_below(i, lod)).expect("far model");
@@ -1134,8 +1192,11 @@ mod tests {
         // 1080 rows at the default field of view (~45°): ~1300 px per rad.
         let focal = 1080.0 / (2.0 * (0.785f32 / 2.0).tan());
         let mut meshes = Assets::<Mesh>::default();
-        for k in AirKind::ALL {
-            let km = kind_model(&ocw_assets::shipped::model(k.model_id()), &mut meshes);
+        for (k, id) in AirKind::ALL
+            .into_iter()
+            .flat_map(|k| k.model_ids().iter().map(move |id| (k, *id)))
+        {
+            let km = kind_model(&ocw_assets::shipped::model(id), &mut meshes);
             // True size alongside, at the switch to lod1 and well past it.
             for d in [0.0, 5.0, 30.0, 120.0, lod_m(k), 3.0 * lod_m(k)] {
                 assert_eq!(draw_scale(d, focal, km.size_m), 1.0, "{k:?} at {d} m");
@@ -1152,9 +1213,12 @@ mod tests {
     #[test]
     fn every_aircraft_model_has_its_parts() {
         let mut meshes = Assets::<Mesh>::default();
-        for k in AirKind::ALL {
-            let m = kind_model(&ocw_assets::shipped::model(k.model_id()), &mut meshes);
-            assert!(!m.near.is_empty() && !m.far.is_empty(), "{k:?}");
+        for (k, id) in AirKind::ALL
+            .into_iter()
+            .flat_map(|k| k.model_ids().iter().map(move |id| (k, *id)))
+        {
+            let m = kind_model(&ocw_assets::shipped::model(id), &mut meshes);
+            assert!(!m.near.is_empty() && !m.far.is_empty(), "{id}");
             match k {
                 AirKind::Airliner => {
                     assert!(!m.gear.is_empty());

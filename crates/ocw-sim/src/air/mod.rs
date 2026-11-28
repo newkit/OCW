@@ -61,15 +61,35 @@ impl AirKind {
         Self::Balloon,
     ];
 
-    /// The model's id in `artwork/3dmodels/` (T6).
-    pub fn model_id(self) -> &'static str {
+    /// The models' ids in `artwork/3dmodels/` (T6; 18G: the first is
+    /// the kind's default, the others its variants – a flight's
+    /// [`Flight::model`] picks one by its seed).
+    pub fn model_ids(self) -> &'static [&'static str] {
         match self {
-            Self::Airliner => "vehicles/airliner-twinjet",
-            Self::SmallPlane => "vehicles/plane-high-wing",
-            Self::Helicopter => "vehicles/helicopter-light",
-            Self::Glider => "vehicles/glider-sailplane",
-            Self::Balloon => "vehicles/balloon-hot-air",
+            Self::Airliner => &[
+                "vehicles/airliner-twinjet",
+                "vehicles/airliner-twinjet-split-winglet",
+            ],
+            Self::SmallPlane => &["vehicles/plane-high-wing"],
+            Self::Helicopter => &[
+                "vehicles/helicopter-light",
+                "vehicles/helicopter-medium-transport",
+            ],
+            Self::Glider => &["vehicles/glider-sailplane"],
+            Self::Balloon => &["vehicles/balloon-hot-air"],
         }
+    }
+
+    /// The default model's id.
+    pub fn model_id(self) -> &'static str {
+        self.model_ids()[0]
+    }
+
+    /// The model `i` of this kind ([`Self::model_ids`]; the default when
+    /// out of range).
+    pub fn model_of(self, i: u8) -> &'static str {
+        let ids = self.model_ids();
+        ids.get(usize::from(i)).copied().unwrap_or(ids[0])
     }
 
     pub fn key(self) -> &'static str {
@@ -80,6 +100,21 @@ impl AirKind {
             Self::Glider => "glider",
             Self::Balloon => "balloon",
         }
+    }
+}
+
+/// Which model of its kind a flight with seed `h` flies (18G, from the
+/// user's reference photos, 2026-11-28): airliners half and half the
+/// sharklet and the split-winglet twinjet; helicopter tours (transport
+/// and survey round trips from a heliport) half by the medium transport
+/// helicopter; rescue flights keep the light one. Its own hash of the
+/// seed: the flights' other draws stay as they were.
+pub fn pick_model(kind: AirKind, mission: Mission, h: u64) -> u8 {
+    let r = mix(h ^ 0x0006_D0D1_u64) >> 11;
+    match (kind, mission) {
+        (AirKind::Airliner, _) => (r % 2) as u8,
+        (AirKind::Helicopter, Mission::Tour) => u8::from(r % 100 < 50),
+        _ => 0,
     }
 }
 
@@ -159,6 +194,8 @@ pub struct Flight {
     pub path: FlightPath,
     /// The look (paint) seed.
     pub look: u32,
+    /// Which of its kind's models ([`AirKind::model_ids`], [`pick_model`]).
+    pub model: u8,
     /// The runway it lands on or takes off from (arrivals, departures,
     /// circuits).
     pub runway: Option<RunwayUse>,
@@ -177,6 +214,11 @@ impl Flight {
 
     pub fn state(&self, t: f64) -> PathState {
         self.path.at(t - self.start_s)
+    }
+
+    /// Its model's id in `artwork/3dmodels/`.
+    pub fn model_id(&self) -> &'static str {
+        self.kind.model_of(self.model)
     }
 }
 
@@ -197,7 +239,16 @@ pub struct AircraftNow {
     /// A balloon's burner firing.
     pub burner: bool,
     pub look: u32,
+    /// Which of its kind's models ([`AirKind::model_ids`]).
+    pub model: u8,
     pub trail: Option<Trail>,
+}
+
+impl AircraftNow {
+    /// Its model's id in `artwork/3dmodels/`.
+    pub fn model_id(&self) -> &'static str {
+        self.kind.model_of(self.model)
+    }
 }
 
 /// A contrail: points along where the aircraft was, drifted by the wind.
@@ -799,6 +850,7 @@ impl AirSpace {
                 start_s,
                 path,
                 look,
+                model: pick_model(kind, mission, h),
                 runway,
                 field_m,
             })
@@ -1471,6 +1523,7 @@ fn aircraft_now(f: &Flight, now: f64, upper: &UpperAir, contrails: bool) -> Airc
         rotor,
         burner,
         look: f.look,
+        model: f.model,
         trail,
     }
 }

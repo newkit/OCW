@@ -1,8 +1,11 @@
 //! The traffic's models (spec 14 Phase 18, 18B *Models*, 18E T6): cars in
 //! three shapes (hatchback, saloon, SUV), a panel van, a rigid and an
 //! articulated lorry, a city bus, a motorbike with its rider, a farm
-//! tractor, and for the sky an airliner, a small high-wing plane, a
-//! glider, a light helicopter, a hot-air balloon and a flying saucer.
+//! tractor, and for the sky two narrow-body airliners (sharklets; split
+//! winglets), a small high-wing plane, a glider, a light and a medium
+//! transport helicopter, a hot-air balloon and a flying saucer. The
+//! airliners and the medium helicopter are detailed from the user's own
+//! apron photos (18G, `vehicles/aircraft.rs`, `docs/reference/aircraft.md`).
 //!
 //! All are our own generic shapes – no makes, no logos, no copies of a
 //! real model – in the game's low-poly style: flat-shaded boxes, lofts
@@ -37,6 +40,8 @@ use crate::mesh::{Parts, Shape};
 use crate::model::{Model, Node, srgb};
 use crate::slots;
 
+mod aircraft;
+
 /// The folder of the files.
 pub const DIR: &str = "vehicles/";
 
@@ -56,15 +61,17 @@ pub enum Vehicle {
     MotorbikeTouring,
     TractorFarm,
     AirlinerTwinjet,
+    AirlinerTwinjetSplitWinglet,
     PlaneHighWing,
     GliderSailplane,
     HelicopterLight,
+    HelicopterMediumTransport,
     BalloonHotAir,
     UfoSaucer,
 }
 
 impl Vehicle {
-    pub const ALL: [Vehicle; 15] = [
+    pub const ALL: [Vehicle; 17] = [
         Vehicle::CarHatchback,
         Vehicle::CarSaloon,
         Vehicle::CarSuv,
@@ -75,9 +82,11 @@ impl Vehicle {
         Vehicle::MotorbikeTouring,
         Vehicle::TractorFarm,
         Vehicle::AirlinerTwinjet,
+        Vehicle::AirlinerTwinjetSplitWinglet,
         Vehicle::PlaneHighWing,
         Vehicle::GliderSailplane,
         Vehicle::HelicopterLight,
+        Vehicle::HelicopterMediumTransport,
         Vehicle::BalloonHotAir,
         Vehicle::UfoSaucer,
     ];
@@ -95,9 +104,11 @@ impl Vehicle {
             Vehicle::MotorbikeTouring => "vehicles/motorbike-touring.glb",
             Vehicle::TractorFarm => "vehicles/tractor-farm.glb",
             Vehicle::AirlinerTwinjet => "vehicles/airliner-twinjet.glb",
+            Vehicle::AirlinerTwinjetSplitWinglet => "vehicles/airliner-twinjet-split-winglet.glb",
             Vehicle::PlaneHighWing => "vehicles/plane-high-wing.glb",
             Vehicle::GliderSailplane => "vehicles/glider-sailplane.glb",
             Vehicle::HelicopterLight => "vehicles/helicopter-light.glb",
+            Vehicle::HelicopterMediumTransport => "vehicles/helicopter-medium-transport.glb",
             Vehicle::BalloonHotAir => "vehicles/balloon-hot-air.glb",
             Vehicle::UfoSaucer => "vehicles/ufo-saucer.glb",
         }
@@ -111,10 +122,14 @@ impl Vehicle {
             Vehicle::BusCity => VehicleClass::Bus,
             Vehicle::MotorbikeTouring => VehicleClass::Motorbike,
             Vehicle::TractorFarm => VehicleClass::Tractor,
-            Vehicle::AirlinerTwinjet => VehicleClass::Airliner,
+            Vehicle::AirlinerTwinjet | Vehicle::AirlinerTwinjetSplitWinglet => {
+                VehicleClass::Airliner
+            }
             Vehicle::PlaneHighWing => VehicleClass::SmallPlane,
             Vehicle::GliderSailplane => VehicleClass::Glider,
-            Vehicle::HelicopterLight => VehicleClass::Helicopter,
+            Vehicle::HelicopterLight | Vehicle::HelicopterMediumTransport => {
+                VehicleClass::Helicopter
+            }
             Vehicle::BalloonHotAir => VehicleClass::Balloon,
             Vehicle::UfoSaucer => VehicleClass::Ufo,
         }
@@ -146,10 +161,14 @@ impl Vehicle {
             Vehicle::BusCity => bus,
             Vehicle::MotorbikeTouring => motorbike,
             Vehicle::TractorFarm => tractor,
-            Vehicle::AirlinerTwinjet => airliner,
+            Vehicle::AirlinerTwinjet => |b| aircraft::airliner(b, &aircraft::AIRLINER_SHARKLET),
+            Vehicle::AirlinerTwinjetSplitWinglet => {
+                |b| aircraft::airliner(b, &aircraft::AIRLINER_SPLIT)
+            }
             Vehicle::PlaneHighWing => small_plane,
             Vehicle::GliderSailplane => glider,
             Vehicle::HelicopterLight => helicopter,
+            Vehicle::HelicopterMediumTransport => aircraft::helicopter_medium,
             Vehicle::BalloonHotAir => balloon,
             Vehicle::UfoSaucer => ufo,
         };
@@ -1979,185 +1998,6 @@ fn nav_lights(b: &mut Build, tip_l: Vec3, tip_r: Vec3, tail: Vec3, beacon: Vec3,
     b.lamp("light_beacon", ROOT, "light_nav_red", beacon, h, Vec3::Y);
 }
 
-fn airliner(b: &mut Build) {
-    let far = b.far();
-    b.paint("body", 0xF2F3F4);
-    b.paint("livery", 0x284B8C);
-    let cy = 3.2;
-    let sides_n = if far { 6 } else { 14 };
-    let fuselage = Lathe::new(v3(0.0, cy, 0.0), Vec3::Z, Vec3::Y, sides_n);
-    let prof: Vec<(f32, f32, f32)> = if far {
-        vec![
-            (-18.8, 0.0, -0.3),
-            (-16.6, 1.8, -0.04),
-            (10.0, 1.98, 0.0),
-            (16.2, 1.1, 0.62),
-            (18.8, 0.0, 1.1),
-        ]
-    } else {
-        vec![
-            (-18.8, 0.0, -0.3),
-            (-18.4, 0.85, -0.25),
-            (-17.6, 1.45, -0.12),
-            (-16.6, 1.8, -0.04),
-            (-15.2, 1.98, 0.0),
-            (-8.0, 1.98, 0.0),
-            (3.0, 1.98, 0.0),
-            (10.0, 1.98, 0.0),
-            (13.5, 1.7, 0.22),
-            (16.2, 1.1, 0.62),
-            (18.0, 0.55, 0.95),
-            (18.8, 0.0, 1.1),
-        ]
-    };
-    fuselage.draw(
-        b.root(),
-        &prof,
-        |i, j| {
-            if !far && i == 2 && matches!(j, 0 | 1 | 12 | 13) {
-                "glass"
-            } else {
-                "body"
-            }
-        },
-        "body",
-    );
-    if !far {
-        // The cabin windows: a dark band on each side's flat face.
-        let ap = 1.98 * (PI / 14.0).cos() + 0.008;
-        sides(|x| {
-            let s = b.root().slot("glass");
-            let pts = [
-                v3(x * ap, cy - 0.12, -14.4),
-                v3(x * ap, cy - 0.12, 9.4),
-                v3(x * ap, cy + 0.14, 9.4),
-                v3(x * ap, cy + 0.14, -14.4),
-            ];
-            poly(s, &pts, Vec3::X * x);
-            let s = b.root().slot("livery");
-            let pts = [
-                v3(x * ap, cy - 0.42, -16.0),
-                v3(x * ap, cy - 0.42, 11.0),
-                v3(x * ap, cy - 0.3, 11.0),
-                v3(x * ap, cy - 0.3, -16.0),
-            ];
-            poly(s, &pts, Vec3::X * x);
-        });
-    }
-    // Wings, winglets, engines, the tail.
-    let wy = 2.2;
-    sides(|x| {
-        let p = b.root();
-        wing(
-            p,
-            all("metal"),
-            [x * 1.2, wy, -3.6, 3.0, 0.45],
-            [x * 17.0, wy + 0.9, 4.8, 6.6, 0.14],
-        );
-        fin(
-            p,
-            "livery",
-            x * 17.05,
-            wy + 0.85,
-            4.9,
-            6.6,
-            0.12,
-            wy + 2.5,
-            6.0,
-            6.8,
-            0.06,
-        );
-        let eng = Lathe::new(
-            v3(x * 5.6, 1.45, 0.0),
-            Vec3::Z,
-            Vec3::Y,
-            if far { 6 } else { 10 },
-        );
-        eng.draw(
-            p,
-            &[
-                (-3.6, 0.0, 0.0),
-                (-3.6, 0.88, 0.0),
-                (-3.3, 0.98, 0.0),
-                (-0.5, 0.95, 0.0),
-                (0.6, 0.62, 0.0),
-                (1.2, 0.0, 0.0),
-            ],
-            |i, _| if i == 0 { "trim" } else { "paint_white" },
-            "paint_white",
-        );
-        if !far {
-            cuboid(
-                p,
-                all("metal"),
-                v3(x * 5.6, 2.42, -0.8),
-                v3(0.15, 0.08, 1.6),
-            );
-        }
-        wing(
-            p,
-            all("metal"),
-            [x * 0.9, cy + 0.5, 14.3, 17.2, 0.25],
-            [x * 6.3, cy + 0.95, 17.0, 18.3, 0.08],
-        );
-    });
-    fin(
-        b.root(),
-        "livery",
-        0.0,
-        cy + 1.55,
-        12.3,
-        18.0,
-        0.36,
-        11.6,
-        16.6,
-        18.6,
-        0.14,
-    );
-    if !far {
-        // The landing gear (down).
-        let p = b.part("gear_nose", ROOT, v3(0.0, 0.4, -14.0));
-        rod(
-            p,
-            "metal",
-            v3(0.0, 0.4, -14.0),
-            v3(0.0, 1.7, -14.0),
-            0.08,
-            6,
-        );
-        sides(|x| wheel(p, v3(x * 0.16, 0.4, -14.0), x, 0.4, 0.2, 10, true));
-        sides(|x| {
-            let name = format!("gear_main_{}", lr(x));
-            let at = v3(x * 3.6, 0.62, 1.0);
-            let p = b.part(&name, ROOT, at);
-            rod(p, "metal", at, v3(x * 3.6, 2.4, 1.0), 0.11, 6);
-            for dx in [-0.25f32, 0.25] {
-                let side = if dx * x > 0.0 { x } else { -x };
-                wheel(p, at + Vec3::X * dx, side, 0.62, 0.32, 10, true);
-            }
-        });
-    }
-    let tip = wy + 0.95;
-    nav_lights(
-        b,
-        v3(-17.12, tip, 5.0),
-        v3(17.12, tip, 5.0),
-        v3(0.0, cy + 1.1, 18.86),
-        v3(0.0, cy + 2.04, 0.0),
-        0.1,
-    );
-    sides(|x| {
-        b.lamp(
-            &format!("light_strobe_{}", lr(x)),
-            ROOT,
-            "light_white",
-            v3(x * 17.12, tip, 6.4),
-            Vec3::splat(0.08),
-            Vec3::Z,
-        );
-    });
-}
-
 fn small_plane(b: &mut Build) {
     let far = b.far();
     b.paint("body", 0xF1F1EC);
@@ -2248,12 +2088,64 @@ fn small_plane(b: &mut Build) {
             6,
         );
         wheel(pn, v3(0.0, 0.22, -3.1), 1.0, 0.22, 0.1, 10, true);
+        // Wheel fairings (spats) over the upper wheels (18G).
+        let spat = |p: &mut Parts, at: Vec3, r: f32| {
+            let l = Lathe::new(at + Vec3::Y * 0.06, Vec3::Z, Vec3::Y, 8).squash(1.15, 0.55);
+            l.draw(
+                p,
+                &[
+                    (-0.42, 0.0, 0.0),
+                    (-0.3, r * 0.6, 0.0),
+                    (0.0, r * 0.85, 0.02),
+                    (0.3, r * 0.6, 0.06),
+                    (0.55, 0.0, 0.1),
+                ],
+                |_, _| "body",
+                "body",
+            );
+        };
+        spat(pn, v3(0.0, 0.22, -3.1), 0.22);
         sides(|x| {
             let at = v3(x * 1.15, 0.25, -0.4);
             let p = b.part(&format!("gear_main_{}", lr(x)), ROOT, at);
             rod(p, "metal", at, v3(x * 0.3, 0.75, -0.4), 0.035, 6);
             wheel(p, at, x, 0.25, 0.12, 10, true);
+            spat(p, at, 0.25);
         });
+        // The cowling's air inlets, the exhaust, the cabin door's outline.
+        let p = b.root();
+        sides(|x| {
+            cuboid(
+                p,
+                all("trim"),
+                v3(x * 0.25, cy - 0.2, -3.73),
+                v3(0.11, 0.06, 0.02),
+            );
+        });
+        rod(
+            p,
+            "metal",
+            v3(0.22, cy - 0.5, -2.85),
+            v3(0.26, cy - 0.62, -2.55),
+            0.03,
+            6,
+        );
+        let door = |p: &mut Parts, z0: f32, z1: f32, y0: f32, y1: f32| {
+            let x = 0.57;
+            for (a, bb, c, d) in [
+                (z0, z1, y0, y0 + 0.02),
+                (z0, z1, y1 - 0.02, y1),
+                (z0, z0 + 0.02, y0, y1),
+                (z1 - 0.02, z1, y0, y1),
+            ] {
+                poly(
+                    p.slot("trim"),
+                    &[v3(x, c, a), v3(x, c, bb), v3(x, d, bb), v3(x, d, a)],
+                    Vec3::X,
+                );
+            }
+        };
+        door(p, -1.65, -0.75, cy - 0.22, cy + 0.22);
     }
     // The propeller: spinner and two blades, turning about Z.
     let hub = v3(0.0, cy - 0.05, -3.88);
@@ -2375,6 +2267,42 @@ fn glider(b: &mut Build) {
         [1.3, 1.77, 3.3, 3.62, 0.04],
     );
     if !far {
+        // Winglets, the tow hook, the tail skid, the canopy's frame (18G).
+        sides(|x| {
+            let p = b.root();
+            let c = [
+                v3(x * 7.47, wy + 0.25, -0.5),
+                v3(x * 7.6, wy + 0.62, -0.36),
+                v3(x * 7.6, wy + 0.62, -0.2),
+                v3(x * 7.47, wy + 0.25, -0.15),
+                v3(x * 7.53, wy + 0.25, -0.5),
+                v3(x * 7.64, wy + 0.62, -0.36),
+                v3(x * 7.64, wy + 0.62, -0.2),
+                v3(x * 7.53, wy + 0.25, -0.15),
+            ];
+            hexa(p, all("body"), &c);
+        });
+        let p = b.root();
+        cuboid(
+            p,
+            all("trim"),
+            v3(0.0, cy - 0.33, -2.95),
+            v3(0.03, 0.03, 0.06),
+        );
+        cuboid(
+            p,
+            all("trim"),
+            v3(0.0, cy - 0.12, 3.45),
+            v3(0.025, 0.06, 0.12),
+        );
+        rod(
+            p,
+            "trim",
+            v3(-0.26, cy + 0.27, -1.55),
+            v3(0.26, cy + 0.27, -1.55),
+            0.02,
+            5,
+        );
         let at = v3(0.0, 0.19, 0.0);
         let p = b.part("gear_main", ROOT, at);
         wheel(p, at, 1.0, 0.19, 0.1, 10, true);
@@ -3001,9 +2929,21 @@ mod tests {
             (Vehicle::MotorbikeTouring, 2.0..2.4, 0.6..0.95, 1.3..1.8),
             (Vehicle::TractorFarm, 4.0..4.6, 2.2..2.6, 2.7..3.1),
             (Vehicle::AirlinerTwinjet, 36.0..40.0, 33.0..36.0, 11.0..12.5),
+            (
+                Vehicle::AirlinerTwinjetSplitWinglet,
+                38.0..40.0,
+                34.0..36.5,
+                11.0..12.5,
+            ),
             (Vehicle::PlaneHighWing, 7.5..9.0, 10.0..11.5, 2.5..3.0),
             (Vehicle::GliderSailplane, 6.0..7.5, 14.5..15.5, 1.5..1.9),
             (Vehicle::HelicopterLight, 9.0..13.0, 9.0..11.0, 2.8..3.5),
+            (
+                Vehicle::HelicopterMediumTransport,
+                19.0..22.5,
+                16.0..19.5,
+                5.5..6.5,
+            ),
             (Vehicle::BalloonHotAir, 16.0..18.0, 16.0..18.0, 22.0..24.5),
             (Vehicle::UfoSaucer, 11.5..12.5, 11.5..12.5, 4.5..5.2),
         ] {
