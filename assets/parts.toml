@@ -14,7 +14,8 @@
 # (optional: speeds, shifting, brake, wheel, width_mm, family), profile
 # (frames: the physics profile, spec §2.5), rolling / aero / efficiency
 # (class steps, 4G: the server's build physics, ocw_sim::build), model (frames: the bike model
-# bike-<profile>; base parts: "stock", the frame's own part; others: a part
+# bike-<profile>, or a frame variant of the generator – a named frameset such as
+# "newk it"; base parts: "stock", the frame's own part; others: a part
 # variant of the generator, crates/ocw-assets/src/bikes.rs), sources, priced.
 #
 # Base parts (tier base, 0 hearts) are the stock parts every frame comes
@@ -455,6 +456,25 @@ fits = ["road"]
 profile = "road-aero"
 aero = 1
 model = "bike-road-aero"
+sources = "frame.road.top"
+priced = 2026-11-13
+
+# The "newk it" bike (spec 14 Phase 15, *The "newk it" bike*): the user's own
+# design and brand, used with permission – the aero frame tuned to the
+# user's bike with its stock build and livery (model: the generator's frame
+# variant). Priced and weighed like the carbon aero race frameset; its
+# physics is the road-aero profile's.
+[[part]]
+id = "frame.road-aero.newkit"
+slot = "frame"
+tier = "top"
+name = "newk it aero frameset, carbon"
+hearts = 5279
+weight_g = 1250
+fits = ["road"]
+profile = "road-aero"
+aero = 1
+model = "frame-aero-newkit"
 sources = "frame.road.top"
 priced = 2026-11-13
 

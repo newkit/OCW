@@ -1209,8 +1209,9 @@ mod tests {
     #[test]
     fn the_shipped_table_parses_and_has_a_base_for_every_slot() {
         let table = t();
-        // 99 + the 20 cranksets, cassettes and chains of the groupsets (v3.15).
-        assert_eq!(table.parts().len(), 119);
+        // 99 + the 20 cranksets, cassettes and chains of the groupsets (v3.15)
+        // + the "newk it" frameset (v7.15).
+        assert_eq!(table.parts().len(), 120);
         for profile in ProfileId::ALL {
             for slot in table.slots() {
                 assert!(table.base(slot, profile).is_some(), "{slot} {profile:?}");

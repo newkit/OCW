@@ -173,6 +173,12 @@ pub const VARIANTS: &[Variant] = &[
     var("lights-set", "lights", &[R, G, M]),
     var("computer-large", "computer", &[R, T, G, M]),
     var("bag-top-tube", "bag", &[R, G, M]),
+    // The "newk it" bike (spec 14 Phase 15, *The "newk it" bike*; the
+    // user's design, used with permission): its frameset (the aero frame
+    // tuned to the photos, with its stock build and livery) and the livery
+    // alone, a free paint for the road frames (`crate::livery`).
+    var(crate::livery::FRAME_VARIANT, "frame", &[R]),
+    var(crate::livery::PAINT_VARIANT, "paint", &[R]),
 ];
 
 /// The variant called `id`.
@@ -238,6 +244,16 @@ struct Kit {
     tyre_stripe: bool,
     /// The catalogue's top-tube bag (larger than the gravel bike's own).
     bag: bool,
+    /// The "newk it" livery on the frame and fork (`crate::livery`).
+    livery: bool,
+    /// Its letters and panels on the rims (the "newk it" wheels).
+    rim_livery: bool,
+    /// Green anodised thru-axle ends and rotor lock rings.
+    green: bool,
+    /// Pink bar tape.
+    tape_pink: bool,
+    /// Black bottles.
+    dark_bottles: bool,
 }
 
 impl Default for Kit {
@@ -257,8 +273,43 @@ impl Default for Kit {
             computer: false,
             tyre_stripe: false,
             bag: false,
+            livery: false,
+            rim_livery: false,
+            green: false,
+            tape_pink: false,
+            dark_bottles: false,
         }
     }
+}
+
+/// The "newk it" frameset (spec 14 Phase 15, *The "newk it" bike*): the
+/// aero frame's geometry (the profile's: the rig, the saddle and the
+/// grips stay those of every road-aero bike) with the shape of the
+/// user's bike – a top tube sloping further down to a lower seat
+/// cluster, stays dropped low – and its stock build from the photos:
+/// disc brakes, a one-piece aero bar and stem with hidden cables,
+/// electronic shifting, 55 mm carbon rims with 24 spokes, black 28 mm
+/// tyres, road pedals, a computer out front, two black bottles, pink
+/// bar tape, green anodised axle ends and the livery. Parts fitted in
+/// their slots replace the stock build's.
+fn newkit_frame(d: &mut Design, k: &mut Kit) {
+    d.top_tube_at = 0.45;
+    d.stays_at = 0.33;
+    d.disc_brakes = true;
+    d.bottles = 2;
+    (d.front, d.rear) = (Wheel::Spoked(24), Wheel::Spoked(24));
+    (d.rim_depth, d.rim_width) = (0.055, 0.025);
+    (d.tyre, d.knobs, d.skinwall) = (0.028, 0.0, false);
+    k.electronic = true;
+    k.cables = false;
+    k.cockpit = Cockpit::Integrated;
+    k.computer = true;
+    k.pedals = Pedals::RoadCarbon;
+    k.livery = true;
+    k.rim_livery = true;
+    k.green = true;
+    k.tape_pink = true;
+    k.dark_bottles = true;
 }
 
 /// The design and extras of `profile`'s bike with `variants` fitted
@@ -277,26 +328,37 @@ fn configure(profile: ProfileId, variants: &[&str]) -> (Design, Kit) {
         chosen.retain(|c| c.slot != v.slot);
         chosen.push(v);
     }
+    // The frameset and the paint first: the parts in the other slots
+    // replace the frameset's stock build.
+    chosen.sort_by_key(|v| !matches!(v.slot, "frame" | "paint"));
     for v in chosen {
         match v.id {
+            crate::livery::FRAME_VARIANT => newkit_frame(&mut d, &mut k),
+            crate::livery::PAINT_VARIANT => k.livery = true,
             "wheel-alloy-training" => {
                 (d.front, d.rear, d.rim_depth) = (Wheel::Spoked(24), Wheel::Spoked(24), 0.022);
+                k.rim_livery = false;
             }
             "wheel-alloy-performance" => {
                 (d.front, d.rear, d.rim_depth) = (Wheel::Spoked(20), Wheel::Spoked(20), 0.03);
+                k.rim_livery = false;
             }
             "wheel-carbon-45" => {
                 (d.front, d.rear, d.rim_depth) = (Wheel::Spoked(20), Wheel::Spoked(24), 0.045);
+                k.rim_livery = false;
             }
             "wheel-carbon-50" => {
                 (d.front, d.rear, d.rim_depth) = (Wheel::Spoked(18), Wheel::Spoked(21), 0.05);
+                k.rim_livery = false;
             }
             "wheel-disc-tt" => {
                 (d.front, d.rear, d.rim_depth) = (Wheel::Spoked(16), Wheel::Disc, 0.08);
+                k.rim_livery = false;
             }
             "wheel-gravel-carbon" => {
                 (d.front, d.rear, d.rim_depth, d.rim_width) =
                     (Wheel::Spoked(24), Wheel::Spoked(24), 0.032, 0.026);
+                k.rim_livery = false;
             }
             "tyre-road-28-training" => (d.tyre, d.knobs, d.skinwall) = (0.028, 0.0, false),
             "tyre-road-28" => (d.tyre, d.knobs, d.skinwall) = (0.028, 0.0, true),
@@ -306,7 +368,10 @@ fn configure(profile: ProfileId, variants: &[&str]) -> (Design, Kit) {
             }
             "tyre-gravel-40" => (d.tyre, d.knobs, d.skinwall) = (0.04, 0.06, true),
             "tyre-mtb-xc" => (d.tyre, d.knobs, d.skinwall) = (0.057, 0.18, false),
-            "groupset-mech" | "groupset-mtb" => k.cables = true,
+            "groupset-mech" | "groupset-mtb" => {
+                k.cables = true;
+                k.electronic = false;
+            }
             "groupset-electronic" | "groupset-gravel-electronic" | "groupset-mtb-electronic" => {
                 k.electronic = true;
             }
@@ -318,7 +383,12 @@ fn configure(profile: ProfileId, variants: &[&str]) -> (Design, Kit) {
             "cockpit-carbon" => k.cockpit = Cockpit::Carbon,
             "cockpit-integrated" => k.cockpit = Cockpit::Integrated,
             "cockpit-extensions" => k.cockpit = Cockpit::Extensions,
-            "bar-tape-tacky" => k.tape = 1.18,
+            // Black tape: on the "newk it" bike the choice against its
+            // pink stock tape.
+            "bar-tape-tacky" => {
+                k.tape = 1.18;
+                k.tape_pink = false;
+            }
             "saddle-short-nose" => k.short_nose = true,
             "seatpost-carbon" => k.carbon_post = true,
             "pedals-road-carbon" => k.pedals = Pedals::RoadCarbon,
@@ -332,6 +402,11 @@ fn configure(profile: ProfileId, variants: &[&str]) -> (Design, Kit) {
             "bag-top-tube" => k.bag = true,
             other => unreachable!("variant {other} has no look"),
         }
+    }
+    // The "newk it" frame painted another colour: its build without the
+    // livery (`livery::with_paint`).
+    if variants.contains(&crate::livery::PAINT_PLAIN) {
+        k.livery = false;
     }
     (d, k)
 }
@@ -816,6 +891,13 @@ fn wheel(
         p.slot("metal")
             .annulus(hub - Vec3::X * 0.048, Vec3::X, 0.058, 0.08, 0.002, 20);
     }
+    // The "newk it" bike: green axle ends, its rims' letters.
+    if kit.green {
+        crate::livery::green_hub(p, hub, d.disc_brakes);
+    }
+    if kit.rim_livery && matches!(kind, Wheel::Spoked(_)) && d.rim_depth >= 0.04 {
+        crate::livery::rim(p, hub, d.rim_width * 0.5, rim_in, r - d.tyre - 0.002, rear);
+    }
 }
 
 /// The cockpit variants on a drop bar around the clamp `c` (half width
@@ -894,12 +976,17 @@ fn bars(p: &mut Parts, d: &Design, kit: &Kit, c: Vec3, sides: u32, hi: bool) {
             let hw = width * 0.5;
             let (path, radii) = drop_bar_path(width, reach, drop, flare);
             let radii = radii.map(|r| r * kit.tape);
+            let tape = if kit.tape_pink {
+                crate::livery::TAPE_PINK
+            } else {
+                "bar_tape"
+            };
             for side in [-1.0f32, 1.0] {
                 let pts: Vec<Vec3> = path
                     .iter()
                     .map(|v| c + Vec3::new(v.x * side, v.y, v.z))
                     .collect();
-                p.slot("bar_tape").sweep(&pts, &radii, sides, true);
+                p.slot(tape).sweep(&pts, &radii, sides, true);
                 if hi {
                     // Hood and brake lever.
                     let (hood, radii, rot) = hood_body(hw, reach, flare, side);
@@ -1156,6 +1243,12 @@ pub fn build_with(
     let f = Frame::new(&design(profile), &rig);
     let mut m = Model::default();
     let root = m.add(Node::new(ROOT, None, Vec3::ZERO));
+    // The "newk it" livery's frame: the flake (spec 14 Phase 15).
+    let frame_slot = if kit.livery {
+        crate::livery::FLAKE
+    } else {
+        "frame"
+    };
     for lod in [rider::Detail::High, rider::Detail::Low] {
         let hi = lod == rider::Detail::High;
         let sides = lod.sides();
@@ -1166,7 +1259,7 @@ pub fn build_with(
         let stays = f.bb + f.seat_dir * d.stays_at;
         // Main triangle and head tube.
         {
-            let s = p.slot("frame");
+            let s = p.slot(frame_slot);
             frame_tube(
                 s,
                 f.head_bottom - f.steer_dir * 0.01,
@@ -1273,9 +1366,12 @@ pub fn build_with(
                     .enumerate()
                     .map(|(i, b)| *b + Vec3::X * side * (0.04 + 0.012 * i as f32 / last))
                     .collect();
-                p.slot("frame").sweep(&path, &radii, sides, true);
+                p.slot(frame_slot).sweep(&path, &radii, sides, true);
+                if hi && kit.livery {
+                    crate::livery::fork_inner(&mut p, &path, &radii, side, sides);
+                }
             }
-            p.slot("frame").cuboid(
+            p.slot(frame_slot).cuboid(
                 f.head_bottom + f.steer_dir * 0.012,
                 Vec3::new(0.05, 0.016, 0.026),
                 Quat::from_rotation_arc(Vec3::NEG_Y, f.steer_dir),
@@ -1406,6 +1502,26 @@ pub fn build_with(
                 );
             }
             // No white down-tube panel: the paint shows (user, 2026-11-26).
+            // The "newk it" livery's decals: the name along the down tube,
+            // the unicorn on the head tube's front.
+            if kit.livery {
+                crate::livery::down_tube_text(
+                    &mut p,
+                    f.bb + Vec3::new(0.0, 0.01, -0.01),
+                    f.head_bottom - f.steer_dir * 0.025,
+                    t * 1.15,
+                    aero,
+                    sides,
+                );
+                crate::livery::unicorn(
+                    &mut p,
+                    f.head_bottom - f.steer_dir * 0.01,
+                    f.head_top + f.steer_dir * -0.01,
+                    t * 1.3,
+                    1.0 + (d.aero - 1.0) * 0.5,
+                    sides,
+                );
+            }
             let (a, b) = (f.bb, f.head_bottom);
             // Bottles.
             let down = (b - a).normalize();
@@ -1426,8 +1542,13 @@ pub fn build_with(
                     f.seat_dir,
                 ));
             }
+            let bottle = if kit.dark_bottles {
+                crate::livery::BOTTLE_BLACK
+            } else {
+                "bottle"
+            };
             for (c, dir) in spots {
-                p.slot("bottle")
+                p.slot(bottle)
                     .tube(c - dir * 0.1, c + dir * 0.08, 0.036, 0.036, 10, true);
                 p.slot("component")
                     .tube(c + dir * 0.08, c + dir * 0.105, 0.018, 0.012, 6, true);
@@ -1890,6 +2011,9 @@ fn far_slot(name: &str) -> &'static str {
         "accent" => "jersey",
         "shorts" => "shorts",
         "frame" | "decal" => "frame",
+        // The "newk it" livery: its flake frame and the pink tape.
+        "flake" => "flake",
+        "bar_tape_pink" | "livery_pink" => "livery_pink",
         _ => "tyre",
     }
 }
@@ -2269,6 +2393,218 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn slot_names(m: &Model, node: &str) -> Vec<String> {
+        let n = m.node(node).unwrap();
+        m.nodes[n]
+            .primitives
+            .iter()
+            .map(|p| m.materials[p.material].name.clone())
+            .collect()
+    }
+
+    /// The "newk it" bike (spec 14 Phase 15, *The "newk it" bike*): the
+    /// aero frame's rig (it rides and poses like every road-aero bike),
+    /// the livery's slots on frame, rims, bars and bottles, no plain
+    /// `frame` paint, within the bike budgets with a far model of at most
+    /// eight meshes.
+    #[test]
+    fn the_newkit_bike_has_its_livery_and_the_aero_rig() {
+        use crate::livery::*;
+        let (r, low) = riders();
+        let aero = BikeRig::from_model(&build(ProfileId::RoadAero, &r, &low)).unwrap();
+        let m = build_with(ProfileId::RoadAero, &r, &low, &[FRAME_VARIANT]);
+        let rig = BikeRig::from_model(&m).unwrap();
+        assert!(rig.saddle.distance(aero.saddle) < 1e-6);
+        for (a, b) in [
+            (rig.hoods, aero.hoods),
+            (rig.tops, aero.tops),
+            (rig.drops, aero.drops),
+        ] {
+            assert!(a[0].distance(b[0]) < 1e-6 && a[1].distance(b[1]) < 1e-6);
+        }
+        assert!(rig.crank.distance(aero.crank) < 1e-6);
+        assert_eq!(
+            (rig.wheel_radius, rig.wheelbase, rig.crank_length),
+            (aero.wheel_radius, aero.wheelbase, aero.crank_length)
+        );
+        let frame = slot_names(&m, ROOT);
+        for s in [
+            FLAKE,
+            PINK,
+            LIGHT,
+            YELLOW,
+            BLUE,
+            GREEN,
+            WHITE,
+            INK,
+            BOTTLE_BLACK,
+        ] {
+            assert!(frame.iter().any(|n| n == s), "frame: {s} in {frame:?}");
+        }
+        assert!(!frame.iter().any(|n| n == "frame"), "{frame:?}");
+        assert!(slot_names(&m, HANDLEBAR).iter().any(|n| n == TAPE_PINK));
+        let front = slot_names(&m, WHEEL_FRONT);
+        let rear = slot_names(&m, WHEEL_REAR);
+        assert!(front.iter().any(|n| n == PINK) && front.iter().any(|n| n == INK));
+        assert!(rear.iter().any(|n| n == YELLOW));
+        assert!(front.iter().any(|n| n == ANODISED) && rear.iter().any(|n| n == ANODISED));
+        let lod1 = m.node(LOD1).unwrap();
+        let far = m.triangles_below(Some(lod1));
+        assert!(m.triangles() - far < 14_000, "{}", m.triangles() - far);
+        assert!(m.triangles() <= crate::manifest::MAX_TRIANGLES_BIKE);
+        assert!(m.nodes[lod1].primitives.len() <= 8);
+        for mat in &m.materials {
+            assert!(crate::slots::get(&mat.name).is_some(), "{}", mat.name);
+        }
+    }
+
+    /// The livery is a paint for every road frame (the decals fitted to
+    /// each frame's tubes); the "newk it" frame painted another colour
+    /// keeps its build without the livery; parts in their slots replace
+    /// its stock build (black tape, other wheels without the letters).
+    #[test]
+    fn the_newkit_livery_paints_road_frames_and_comes_off_with_parts() {
+        use crate::livery::*;
+        let (r, low) = riders();
+        for p in [
+            ProfileId::Road,
+            ProfileId::RoadAero,
+            ProfileId::RoadClimbing,
+        ] {
+            let stock = BikeRig::from_model(&build(p, &r, &low)).unwrap();
+            let m = build_with(p, &r, &low, &[PAINT_VARIANT]);
+            let names = slot_names(&m, ROOT);
+            for s in [FLAKE, PINK, LIGHT, WHITE, INK] {
+                assert!(names.iter().any(|n| n == s), "{p:?}: {s}");
+            }
+            assert!(
+                BikeRig::from_model(&m)
+                    .unwrap()
+                    .saddle
+                    .distance(stock.saddle)
+                    < 1e-6
+            );
+            // Not the frame's stock build: only the paint.
+            assert!(!slot_names(&m, HANDLEBAR).iter().any(|n| n == TAPE_PINK));
+        }
+        // Not on the other bike types.
+        let tt = crate::glb::write(&build(ProfileId::TimeTrial, &r, &low));
+        assert_eq!(
+            crate::glb::write(&build_with(
+                ProfileId::TimeTrial,
+                &r,
+                &low,
+                &[PAINT_VARIANT]
+            )),
+            tt
+        );
+        let plain = build_with(ProfileId::RoadAero, &r, &low, &[FRAME_VARIANT, PAINT_PLAIN]);
+        let names = slot_names(&plain, ROOT);
+        assert!(names.iter().any(|n| n == "frame"));
+        for s in [FLAKE, LIGHT, WHITE] {
+            assert!(!names.iter().any(|n| n == s), "plain: {s}");
+        }
+        assert!(slot_names(&plain, HANDLEBAR).iter().any(|n| n == TAPE_PINK));
+        let black = build_with(
+            ProfileId::RoadAero,
+            &r,
+            &low,
+            &["bar-tape-tacky", FRAME_VARIANT],
+        );
+        let bar = slot_names(&black, HANDLEBAR);
+        assert!(bar.iter().any(|n| n == "bar_tape") && !bar.iter().any(|n| n == TAPE_PINK));
+        let wheels = build_with(
+            ProfileId::RoadAero,
+            &r,
+            &low,
+            &[FRAME_VARIANT, "wheel-carbon-45"],
+        );
+        assert!(!slot_names(&wheels, WHEEL_REAR).iter().any(|n| n == YELLOW));
+        assert!(!slot_names(&wheels, WHEEL_FRONT).iter().any(|n| n == PINK));
+    }
+
+    /// The rider on the "newk it" bike (a default rider, seated on the
+    /// hoods and in the drops, through a crank turn): no vertex of the
+    /// rider inside the frame's tubes – top tube, down tube, head tube –
+    /// whose decals it would cut.
+    #[test]
+    fn the_rider_clears_the_newkit_frame() {
+        let (r, low) = riders();
+        let m = build_with(
+            ProfileId::RoadAero,
+            &r,
+            &low,
+            &[crate::livery::FRAME_VARIANT],
+        );
+        let bike = BikeRig::from_model(&m).unwrap();
+        let rider = RiderRig::from_model(&r).unwrap();
+        let (d, _) = configure(ProfileId::RoadAero, &[crate::livery::FRAME_VARIANT]);
+        let f = Frame::new(&design(ProfileId::RoadAero), &rider);
+        let cluster = f.bb + f.seat_dir * d.top_tube_at;
+        let t = d.tube;
+        let tubes = [
+            (cluster, f.head_top, t * 0.9, 1.6f32),
+            (f.bb, f.head_bottom, t * 1.15, d.aero),
+            (
+                f.head_bottom,
+                f.head_top,
+                t * 1.3,
+                1.0 + (d.aero - 1.0) * 0.5,
+            ),
+        ];
+        let fit = Fit::new(&rider, &bike);
+        // The rider sits on this bike: the knees pass the top tube close.
+        let mut nearest = f32::MAX;
+        let turns = [0.0f32, 1.0]
+            .into_iter()
+            .flat_map(|dr| (0..8).map(move |k| (dr, k)));
+        for (drops, k) in turns {
+            let params = PoseParams {
+                crank: k as f32 / 8.0 * TAU,
+                drops,
+                ..Default::default()
+            };
+            let pose = pose::pose(&rider, &bike, &fit, &params);
+            let mut posed = r.clone();
+            pose.apply(&mut posed);
+            // The base look (other looks' optional nodes left out).
+            let shown = rider::base_visible();
+            let skip: Vec<usize> = rider::optional()
+                .into_iter()
+                .filter(|n| !shown.contains(n))
+                .filter_map(|n| posed.node(n))
+                .collect();
+            for (i, node) in posed.nodes.iter().enumerate() {
+                if skip.iter().any(|&s| posed.is_below(i, s)) {
+                    continue;
+                }
+                let w = posed.world(i);
+                for pr in &node.primitives {
+                    for v in &pr.positions {
+                        let q = w.transform_point3(Vec3::from(*v));
+                        for (a, b, r0, aero) in tubes {
+                            let s = crate::livery::Section::of_tube(b - a, r0, aero, 8);
+                            let axis = (b - a).normalize();
+                            let along = (q - a).dot(axis);
+                            if along < 0.0 || along > a.distance(b) {
+                                continue;
+                            }
+                            let off = q - a - axis * along;
+                            nearest = nearest.min(off.length());
+                            let (x, y) = (off.dot(s.e1) / s.a, off.dot(s.e2) / s.b);
+                            assert!(
+                                x * x + y * y > 1.0,
+                                "{} at crank {k}, drops {drops}: {q} inside a tube",
+                                node.name
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(nearest < 0.12, "the rider is not on the bike: {nearest}");
     }
 
     /// Unknown ids, "stock" and variants for another bike type change

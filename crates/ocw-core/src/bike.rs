@@ -399,6 +399,16 @@ impl RiderLook {
 /// renderer draws the weave; older apps draw a near-black frame.
 pub const BARE_CARBON: Rgb = Rgb(0x0C0C0E);
 
+/// The frame "colour" that means the **"newk it" livery** (spec 14 Phase
+/// 4, 4B and Phase 15 *The "newk it" bike*: the user's own design, used
+/// with permission): a black frame with a holographic flake fading to deep
+/// magenta at the rear, "newk it" in hot pink along the down tube and a
+/// unicorn on the head tube – a free paint choice for the road frames
+/// (`workshop.paint newkit`) and the default paint of the "newk it"
+/// frameset. The renderer draws the livery; older apps draw a near-black
+/// frame.
+pub const NEWKIT_LIVERY: Rgb = Rgb(0x0B0A12);
+
 /// Colours offered on the Workshop's ← / → rows (any `#RRGGBB` can be set
 /// from the console).
 pub const PALETTE: [Rgb; 12] = [

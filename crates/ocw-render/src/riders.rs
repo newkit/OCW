@@ -650,7 +650,12 @@ fn sync_riders(
         .riders
         .iter()
         .map(|r| {
-            let variants = part_variants(&r.parts);
+            // The "newk it" livery travels as the frame colour (spec 14
+            // Phase 4, 4B; Phase 15).
+            let variants = ocw_assets::livery::with_paint(
+                part_variants(&r.parts),
+                r.look.as_ref().map(|l| l.frame),
+            );
             let kit = kit_variants(&r.parts);
             (
                 r.id, r.state, r.id, r.is_local, r.bike, r.look, variants, kit, r.wobble,

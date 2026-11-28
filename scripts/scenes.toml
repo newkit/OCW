@@ -6360,3 +6360,47 @@ args = ["--world", "{world}", "--free-ride", "--start", "-25712,-7061", "--bots"
 at = ["0.3=time 2026-11-28 12:00", "0.3=weather clear", "0.5=character --body a --hair ponytail --hair-colour #8D5524 --skin 4", "0.6=set --temp traffic.live_road on", "2=camera.orbit 20 30 25", "4=traffic road busy"]
 shot = 30
 pick = false
+
+# --- The "newk it" bike (spec 14 Phase 15, *The "newk it" bike*) --------------
+# The user's own bike design and brand, used with permission: the frameset
+# bought at the bench (it comes in its livery) and ridden; made-up riders in
+# varied looks. OCW Studio's views of the file: scripts/newkit-shots.sh.
+
+[[scene]]
+name = "newkit-workshop-stand"
+description = "The \"newk it\" bike on the workshop's repair stand (bought at the bench, in its livery): the black flake frame with its holographic glints fading to magenta, \"newk it\" in pink along the down tube, the unicorn on the head tube, pink inner fork and bar tape, the rims' letters"
+args = ["--route", "hills", "--bots", "0", "--power", "0"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2=workshop open", "3=workshop select", "4.5=workshop orbit -35", "5=workshop zoom 2"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "newkit-kaiserstuhl-vineyards"
+description = "A made-up rider (Mira Valley: ponytail, pink sash kit) on the \"newk it\" bike between the vineyards of the Kaiserstuhl on a September morning, side camera close (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0", "--power", "210"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-12 10:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2A20 --skin 4 --glasses 1", "0.7=kit.design --pattern sash --jersey #FF2A93 --second #1E1E22 --shorts #1E1E22 --socks #F2F2EE", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2.5=camera.orbit 140 8 6"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "newkit-kaiserstuhl-vineyards-video"
+description = "Video: the \"newk it\" bike riding through the Kaiserstuhl vineyards, the camera from the front quarter (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0", "--power", "230"]
+riders = "active = \"Mira Valley\"\n[[rider]]\nname = \"Mira Valley\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"road-aero\"\njersey_color = \"#FF2A93\"\nhelmet_color = \"#F2F2EE\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-12 10:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2A20 --skin 4 --glasses 1", "0.7=kit.design --pattern sash --jersey #FF2A93 --second #1E1E22 --shorts #1E1E22 --socks #F2F2EE", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2=camera.orbit 140 8 6"]
+video = 6
+pick = false
+
+[[scene]]
+name = "newkit-freiburg-dreisam"
+description = "Another made-up rider (Theo Brook: short hair and beard, yellow stripes kit) on the \"newk it\" bike on the bridge over the Dreisam at the Schwabentor in Freiburg, the river and the town behind (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-7639,-7817", "--bots", "0", "--power", "40"]
+riders = "active = \"Theo Brook\"\n[[rider]]\nname = \"Theo Brook\"\nweight_kg = 78.0\nheight_cm = 184.0\nbike = \"road-aero\"\njersey_color = \"#FDD835\"\nhelmet_color = \"#1E1E22\"\nkit = \"stripes\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-03-21 11:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #5A3825 --skin 10 --beard 2", "0.7=kit.design --pattern stripes --jersey #FDD835 --second #1E1E22 --shorts #1E1E22", "1=hearts.grant 9000", "1.2=bikes.buy frame.road-aero.newkit", "1.4=bikes.select road-aero-2 --now", "2.5=camera.orbit 100 16 16"]
+shot = 7
+pick = false

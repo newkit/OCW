@@ -705,7 +705,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("workshop.paint")
-            .about("Paint a bike's frame (#RRGGBB, carbon: bare carbon under a clear coat, or default: the rider's frame colour; free)")
+            .about("Paint a bike's frame (#RRGGBB, carbon: bare carbon under a clear coat, newkit: the \"newk it\" livery on a road frame, or default: the rider's frame colour; free)")
             .arg(Arg::new("colour").required(true))
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
@@ -714,6 +714,7 @@ fn register_commands(app: &mut App) {
             let colour = match c.as_str() {
                 "default" => None,
                 "carbon" => Some(ocw_core::bike::BARE_CARBON),
+                "newkit" => Some(ocw_core::bike::NEWKIT_LIVERY),
                 v => Some(Rgb::parse(v).ok_or_else(|| format!("not a colour: {v} (#RRGGBB)"))?),
             };
             if let Some(r) = via_account(world, "painting", true, |g| {
@@ -747,7 +748,7 @@ fn register_commands(app: &mut App) {
                         "{} {:<14} {:<24} {:.2} kg, {} parts{}",
                         if b.id == g.active { "*" } else { " " },
                         b.id,
-                        b.label(),
+                        g.label(cat(), b),
                         bike_kg(g, b),
                         g.part_ids(b).len(),
                         if b.starter { ", starter bike" } else { "" }
@@ -836,8 +837,8 @@ fn register_commands(app: &mut App) {
             let label = s
                 .wallet
                 .get(&name)
-                .and_then(|g| g.bike(&r.bike))
-                .map_or(r.bike.clone(), |b| b.label());
+                .and_then(|g| g.bike(&r.bike).map(|b| g.label(cat(), b)))
+                .unwrap_or_else(|| r.bike.clone());
             let fitted = if r.fitted.is_empty() {
                 String::new()
             } else {
@@ -1926,10 +1927,14 @@ fn write_view(
             let b = g.bike(id)?;
             Some(BikeView {
                 profile: b.profile(),
-                variants: all[i].0.clone(),
+                // The "newk it" livery is a paint (spec 14 Phase 4, 4B).
+                variants: ocw_assets::livery::with_paint(
+                    all[i].0.clone(),
+                    Some(all[i].1.unwrap_or(rider_look.frame)),
+                ),
                 paint: all[i].1,
                 card: vec![
-                    b.label(),
+                    g.label(cat(), b),
                     format!("{} · {}", b.profile().bike().name(), b.profile().id()),
                     format!("{:.2} kg", bike_kg(g, b)),
                     format!("parts {}", hearts(i64::from(bike_value(g, b)))),
