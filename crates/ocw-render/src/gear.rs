@@ -101,7 +101,6 @@ pub fn kind_of(slot: &str, node: &str) -> GearKind {
         "shorts" | "overshoe" | "glove" => GearKind::Lycra,
         "glove_pad" => GearKind::Pad,
         "helmet" | "shoe" | "shoe_race" | "bottle" | "bottle_black" => GearKind::Plastic,
-        "helmet" | "shoe" | "shoe_race" | "bottle" => GearKind::Plastic,
         "hair" | "facial_hair" => GearKind::Hair,
         _ => GearKind::Plain,
     }
