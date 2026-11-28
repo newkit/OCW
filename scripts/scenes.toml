@@ -1028,73 +1028,100 @@ shot = 47
 pick = false
 
 # --- Andorra tunnels from outside, the same fixed camera before / after (spec 3.2, 4.3, v7.15)
-# The unicorn is placed beside the worst exposed point of each tunnel (test-output/tunnels/andorra.before.txt),
-# 70 m off its axis and 45 m over the ground, its first-person view is taken as a fixed camera (camera.path),
-# then the unicorn is put away: no unicorn and no horn in the picture. Before: OCW_TUNNELS=legacy with the live
-# package; after: the shaped package (scripts/tunnels-build.sh).
+# A guided camera (camera.path, two equal keys) 80 m to each side of the worst exposed point of each
+# tunnel and 35 m above its road (world-builder tunnels --report-only: "at ... road y ... dir ...",
+# test-output/tunnels/), looking at the road. Before: OCW_TUNNELS=legacy with the live package;
+# after: the shaped package (scripts/tunnels-build.sh).
 
 [[scene]]
-name = "andorra-tunnel-outside-sant-antoni"
-description = "From outside, a fixed camera 70 m beside and 45 m above: Túnel de Sant Antoni (CG-1, the old tunnel way 173168838 with its galleries; before: 54 m of tube out of the terrain, up to 11.9 m) (spec 3.2, 4.3, v7.15)"
+name = "andorra-tunnel-outside-sant-antoni-right"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Túnel de Sant Antoni (CG-1, way 173168838; before: 54 m of tube out of the terrain, up to 11.9 m) (spec 3.2, 4.3, v7.15)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-6493,1380", "--bots", "0", "--power", "0"]
+args = ["--world", "{world}", "--free-ride", "--start", "-6527,1361", "--bots", "0", "--power", "0"]
 riders = "active = \"Ana Pedal\"\n[[rider]]\nname = \"Ana Pedal\"\nweight_kg = 62.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "3=god on", "4=god.pose -6476 1413 45 315 -28", "4.5=god.view first", "7=camera.path add", "7.1=camera.path add", "7.5=god off", "8=camera.path play --seconds 100000"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "1=camera.path key -6470 1195 1422 317 -22", "1=camera.path key -6470 1195 1422 317 -22", "1.5=camera.path play --seconds 100000"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-outside-cg3-gallery"
-description = "From outside, a fixed camera 70 m beside and 45 m above: CG-3 avalanche gallery below Arcalís (tunnel=avalanche_protector, way 997957646; before: drawn as a tube, 26 m out of the slope, up to 6.5 m) (spec 3.2, 4.3, v7.15)"
+name = "andorra-tunnel-outside-sant-antoni-left"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Sant Antoni (CG-1, way 173168838; before: 54 m of tube out of the terrain, up to 11.9 m) (spec 3.2, 4.3, v7.15)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-6647,-10150", "--bots", "0", "--power", "0"]
+args = ["--world", "{world}", "--free-ride", "--start", "-6527,1361", "--bots", "0", "--power", "0"]
 riders = "active = \"Ben Gradient\"\n[[rider]]\nname = \"Ben Gradient\"\nweight_kg = 78.0\nheight_cm = 184.0\nbike = \"gravel\"\nframe_color = \"#2E7D32\"\njersey_color = \"#ECEFF1\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #A0522D --skin 10 --beard 2", "3=god on", "4=god.pose -6618 -10172 45 215 -28", "4.5=god.view first", "7=camera.path add", "7.1=camera.path add", "7.5=god off", "8=camera.path play --seconds 100000"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #A0522D --skin 10 --beard 2", "1=camera.path key -6609 1195 1344 102 -22", "1=camera.path key -6609 1195 1344 102 -22", "1.5=camera.path play --seconds 100000"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-outside-cg3-gallery-valley"
-description = "From outside, a fixed camera 70 m beside and 45 m above: CG-3 avalanche gallery below Arcalís from the other side (way 997957646) (spec 3.2, 4.3, v7.15)"
+name = "andorra-tunnel-outside-cg3-gallery-right"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: the CG-3 avalanche gallery below Arcalís (tunnel=avalanche_protector, way 997957646; before: a tube, 26 m out of the slope, up to 6.5 m) (spec 3.2, 4.3, v7.15)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-6673,-10076", "--bots", "0", "--power", "0"]
+args = ["--world", "{world}", "--free-ride", "--start", "-6660,-10113", "--bots", "0", "--power", "0"]
+riders = "active = \"Ben Gradient\"\n[[rider]]\nname = \"Ben Gradient\"\nweight_kg = 78.0\nheight_cm = 184.0\nbike = \"gravel\"\nframe_color = \"#2E7D32\"\njersey_color = \"#ECEFF1\"\nhelmet_color = \"#263238\"\nkit = \"sash\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #A0522D --skin 10 --beard 2", "1=camera.path key -6610 1846 -10180 217 -22", "1=camera.path key -6610 1846 -10180 217 -22", "1.5=camera.path play --seconds 100000"]
+shot = 12
+
+[[scene]]
+name = "andorra-tunnel-outside-cg3-gallery-left"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: the CG-3 avalanche gallery below Arcalís (tunnel=avalanche_protector, way 997957646; before: a tube, 26 m out of the slope, up to 6.5 m) (spec 3.2, 4.3, v7.15)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-6660,-10113", "--bots", "0", "--power", "0"]
 riders = "active = \"Cleo Spin\"\n[[rider]]\nname = \"Cleo Spin\"\nweight_kg = 55.0\nheight_cm = 160.0\nbike = \"road\"\nframe_color = \"#D81B60\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#FFFFFF\"\nkit = \"plain\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #E0C080 --skin 1", "3=god on", "4=god.pose -6664 -10041 45 3 -28", "4.5=god.view first", "7=camera.path add", "7.1=camera.path add", "7.5=god off", "8=camera.path play --seconds 100000"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #E0C080 --skin 1", "1=camera.path key -6663 1846 -10030 2 -22", "1=camera.path key -6663 1846 -10030 2 -22", "1.5=camera.path play --seconds 100000"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-outside-cg3-tunnel"
-description = "From outside, a fixed camera 70 m beside and 45 m above: CG-3 tunnel below Arcalís (way 6227097; before: 26 m out, up to 4.4 m) (spec 3.2, 4.3, v7.15)"
+name = "andorra-tunnel-outside-cg3-tunnel-right"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: the CG-3 tunnel below Arcalís (way 6227097; before: 26 m out, up to 4.4 m) (spec 3.2, 4.3, v7.15)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-7773,-10186", "--bots", "0", "--power", "0"]
+args = ["--world", "{world}", "--free-ride", "--start", "-7783,-10224", "--bots", "0", "--power", "0"]
+riders = "active = \"Cleo Spin\"\n[[rider]]\nname = \"Cleo Spin\"\nweight_kg = 55.0\nheight_cm = 160.0\nbike = \"road\"\nframe_color = \"#D81B60\"\njersey_color = \"#26A69A\"\nhelmet_color = \"#FFFFFF\"\nkit = \"plain\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #E0C080 --skin 1", "1=camera.path key -7787 1950 -10140 3 -21", "1=camera.path key -7787 1950 -10140 3 -21", "1.5=camera.path play --seconds 100000"]
+shot = 12
+
+[[scene]]
+name = "andorra-tunnel-outside-cg3-tunnel-left"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: the CG-3 tunnel below Arcalís (way 6227097; before: 26 m out, up to 4.4 m) (spec 3.2, 4.3, v7.15)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-7783,-10224", "--bots", "0", "--power", "0"]
 riders = "active = \"Dev Cadence\"\n[[rider]]\nname = \"Dev Cadence\"\nweight_kg = 84.0\nheight_cm = 189.0\nbike = \"mtb\"\nframe_color = \"#37474F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FDD835\"\nkit = \"band\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair afro --hair-colour #111111 --skin 15", "3=god on", "4=god.pose -7785 -10151 45 1 -28", "4.5=god.view first", "7=camera.path add", "7.1=camera.path add", "7.5=god off", "8=camera.path play --seconds 100000"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair afro --hair-colour #111111 --skin 15", "1=camera.path key -7827 1950 -10295 148 -21", "1=camera.path key -7827 1950 -10295 148 -21", "1.5=camera.path play --seconds 100000"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-outside-prat-del-ruiders"
-description = "From outside, a fixed camera 70 m beside and 45 m above: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m, 54 m of road floating) (spec 3.2, 4.3, v7.15)"
+name = "andorra-tunnel-outside-prat-del-ruiders-right"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.15)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-9866,-4405", "--bots", "0", "--power", "0"]
+args = ["--world", "{world}", "--free-ride", "--start", "-9846,-4439", "--bots", "0", "--power", "0"]
+riders = "active = \"Dev Cadence\"\n[[rider]]\nname = \"Dev Cadence\"\nweight_kg = 84.0\nheight_cm = 189.0\nbike = \"mtb\"\nframe_color = \"#37474F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#FDD835\"\nkit = \"band\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair afro --hair-colour #111111 --skin 15", "1=camera.path key -9908 1630 -4383 48 -21", "1=camera.path key -9908 1630 -4383 48 -21", "1.5=camera.path play --seconds 100000"]
+shot = 12
+
+[[scene]]
+name = "andorra-tunnel-outside-prat-del-ruiders-left"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Carretera de Prat del Ruiders (way 24374064; before: 32 m out, up to 5.7 m) (spec 3.2, 4.3, v7.15)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-9846,-4439", "--bots", "0", "--power", "0"]
 riders = "active = \"Eli Tempo\"\n[[rider]]\nname = \"Eli Tempo\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #5D4037 --skin 7", "3=god on", "4=god.pose -9899 -4389 45 47 -28", "4.5=god.view first", "7=camera.path add", "7.1=camera.path add", "7.5=god off", "8=camera.path play --seconds 100000"]
-shot = 14
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #5D4037 --skin 7", "1=camera.path key -9827 1630 -4521 193 -21", "1=camera.path key -9827 1630 -4521 193 -21", "1.5=camera.path play --seconds 100000"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-outside-radio-andorra"
-description = "From outside, a fixed camera 70 m beside and 45 m above: Túnel de Radio Andorra (ways 124674261 / 124674263; before: 50 m out, up to 4.5 m) (spec 3.2, 4.3, v7.15)"
+name = "andorra-tunnel-outside-radio-andorra-right"
+description = "From outside, a fixed camera 80 m to the right of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.15)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-2390,1302", "--bots", "0", "--power", "0"]
-riders = "active = \"Fay Climber\"\n[[rider]]\nname = \"Fay Climber\"\nweight_kg = 59.0\nheight_cm = 165.0\nbike = \"gravel\"\nframe_color = \"#00897B\"\njersey_color = \"#F06292\"\nhelmet_color = \"#FAFAFA\"\nkit = \"plain\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair pixie --hair-colour #2B1B14 --skin 8", "3=god on", "4=god.pose -2384 1338 45 334 -28", "4.5=god.view first", "7=camera.path add", "7.1=camera.path add", "7.5=god off", "8=camera.path play --seconds 100000"]
-shot = 14
+args = ["--world", "{world}", "--free-ride", "--start", "-2404,1247", "--bots", "0", "--power", "0"]
+riders = "active = \"Eli Tempo\"\n[[rider]]\nname = \"Eli Tempo\"\nweight_kg = 70.0\nheight_cm = 176.0\nbike = \"road\"\nframe_color = \"#1565C0\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#212121\"\nkit = \"sash\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #5D4037 --skin 7", "1=camera.path key -2439 1265 1171 155 -22", "1=camera.path key -2439 1265 1171 155 -22", "1.5=camera.path play --seconds 100000"]
+shot = 12
 
 [[scene]]
-name = "andorra-tunnel-outside-santa-coloma"
-description = "From outside, a fixed camera 70 m beside and 45 m above: the tunnel at Santa Coloma (way 23842741; before: 32 m out, up to 3.1 m) (spec 3.2, 4.3, v7.15)"
+name = "andorra-tunnel-outside-radio-andorra-left"
+description = "From outside, a fixed camera 80 m to the left of the axis and 35 m above the road: Túnel de Radio Andorra (way 124674263; before: 24 m out, up to 4.5 m) (spec 3.2, 4.3, v7.15)"
 world = "andorra"
-args = ["--world", "{world}", "--free-ride", "--start", "-6450,1898", "--bots", "0", "--power", "0"]
-riders = "active = \"Gus Rouleur\"\n[[rider]]\nname = \"Gus Rouleur\"\nweight_kg = 76.0\nheight_cm = 181.0\nbike = \"road\"\nframe_color = \"#C62828\"\njersey_color = \"#FAFAFA\"\nhelmet_color = \"#C62828\"\nkit = \"band\"\n"
-at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #1A1A1A --skin 12", "3=god on", "4=god.pose -6485 1888 45 89 -28", "4.5=god.view first", "7=camera.path add", "7.1=camera.path add", "7.5=god off", "8=camera.path play --seconds 100000"]
-shot = 14
+args = ["--world", "{world}", "--free-ride", "--start", "-2404,1247", "--bots", "0", "--power", "0"]
+riders = "active = \"Ana Pedal\"\n[[rider]]\nname = \"Ana Pedal\"\nweight_kg = 62.0\nheight_cm = 168.0\nbike = \"road\"\nframe_color = \"#8E24AA\"\njersey_color = \"#FFEE58\"\nhelmet_color = \"#FAFAFA\"\nkit = \"band\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 13:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #3B2417 --skin 3", "1=camera.path key -2332 1265 1289 300 -22", "1=camera.path key -2332 1265 1289 300 -22", "1.5=camera.path play --seconds 100000"]
+shot = 12
 
 # --- Black Forest world package (world = "blackforest") ---------------------
 # scripts/fetch-pilot.sh blackforest && scripts/build-blackforest.sh

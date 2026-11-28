@@ -67,6 +67,14 @@ pub const BOX_ROOF_M: f64 = 4.7;
 pub const BOX_SLAB_M: f64 = 0.5;
 /// Sections shorter than this (m) join their neighbours.
 pub const MIN_SECTION_M: f64 = 12.0;
+/// A bored section shorter than this whose terrain nowhere rises
+/// [`SHALLOW_HILL_M`] over the road is no tunnel in a hill but a short
+/// underpass in flat ground (under a crossing road or an embankment): drawn
+/// as a tube it is a portal hood standing alone in a meadow with its other
+/// portal a few metres on (Prat del Ruiders, Radio Andorra, 2026-11-28), so
+/// it is open road in a cutting.
+pub const SHORT_BORE_M: f64 = 80.0;
+pub const SHALLOW_HILL_M: f64 = CROWN_M + 6.0;
 /// Lateral distance beyond the tube's side where the hill side and the
 /// open side are judged (m).
 const SIDE_PROBE_M: f64 = 2.0;
@@ -314,18 +322,36 @@ pub fn sections(samples: &[AxisSample]) -> Vec<Section> {
         let j = if into > i { into - 1 } else { into };
         runs[j].from = runs[j].from.min(r.from);
         runs[j].to = runs[j].to.max(r.to);
-        // Neighbours of the same kind merge.
-        let mut k = 0;
-        while k + 1 < runs.len() {
-            if runs[k].kind == runs[k + 1].kind {
-                runs[k].to = runs[k + 1].to;
-                runs.remove(k + 1);
-            } else {
-                k += 1;
+        merge_same(&mut runs);
+    }
+    // Short shallow bores are underpasses in the open.
+    for r in &mut runs {
+        if r.kind == SectionKind::Bored && r.to - r.from < SHORT_BORE_M {
+            let hill = samples
+                .iter()
+                .filter(|x| x.s >= r.from && x.s <= r.to)
+                .map(|x| x.centre)
+                .fold(f64::NEG_INFINITY, f64::max);
+            if hill < SHALLOW_HILL_M {
+                r.kind = SectionKind::Open;
             }
         }
     }
+    merge_same(&mut runs);
     runs
+}
+
+/// Neighbouring sections of the same kind joined.
+fn merge_same(runs: &mut Vec<Section>) {
+    let mut k = 0;
+    while k + 1 < runs.len() {
+        if runs[k].kind == runs[k + 1].kind {
+            runs[k].to = runs[k + 1].to;
+            runs.remove(k + 1);
+        } else {
+            k += 1;
+        }
+    }
 }
 
 /// The sections of `edge` against `ground` ([`probe`] then [`sections`]).
@@ -568,6 +594,24 @@ mod tests {
         assert_eq!(secs.len(), 1);
         assert_eq!(secs[0].kind, SectionKind::Open);
         assert!(exposed_runs(&probe(&e, &flat), &secs).is_empty());
+    }
+
+    #[test]
+    fn a_short_shallow_bore_is_an_open_underpass_a_long_one_stays_a_tube() {
+        // 50 m under 4 m of flat ground (a crossing embankment): no portal
+        // hoods alone in the meadow, open road in a cutting.
+        let e = edge(50.0);
+        let low = |_x: f64, _z: f64| Some(104.0);
+        let secs = edge_sections(&e, &low);
+        assert_eq!(secs.len(), 1, "{secs:?}");
+        assert_eq!(secs[0].kind, SectionKind::Open);
+        // The same ground over 200 m stays a tube (mounded by the builder).
+        let secs = edge_sections(&edge(200.0), &low);
+        assert_eq!(secs[0].kind, SectionKind::Bored, "{secs:?}");
+        // 50 m through a real hill (30 m over the road) stays a tube.
+        let hill = |x: f64, _z: f64| Some(100.0 + (30.0 - (x - 25.0).abs()).max(5.0));
+        let secs = edge_sections(&e, &hill);
+        assert!(secs.iter().any(|s| s.kind == SectionKind::Bored), "{secs:?}");
     }
 
     #[test]

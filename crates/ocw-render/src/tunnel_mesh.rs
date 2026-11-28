@@ -522,7 +522,7 @@ pub fn tunnel_meshes_with(
 /// texture's grain): as light as the package's asphalt roads in daylight,
 /// so an open stretch or a gallery floor does not show as a dark patch on
 /// the road (the Arcalís video, 2026-11-28).
-pub const SUNLIT_ASPHALT: [f32; 4] = [0.3, 0.3, 0.31, 1.0];
+pub const SUNLIT_ASPHALT: [f32; 4] = [0.5, 0.5, 0.52, 1.0];
 
 fn road_surface(
     m: &mut MeshArrays,
@@ -548,12 +548,14 @@ fn road_surface(
         // Across in metres (height on the kerbs' faces, so they are not
         // smeared).
         let (v0, v1) = (l0 + h0, l1 + h1);
-        let uv = [
-            [a.s as f32 / tm, v1 / tm],
-            [a.s as f32 / tm, v0 / tm],
-            [b.s as f32 / tm, v1 / tm],
-            [b.s as f32 / tm, v0 / tm],
-        ];
+        // In the sun: one column of the texture (its grain across, no
+        // vault joint every 4 m across the road).
+        let (ua, ub) = if sunlit {
+            (0.5, 0.5)
+        } else {
+            (a.s as f32 / tm, b.s as f32 / tm)
+        };
+        let uv = [[ua, v1 / tm], [ua, v0 / tm], [ub, v1 / tm], [ub, v0 / tm]];
         let (ca, cb) = (scale(c, light[0]), scale(c, light[1]));
         bl.quad(v, uv, [ca, ca, cb, cb]);
     };
