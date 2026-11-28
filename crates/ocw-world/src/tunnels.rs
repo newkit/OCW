@@ -611,7 +611,10 @@ mod tests {
         // 50 m through a real hill (30 m over the road) stays a tube.
         let hill = |x: f64, _z: f64| Some(100.0 + (30.0 - (x - 25.0).abs()).max(5.0));
         let secs = edge_sections(&e, &hill);
-        assert!(secs.iter().any(|s| s.kind == SectionKind::Bored), "{secs:?}");
+        assert!(
+            secs.iter().any(|s| s.kind == SectionKind::Bored),
+            "{secs:?}"
+        );
     }
 
     #[test]
